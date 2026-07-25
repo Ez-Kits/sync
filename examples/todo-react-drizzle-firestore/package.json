@@ -1,0 +1,31 @@
+{
+  "name": "todo-react-drizzle-firestore",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "node scripts/copy-sqljs-assets.mjs && tsc && vp build",
+    "preview": "vp preview",
+    "postinstall": "node scripts/copy-sqljs-assets.mjs"
+  },
+  "dependencies": {
+    "@ez-kits/sync-client-core": "workspace:*",
+    "@ez-kits/sync-client-drizzle-adapter": "workspace:*",
+    "@ez-kits/sync-client-react": "workspace:*",
+    "@ez-kits/sync-firebase": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "firebase": "catalog:",
+    "react": "catalog:",
+    "react-dom": "19.2.5",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.9",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

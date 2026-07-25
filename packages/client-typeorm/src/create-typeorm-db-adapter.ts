@@ -1,0 +1,94 @@
+import type {
+  CollectionConfigMap,
+  CollectionNames,
+  ConfigForName,
+  InferCollectionInsertModel,
+  InferCollectionPrimaryFieldType,
+  InferCollectionSelectModel,
+  InferCollectionUpdateModel,
+} from "@ez-kits/sync-client-core";
+import type { DataSource, EntityTarget, ObjectLiteral } from "typeorm";
+import { buildSchemaFromCollections, type BuildSchemaFromCollections } from "./collection";
+import type { TypeOrmDBAdapter, TypeOrmDBAdapterConfig } from "./types";
+
+function primaryWhere(primaryField: PropertyKey, id: unknown): ObjectLiteral {
+  if (typeof id === "object" && id !== null && !Array.isArray(id)) {
+    return id as ObjectLiteral;
+  }
+  return { [String(primaryField)]: id } as ObjectLiteral;
+}
+
+function getCollectionConfig<C extends CollectionConfigMap, N extends CollectionNames<C>>(
+  collections: C,
+  name: N,
+): ConfigForName<C, N> {
+  const found = collections.find((c) => c.name === name);
+  if (!found) {
+    throw new Error(`Unknown collection: ${String(name)}`);
+  }
+  return found as ConfigForName<C, N>;
+}
+
+export function createTypeOrmDBAdapter<
+  C extends CollectionConfigMap,
+  TDataSource extends DataSource = DataSource,
+  TSchema extends Record<CollectionNames<C>, unknown> = BuildSchemaFromCollections<C>,
+>(
+  adapter: TypeOrmDBAdapterConfig<C, TDataSource, TSchema>,
+): TypeOrmDBAdapter<C, TDataSource, TSchema> {
+  const { db, collections } = adapter;
+  let schema: TSchema | undefined = adapter.schema;
+
+  if (!schema) {
+    schema = buildSchemaFromCollections(collections) as TSchema;
+  }
+
+  const resolvedSchema = schema;
+
+  return {
+    db,
+    schema: resolvedSchema,
+    queryBuilder: db,
+    querySchema: resolvedSchema,
+    async insert<N extends CollectionNames<C>>(
+      collection: N,
+      data: InferCollectionInsertModel<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      await db.getRepository(entity).save(data as ObjectLiteral);
+    },
+    async update<N extends CollectionNames<C>>(
+      collection: N,
+      data: InferCollectionUpdateModel<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      await db.getRepository(entity).save(data as ObjectLiteral);
+    },
+    async delete<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      await db.getRepository(entity).delete(primaryWhere(primaryField, id));
+    },
+    async get<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const row = await db.getRepository(entity).findOneOrFail({
+        where: primaryWhere(primaryField, id),
+      });
+      return row as InferCollectionSelectModel<ConfigForName<C, N>>;
+    },
+    async getMany<N extends CollectionNames<C>>(
+      collection: N,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const rows = await db.getRepository(entity).find();
+      return rows as InferCollectionSelectModel<ConfigForName<C, N>>[];
+    },
+  };
+}

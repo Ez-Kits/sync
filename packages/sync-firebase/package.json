@@ -1,0 +1,46 @@
+{
+  "name": "@ez-kits/sync-firebase",
+  "version": "0.0.0",
+  "description": "A starter for creating a TypeScript package.",
+  "homepage": "https://github.com/author/library#readme",
+  "bugs": {
+    "url": "https://github.com/author/library/issues"
+  },
+  "license": "MIT",
+  "author": "Author Name <author.name@mail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/author/library.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    "./sync-firestore": "./dist/sync-firestore.mjs",
+    "./sync-realtime-db": "./dist/sync-realtime-db.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check",
+    "prepublishOnly": "vp run build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "catalog:",
+    "bumpp": "^11.0.1",
+    "firebase": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "^0.1.14"
+  },
+  "peerDependencies": {
+    "@ez-kits/sync-client-core": "workspace:*",
+    "firebase": "^12.12.1"
+  }
+}

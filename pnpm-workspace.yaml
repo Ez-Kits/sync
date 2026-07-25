@@ -1,0 +1,32 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+  - examples/*
+
+catalog:
+  "@types/node": ^24
+  "@types/react": ^19.2.14
+  "@typescript/native-preview": npm:typescript@^7
+  drizzle-orm: 1.0.0-beta.9-e89174b
+  firebase: ^12.12.1
+  react: ^19.2.5
+  react-dom: ^19.2.5
+  typeorm: ^0.3.28
+  typescript: ^7
+  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vite-plus: latest
+  vitest: npm:@voidzero-dev/vite-plus-test@latest
+
+catalogMode: prefer
+overrides:
+  typescript: "catalog:"
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
