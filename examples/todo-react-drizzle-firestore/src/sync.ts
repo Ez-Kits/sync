@@ -8,6 +8,7 @@ import {
   createFirestoreSyncOptions,
   defineFirestoreCollectionSyncConfig,
 } from "@ez-kits/sync-firebase/sync-firestore";
+import { orderBy, startAfter } from "firebase/firestore";
 import { db } from "./db/index.ts";
 import { schema, todos } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
@@ -29,6 +30,10 @@ function createTodoFirestoreSync() {
       defineFirestoreCollectionSyncConfig({
         collectionConfig: todosCollection,
         collectionPath: "todos",
+        buildPullQueryConstraints: ({ checkpoint }) => [
+          orderBy("updatedAt", "desc"),
+          ...(checkpoint ? [startAfter(checkpoint)] : []),
+        ],
         createCheckpoint: () => Date.now(),
         createPullCheckpoint: () => Date.now(),
         resolveDocumentId: (event) => {

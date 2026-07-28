@@ -8,13 +8,10 @@ import type {
   InferCollectionUpdateModel,
 } from "../collection";
 
-export interface BaseDBAdapter<
-  C extends CollectionConfigMap,
-  TQueryBuilder,
-  TQuerySchema extends Record<CollectionNames<C>, unknown>,
-> {
-  queryBuilder: TQueryBuilder;
-  querySchema: TQuerySchema;
+/**
+ * CRUD operations available both on the adapter and inside {@link BaseDBAdapter.transaction}.
+ */
+export interface DBAdapterOperations<C extends CollectionConfigMap> {
   insert<N extends CollectionNames<C>>(
     collection: N,
     data: InferCollectionInsertModel<ConfigForName<C, N>>,
@@ -34,4 +31,18 @@ export interface BaseDBAdapter<
   getMany<N extends CollectionNames<C>>(
     collection: N,
   ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]>;
+}
+
+export interface BaseDBAdapter<
+  C extends CollectionConfigMap,
+  TQueryBuilder,
+  TQuerySchema extends Record<CollectionNames<C>, unknown>,
+> extends DBAdapterOperations<C> {
+  queryBuilder: TQueryBuilder;
+  querySchema: TQuerySchema;
+  /**
+   * Run adapter operations in a single database transaction.
+   * All writes succeed together or none are applied.
+   */
+  transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T>;
 }

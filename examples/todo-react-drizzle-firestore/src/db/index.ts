@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/sqlite-proxy";
-import { SqlJsWorkerClient } from "./sqljs-worker-client.ts";
 import { schema } from "./schema.ts";
+import { SqlJsWorkerClient } from "./sqljs-worker-client.ts";
 
 export const sqlJsWorker = new SqlJsWorkerClient();
 

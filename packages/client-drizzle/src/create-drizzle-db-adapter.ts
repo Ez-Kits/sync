@@ -2,6 +2,7 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   ConfigForName,
+  DBAdapterOperations,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
@@ -39,6 +40,10 @@ type DrizzleQueryDb = {
   };
 };
 
+type DrizzleTransactionalDb = DrizzleQueryDb & {
+  transaction: <T>(fn: (tx: DrizzleQueryDb) => Promise<T>) => Promise<T>;
+};
+
 function getCollectionConfig<C extends CollectionConfigMap, N extends CollectionNames<C>>(
   collections: C,
   name: N,
@@ -73,34 +78,17 @@ function primaryCondition(table: Table, primaryField: PropertyKey, id: unknown):
   return eq(getTableColumn(table, primaryField), id);
 }
 
-export function createDrizzleDBAdapter<
+function createOperations<
   C extends CollectionConfigMap,
-  TDrizzleDB,
-  TTables extends Record<CollectionNames<C>, unknown> = BuildSchemaFromCollections<C>,
->(
-  adapter: DrizzleDBAdapterConfig<C, TDrizzleDB, TTables>,
-): DrizzleDBAdapter<C, TDrizzleDB, TTables> {
-  const { db, collections } = adapter;
-  let schema: TTables | undefined = adapter.schema;
-
-  if (!schema) {
-    schema = buildSchemaFromCollections(collections) as TTables;
-  }
-
-  const resolvedSchema = schema;
-  const drizzleDb = db as DrizzleQueryDb;
-
+  TTables extends Record<CollectionNames<C>, unknown>,
+>(queryDb: DrizzleQueryDb, resolvedSchema: TTables, collections: C): DBAdapterOperations<C> {
   return {
-    db,
-    schema: resolvedSchema,
-    queryBuilder: db,
-    querySchema: resolvedSchema,
     async insert<N extends CollectionNames<C>>(
       collection: N,
       data: InferCollectionInsertModel<ConfigForName<C, N>>,
     ): Promise<void> {
       const table = resolvedSchema[collection] as Table;
-      await drizzleDb.insert(table).values(data);
+      await queryDb.insert(table).values(data);
     },
     async update<N extends CollectionNames<C>>(
       collection: N,
@@ -113,7 +101,7 @@ export function createDrizzleDBAdapter<
       if (id === undefined) {
         throw new Error(`Update requires primary field "${String(primaryField)}"`);
       }
-      await drizzleDb
+      await queryDb
         .update(table)
         .set(data)
         .where(primaryCondition(table, primaryField, id));
@@ -124,7 +112,7 @@ export function createDrizzleDBAdapter<
     ): Promise<void> {
       const table = resolvedSchema[collection] as Table;
       const primaryField = getCollectionConfig(collections, collection).primaryField;
-      await drizzleDb.delete(table).where(primaryCondition(table, primaryField, id));
+      await queryDb.delete(table).where(primaryCondition(table, primaryField, id));
     },
     async get<N extends CollectionNames<C>>(
       collection: N,
@@ -132,7 +120,7 @@ export function createDrizzleDBAdapter<
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
       const table = resolvedSchema[collection] as Table;
       const primaryField = getCollectionConfig(collections, collection).primaryField;
-      const rows = (await drizzleDb
+      const rows = (await queryDb
         .select()
         .from(table)
         .where(primaryCondition(table, primaryField, id))) as InferCollectionSelectModel<
@@ -148,10 +136,40 @@ export function createDrizzleDBAdapter<
       collection: N,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {
       const table = resolvedSchema[collection] as Table;
-      const rows = (await drizzleDb.select().from(table)) as InferCollectionSelectModel<
+      const rows = (await queryDb.select().from(table)) as InferCollectionSelectModel<
         ConfigForName<C, N>
       >[];
       return rows;
+    },
+  };
+}
+
+export function createDrizzleDBAdapter<
+  C extends CollectionConfigMap,
+  TDrizzleDB,
+  TTables extends Record<CollectionNames<C>, unknown> = BuildSchemaFromCollections<C>,
+>(
+  adapter: DrizzleDBAdapterConfig<C, TDrizzleDB, TTables>,
+): DrizzleDBAdapter<C, TDrizzleDB, TTables> {
+  const { db, collections } = adapter;
+  let schema: TTables | undefined = adapter.schema;
+
+  if (!schema) {
+    schema = buildSchemaFromCollections(collections) as TTables;
+  }
+
+  const resolvedSchema = schema;
+  const drizzleDb = db as DrizzleTransactionalDb;
+  const operations = createOperations(drizzleDb, resolvedSchema, collections);
+
+  return {
+    db,
+    schema: resolvedSchema,
+    queryBuilder: db,
+    querySchema: resolvedSchema,
+    ...operations,
+    async transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
+      return drizzleDb.transaction((tx) => fn(createOperations(tx, resolvedSchema, collections)));
     },
   };
 }

@@ -2,12 +2,13 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   ConfigForName,
+  DBAdapterOperations,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
-import type { DataSource, EntityTarget, ObjectLiteral } from "typeorm";
+import type { DataSource, EntityManager, EntityTarget, ObjectLiteral } from "typeorm";
 import { buildSchemaFromCollections, type BuildSchemaFromCollections } from "./collection";
 import type { TypeOrmDBAdapter, TypeOrmDBAdapterConfig } from "./types";
 
@@ -29,6 +30,56 @@ function getCollectionConfig<C extends CollectionConfigMap, N extends Collection
   return found as ConfigForName<C, N>;
 }
 
+type TypeOrmQuerySource = Pick<DataSource, "getRepository"> | EntityManager;
+
+function createOperations<
+  C extends CollectionConfigMap,
+  TSchema extends Record<CollectionNames<C>, unknown>,
+>(source: TypeOrmQuerySource, resolvedSchema: TSchema, collections: C): DBAdapterOperations<C> {
+  return {
+    async insert<N extends CollectionNames<C>>(
+      collection: N,
+      data: InferCollectionInsertModel<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      await source.getRepository(entity).save(data as ObjectLiteral);
+    },
+    async update<N extends CollectionNames<C>>(
+      collection: N,
+      data: InferCollectionUpdateModel<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      await source.getRepository(entity).save(data as ObjectLiteral);
+    },
+    async delete<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<void> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      await source.getRepository(entity).delete(primaryWhere(primaryField, id));
+    },
+    async get<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const row = await source.getRepository(entity).findOneOrFail({
+        where: primaryWhere(primaryField, id),
+      });
+      return row as InferCollectionSelectModel<ConfigForName<C, N>>;
+    },
+    async getMany<N extends CollectionNames<C>>(
+      collection: N,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const rows = await source.getRepository(entity).find();
+      return rows as InferCollectionSelectModel<ConfigForName<C, N>>[];
+    },
+  };
+}
+
 export function createTypeOrmDBAdapter<
   C extends CollectionConfigMap,
   TDataSource extends DataSource = DataSource,
@@ -44,51 +95,18 @@ export function createTypeOrmDBAdapter<
   }
 
   const resolvedSchema = schema;
+  const operations = createOperations(db, resolvedSchema, collections);
 
   return {
     db,
     schema: resolvedSchema,
     queryBuilder: db,
     querySchema: resolvedSchema,
-    async insert<N extends CollectionNames<C>>(
-      collection: N,
-      data: InferCollectionInsertModel<ConfigForName<C, N>>,
-    ): Promise<void> {
-      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      await db.getRepository(entity).save(data as ObjectLiteral);
-    },
-    async update<N extends CollectionNames<C>>(
-      collection: N,
-      data: InferCollectionUpdateModel<ConfigForName<C, N>>,
-    ): Promise<void> {
-      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      await db.getRepository(entity).save(data as ObjectLiteral);
-    },
-    async delete<N extends CollectionNames<C>>(
-      collection: N,
-      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
-    ): Promise<void> {
-      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
-      await db.getRepository(entity).delete(primaryWhere(primaryField, id));
-    },
-    async get<N extends CollectionNames<C>>(
-      collection: N,
-      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
-    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
-      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
-      const row = await db.getRepository(entity).findOneOrFail({
-        where: primaryWhere(primaryField, id),
-      });
-      return row as InferCollectionSelectModel<ConfigForName<C, N>>;
-    },
-    async getMany<N extends CollectionNames<C>>(
-      collection: N,
-    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {
-      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const rows = await db.getRepository(entity).find();
-      return rows as InferCollectionSelectModel<ConfigForName<C, N>>[];
+    ...operations,
+    async transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
+      return db.transaction((manager) =>
+        fn(createOperations(manager, resolvedSchema, collections)),
+      );
     },
   };
 }

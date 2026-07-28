@@ -1,20 +1,25 @@
-import { asc } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { db } from "./db/index.ts";
 import { todos, type Todo } from "./db/schema.ts";
 import { isFirebaseConfigured } from "./firebase.ts";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
 
+/** Keep the demo UI responsive after the one-time 1M seed. */
+const VISIBLE_TODO_LIMIT = 200;
+
 function TodoApp() {
   const client = useSyncClient();
   const [draft, setDraft] = useState("");
   const [syncEnabled, setSyncEnabled] = useState(false);
+  const [todoCount, setTodoCount] = useState<number | null>(null);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
 
   const queryTodos = useCallback(
-    (queryDb: typeof db) => queryDb.select().from(todos).orderBy(asc(todos.updatedAt)),
+    (queryDb: typeof db) =>
+      queryDb.select().from(todos).orderBy(desc(todos.updatedAt)).limit(VISIBLE_TODO_LIMIT),
     [],
   );
 
@@ -42,6 +47,21 @@ function TodoApp() {
       client.stopSync();
     };
   }, [client]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void db
+      .select({ count: sql<number>`count(*)` })
+      .from(todos)
+      .then((rows) => {
+        if (!cancelled) {
+          setTodoCount(Number(rows[0]?.count ?? 0));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
 
   const addTodo = useCallback(
     async (event: SyntheticEvent) => {
@@ -92,6 +112,14 @@ function TodoApp() {
               ? "Firestore sync connected"
               : "Offline — sync paused until you're back online"}
         </p>
+        {todoCount != null && (
+          <p className="lede">
+            {todoCount.toLocaleString()} todos locally
+            {todoCount > VISIBLE_TODO_LIMIT
+              ? ` — showing the ${VISIBLE_TODO_LIMIT} most recently updated`
+              : null}
+          </p>
+        )}
       </header>
 
       <form className="composer" onSubmit={addTodo}>

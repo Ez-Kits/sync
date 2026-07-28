@@ -1,20 +1,24 @@
 import type { ChangeBusEvent, ChangeBusEventDataMap, SyncOptions } from "@ez-kits/sync-client-core";
 import {
-  collection as getCollectionRef,
   doc,
+  collection as getCollectionRef,
   onSnapshot,
   query,
-  setDoc,
+  writeBatch,
   type CollectionReference,
   type DocumentData,
   type Firestore,
   type Query,
   type QueryConstraint,
   type QueryDocumentSnapshot,
+  type WriteBatch,
 } from "firebase/firestore";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedFirestoreCollectionSync } from "./types.ts";
+
+/** Firestore allows at most 500 writes per batch. */
+const FIRESTORE_BATCH_LIMIT = 500;
 
 function getSnapshotData(snapshot: QueryDocumentSnapshot<DocumentData>): DocumentData {
   return snapshot.data() ?? {};
@@ -138,6 +142,30 @@ export function createFirestoreSyncOptionsFromResolved<
         collections.map((collectionConfig) => [collectionConfig.collectionName, collectionConfig]),
       );
 
+      const batches: WriteBatch[] = [];
+      let currentBatch = writeBatch(db);
+      let opsInCurrentBatch = 0;
+
+      const enqueueSet = (
+        documentPath: string,
+        documentId: string,
+        payload: DocumentData,
+        options?: { merge: boolean },
+      ) => {
+        if (opsInCurrentBatch >= FIRESTORE_BATCH_LIMIT) {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opsInCurrentBatch = 0;
+        }
+        const ref = doc(db, documentPath, documentId);
+        if (options) {
+          currentBatch.set(ref, payload, options);
+        } else {
+          currentBatch.set(ref, payload);
+        }
+        opsInCurrentBatch += 1;
+      };
+
       for (const event of events) {
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
@@ -151,7 +179,7 @@ export function createFirestoreSyncOptionsFromResolved<
                 deleted: true,
                 deletedAt: Date.now(),
               } satisfies DocumentData);
-          await setDoc(doc(db, collectionPath, String(event.id)), payload, { merge: true });
+          enqueueSet(collectionPath, String(event.id), payload, { merge: true });
           continue;
         }
 
@@ -163,18 +191,23 @@ export function createFirestoreSyncOptionsFromResolved<
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : (event.data as DocumentData);
-          await setDoc(doc(db, collectionPath, id), payload);
+          enqueueSet(collectionPath, id, payload);
           continue;
         }
 
         const payload = collectionConfig.serializeUpdate
           ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
           : (event.data as DocumentData);
-        await setDoc(doc(db, collectionPath, id), payload, {
-          merge: true,
-        });
+        enqueueSet(collectionPath, id, payload, { merge: true });
       }
 
+      if (opsInCurrentBatch > 0) {
+        batches.push(currentBatch);
+      }
+
+      for (const batch of batches) {
+        await batch.commit();
+      }
       commitChanges({ events });
     },
   };

@@ -5,7 +5,7 @@ import type {
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
-import type { BaseDBAdapter } from "../db-adapter";
+import type { BaseDBAdapter, DBAdapterOperations } from "../db-adapter";
 import type { DirtyRecordState, ILocalChangeStore } from "../local-change-store";
 import type { SyncOptions } from "./types";
 
@@ -40,6 +40,7 @@ export abstract class BaseSyncHandler<
   protected async applyEvent<N extends CollectionNames<C>>(
     collectionName: N,
     event: ChangeBusEvent<SyncHandlerDataMap<C>, N>,
+    db: DBAdapterOperations<C> = this.config.db,
   ): Promise<void> {
     const collectionConfig = this.collectionMap.get(collectionName) as
       | ConfigForName<C, N>
@@ -47,17 +48,23 @@ export abstract class BaseSyncHandler<
     if (!collectionConfig) return;
 
     if (event.type === "delete") {
-      await this.config.db.delete(collectionName, event.id as never);
+      await db.delete(collectionName, event.id as never);
       return;
     }
 
-    await this.upsertRow(collectionName, collectionConfig, event.data as Record<string, unknown>);
+    await this.upsertRow(
+      collectionName,
+      collectionConfig,
+      event.data as Record<string, unknown>,
+      db,
+    );
   }
 
   protected async applyAnyCollectionEvent(
     event: ChangeBusEvent<SyncHandlerDataMap<C>>,
+    db: DBAdapterOperations<C> = this.config.db,
   ): Promise<void> {
-    await this.applyEvent(event.collection as CollectionNames<C>, event as never);
+    await this.applyEvent(event.collection as CollectionNames<C>, event as never, db);
   }
 
   /**
@@ -188,19 +195,20 @@ export abstract class BaseSyncHandler<
     collectionName: N,
     collectionConfig: ConfigForName<C, N>,
     row: Record<string, unknown>,
+    db: DBAdapterOperations<C>,
   ): Promise<void> {
     const primaryField = collectionConfig.primaryField;
     const id = row[String(primaryField)];
     if (id !== undefined) {
       try {
-        await this.config.db.get(collectionName, id as never);
-        await this.config.db.update(collectionName, row as never);
+        await db.get(collectionName, id as never);
+        await db.update(collectionName, row as never);
         return;
       } catch {
         // Row does not exist yet — fall through to insert.
       }
     }
-    await this.config.db.insert(collectionName, row as never);
+    await db.insert(collectionName, row as never);
   }
 }
 

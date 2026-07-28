@@ -14,6 +14,7 @@
     "@ez-kits/sync-client-drizzle-adapter": "workspace:*",
     "@ez-kits/sync-client-react": "workspace:*",
     "@ez-kits/sync-firebase": "workspace:*",
+    "@faker-js/faker": "^10.5.0",
     "drizzle-orm": "catalog:",
     "firebase": "catalog:",
     "react": "catalog:",

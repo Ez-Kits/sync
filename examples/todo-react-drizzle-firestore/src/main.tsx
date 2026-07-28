@@ -6,6 +6,7 @@ import "./style.css";
 
 async function bootstrap() {
   await migrateLocalSchema();
+  // await seedTodosOnce();
 
   const root = document.querySelector<HTMLDivElement>("#app");
   if (!root) {

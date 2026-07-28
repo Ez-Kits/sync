@@ -19,6 +19,45 @@ type WorkerResponse = {
 };
 
 const DB_STORAGE_KEY = "ez-sync-todo-sqljs";
+const IDB_NAME = "ez-sync-todo-sqljs";
+const IDB_STORE = "database";
+const IDB_KEY = "snapshot";
+
+/**
+ * sql.js `db.export()` closes and reopens the database, which aborts any open
+ * transaction. Only persist when no transaction is active.
+ */
+function transactionDepthDelta(sql: string): number {
+  const normalized = sql.trim().toLowerCase();
+  if (normalized === "begin" || normalized.startsWith("begin ")) {
+    return 1;
+  }
+  if (
+    normalized === "commit" ||
+    normalized.startsWith("commit ") ||
+    normalized === "end" ||
+    normalized.startsWith("end ") ||
+    normalized === "rollback" ||
+    normalized.startsWith("rollback ")
+  ) {
+    return -1;
+  }
+  return 0;
+}
+
+function openIdb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IDB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Failed to open IndexedDB"));
+  });
+}
 
 export class SqlJsWorkerClient {
   private worker: Worker;
@@ -31,6 +70,10 @@ export class SqlJsWorkerClient {
     }
   >();
   private ready: Promise<void>;
+  /** Open SQLite transactions; persist is unsafe while > 0. */
+  private transactionDepth = 0;
+  /** When > 0, skip automatic persist (e.g. bulk seed). */
+  private persistPauseDepth = 0;
 
   constructor() {
     // Served from /public — Vite+/Rolldown currently fails bundling Worker modules.
@@ -70,6 +113,8 @@ export class SqlJsWorkerClient {
 
   async exec(sql: string, params: unknown[], method: ExecMethod): Promise<{ rows: unknown }> {
     await this.ready;
+    const depthDelta = transactionDepthDelta(sql);
+
     const response = await this.request({
       id: this.nextId++,
       action: "exec",
@@ -77,10 +122,14 @@ export class SqlJsWorkerClient {
       params: params.length > 0 ? params : undefined,
     });
 
+    if (depthDelta !== 0) {
+      this.transactionDepth = Math.max(0, this.transactionDepth + depthDelta);
+    }
+
     const values = response.results?.[0]?.values ?? [];
 
     if (method === "run") {
-      void this.persist();
+      await this.persistIfIdle();
       return { rows: [] };
     }
     if (method === "get") {
@@ -89,7 +138,25 @@ export class SqlJsWorkerClient {
     return { rows: values };
   }
 
+  private async persistIfIdle(): Promise<void> {
+    if (this.transactionDepth > 0 || this.persistPauseDepth > 0) return;
+    await this.persist();
+  }
+
+  /** Skip automatic persists until `resumePersist()` (pair for bulk writes). */
+  pausePersist(): void {
+    this.persistPauseDepth += 1;
+  }
+
+  async resumePersist(): Promise<void> {
+    this.persistPauseDepth = Math.max(0, this.persistPauseDepth - 1);
+    if (this.persistPauseDepth === 0) {
+      await this.persist();
+    }
+  }
+
   async persist(): Promise<void> {
+    if (this.transactionDepth > 0) return;
     await this.ready;
     const response = await this.request({
       id: this.nextId++,
@@ -103,20 +170,39 @@ export class SqlJsWorkerClient {
 
 async function loadPersistedDb(): Promise<ArrayBuffer | null> {
   try {
+    const db = await openIdb();
+    const fromIdb = await new Promise<ArrayBuffer | null>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const request = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      request.onsuccess = () => {
+        const value = request.result;
+        resolve(value instanceof ArrayBuffer ? value : null);
+      };
+      request.onerror = () => reject(request.error ?? new Error("Failed to read IndexedDB"));
+    });
+    db.close();
+    if (fromIdb) return fromIdb;
+
+    // One-time migration from the previous localStorage snapshot format.
     const raw = localStorage.getItem(DB_STORAGE_KEY);
     if (!raw) return null;
     const binary = Uint8Array.from(atob(raw), (char) => char.charCodeAt(0));
-    return binary.buffer;
+    const buffer = binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength);
+    await savePersistedDb(buffer);
+    localStorage.removeItem(DB_STORAGE_KEY);
+    return buffer;
   } catch {
     return null;
   }
 }
 
 async function savePersistedDb(buffer: ArrayBuffer): Promise<void> {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  localStorage.setItem(DB_STORAGE_KEY, btoa(binary));
+  const db = await openIdb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(buffer, IDB_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to write IndexedDB"));
+  });
+  db.close();
 }

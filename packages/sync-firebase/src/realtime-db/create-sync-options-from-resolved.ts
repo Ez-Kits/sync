@@ -1,12 +1,10 @@
 import type { ChangeBusEvent, ChangeBusEventDataMap, SyncOptions } from "@ez-kits/sync-client-core";
 import {
-  child,
   off,
   onChildAdded,
   onChildChanged,
   onChildRemoved,
   ref,
-  set,
   update,
   type DataSnapshot,
   type Database,
@@ -26,6 +24,24 @@ function defaultIsDeleted(data: unknown): boolean {
     "deleted" in data &&
     (data as { deleted?: unknown }).deleted === true
   );
+}
+
+function recordPath(collectionPath: string, recordId: string): string {
+  return `${collectionPath}/${recordId}`;
+}
+
+/**
+ * Merge fields into a record via multipath keys (`path/field`), matching `update(nodeRef, payload)`.
+ * Non-objects are written as a full path replace.
+ */
+function assignMergePaths(updates: Record<string, unknown>, path: string, payload: unknown): void {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    updates[path] = payload;
+    return;
+  }
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    updates[`${path}/${key}`] = value;
+  }
 }
 
 export function createRealtimeDBSyncOptionsFromResolved<
@@ -164,6 +180,8 @@ export function createRealtimeDBSyncOptionsFromResolved<
         collections.map((collectionConfig) => [collectionConfig.collectionName, collectionConfig]),
       );
 
+      const updates: Record<string, unknown> = {};
+
       for (const event of events) {
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
@@ -177,32 +195,32 @@ export function createRealtimeDBSyncOptionsFromResolved<
                 deleted: true,
                 deletedAt: Date.now(),
               };
-          await update(
-            child(ref(db, collectionPath), String(event.id)),
-            payload as Record<string, unknown>,
-          );
+          assignMergePaths(updates, recordPath(collectionPath, String(event.id)), payload);
           continue;
         }
 
         const recordId = collectionConfig.resolveRecordId
           ? collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>)
           : String((event.data as { id?: string | number }).id ?? crypto.randomUUID());
-        const nodeRef = child(ref(db, collectionPath), recordId);
+        const path = recordPath(collectionPath, recordId);
 
         if (event.type === "create") {
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : event.data;
-          await set(nodeRef, payload);
+          updates[path] = payload;
           continue;
         }
 
         const payload = collectionConfig.serializeUpdate
           ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
           : event.data;
-        await update(nodeRef, payload as Record<string, unknown>);
+        assignMergePaths(updates, path, payload);
       }
 
+      if (Object.keys(updates).length > 0) {
+        await update(ref(db), updates);
+      }
       commitChanges({ events });
     },
   };

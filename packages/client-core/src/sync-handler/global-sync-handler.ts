@@ -94,8 +94,12 @@ export class GlobalSyncHandler<
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
     checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
   ): Promise<void> {
-    for (const event of changes) {
-      await this.applyAnyCollectionEvent(event);
+    if (changes.length > 0) {
+      await this.config.db.transaction(async (tx) => {
+        for (const event of changes) {
+          await this.applyAnyCollectionEvent(event, tx);
+        }
+      });
     }
 
     this.config.changeBus.publishRemoteBatch(changes);
