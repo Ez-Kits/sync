@@ -1,23 +1,18 @@
-# vite-plus-starter
+# TypeORM DB adapter
 
-A starter for creating a Vite Plus project.
+`@ez-kits/sync-client-typeorm-adapter` connects the sync client to a TypeORM `DataSource`. It implements the core `DBAdapter` operations and runs transactional callbacks through a TypeORM `EntityManager`.
 
-## Development
+```ts
+import { createTypeOrmDBAdapter } from "@ez-kits/sync-client-typeorm-adapter";
 
-- Install dependencies:
-
-```bash
-vp install
+const dbAdapter = createTypeOrmDBAdapter({
+  db: dataSource,
+  collections,
+});
 ```
 
-- Run the unit tests:
+Pass `dbAdapter` to the sync client as its database adapter. Configure collection entity schemas through `collections`, or provide a matching `schema` map when using entities defined elsewhere.
 
-```bash
-vp test
-```
+`get` rejects when a record is missing. `getOptional` returns `undefined` for a missing record and still rejects on database errors, allowing the sync engine to distinguish absence from a failed query. Both methods support scalar and composite primary keys.
 
-- Build the library:
-
-```bash
-vp pack
-```
+`transaction` executes its callback against the transaction-scoped manager and exposes the same CRUD operations, including `getOptional`. TypeORM persistence and the client outbox are separate stores, so this adapter does not implement atomic local-mutation/outbox commits; the core uses its documented best-effort persistence path.

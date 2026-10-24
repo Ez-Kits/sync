@@ -28,6 +28,8 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:coverage": "vp test run --coverage",
+    "test:emulator": "firebase emulators:exec --config ../../firebase.json --project demo-ezsync --only firestore,database 'EZSYNC_FIREBASE_EMULATOR=1 vp test run tests/emulator.integration.test.ts'",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
@@ -36,8 +38,9 @@
     "@typescript/native-preview": "catalog:",
     "bumpp": "^11.0.1",
     "firebase": "catalog:",
+    "firebase-tools": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "^0.1.14"
+    "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "@ez-kits/sync-client-core": "workspace:*",

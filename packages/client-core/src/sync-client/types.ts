@@ -5,6 +5,7 @@ import type {
   ChangeBusSubscribeOptions,
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
+import type { ILocalChangeStore } from "../local-change-store";
 import type {
   CollectionConfigMap,
   CollectionNames,
@@ -12,7 +13,7 @@ import type {
   TCollectionRuntimeRecord,
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter/types";
-import type { SyncOptions } from "../sync-handler";
+import type { ConflictResolution, SyncAdapter, SyncStatusEvent } from "../sync-handler";
 
 export interface SyncClientConfig<
   C extends CollectionConfigMap<TCheckpoint>,
@@ -21,12 +22,22 @@ export interface SyncClientConfig<
 > {
   collections: C;
   dbAdapter: (schema: C) => DB;
-  sync?: SyncOptions<
+  syncAdapter?: SyncAdapter<
     ChangeBusEventDataMapFromCollectionConfigMap<C>,
     CollectionNames<C>,
     TCheckpoint
   >;
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
+  /** Override the default IndexedDB/memory outbox with an application adapter. */
+  localChangeStore?: ILocalChangeStore;
+  /** Optional lifecycle notifications. Sync errors never include document payloads. */
+  onSyncStatus?: (event: SyncStatusEvent) => void;
+  /** Resolves a remote change when the same record has unpushed local writes. */
+  resolveConflict?: ConflictResolution<ChangeBusEventDataMapFromCollectionConfigMap<C>>;
+  /** Browser clients sharing a local store should use the same coordination key. */
+  coordinationKey?: string;
+  /** Disable browser tab leadership for applications that manage it externally. */
+  coordinateTabs?: boolean;
 }
 
 export interface SyncClient<
@@ -39,6 +50,10 @@ export interface SyncClient<
   liveQuery: LiveQueryFn<C, DB>;
   startSync: () => void;
   stopSync: () => void;
+  /** Stop sync and release browser listeners/resources permanently. */
+  dispose: () => void;
+  /** Subscribe to lifecycle notifications; the current status is emitted immediately. */
+  subscribeStatus: (listener: (event: SyncStatusEvent) => void) => () => void;
   getCheckpoint: <N extends CollectionNames<C>>(collection: N) => Promise<TCheckpoint | undefined>;
   saveCheckpoint: <N extends CollectionNames<C>>(
     collection: N,

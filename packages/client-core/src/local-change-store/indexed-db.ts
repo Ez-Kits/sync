@@ -1,10 +1,11 @@
 import type { DirtyRecord, ILocalChangeStore, StoredChangeBusEvent } from "./types";
 
 const DEFAULT_DB_NAME = "ez-sync-local-changes";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const EVENTS_STORE = "change_events";
 const DIRTY_STORE = "dirty_records";
 const COLLECTION_INDEX = "by_collection";
+const LEASES_STORE = "sync_leases";
 
 export interface IndexedDBLocalChangeStoreConfig {
   dbName?: string;
@@ -40,6 +41,9 @@ function openDatabase(dbName: string): Promise<IDBDatabase> {
         });
         dirtyStore.createIndex(COLLECTION_INDEX, "collection", { unique: false });
       }
+      if (!db.objectStoreNames.contains(LEASES_STORE)) {
+        db.createObjectStore(LEASES_STORE, { keyPath: "key" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Failed to open IndexedDB"));
@@ -58,6 +62,7 @@ export function createIndexedDBLocalChangeStore(
   };
 
   return {
+    supportsCrossContextLeases: true,
     async appendEvents(events) {
       if (events.length === 0) return;
       const db = await getDb();
@@ -118,6 +123,39 @@ export function createIndexedDBLocalChangeStore(
         : await requestToPromise(store.getAll());
       await transactionDone(tx);
       return records as DirtyRecord[];
+    },
+
+    async acquireLease(key, owner, now, ttlMs) {
+      const db = await getDb();
+      const tx = db.transaction(LEASES_STORE, "readwrite");
+      const store = tx.objectStore(LEASES_STORE);
+      const previous = (await requestToPromise(store.get(key))) as
+        | { key: string; owner: string; expiresAt: number; fencingToken: number }
+        | undefined;
+      if (previous && previous.owner !== owner && previous.expiresAt > now) {
+        await transactionDone(tx);
+        return undefined;
+      }
+      const fencingToken =
+        previous?.owner === owner && previous.expiresAt > now
+          ? previous.fencingToken
+          : (previous?.fencingToken ?? 0) + 1;
+      store.put({ key, owner, expiresAt: now + ttlMs, fencingToken });
+      await transactionDone(tx);
+      return fencingToken;
+    },
+
+    async releaseLease(key, owner, fencingToken) {
+      const db = await getDb();
+      const tx = db.transaction(LEASES_STORE, "readwrite");
+      const store = tx.objectStore(LEASES_STORE);
+      const current = (await requestToPromise(store.get(key))) as
+        | { key: string; owner: string; fencingToken: number }
+        | undefined;
+      if (current?.owner === owner && current.fencingToken === fencingToken) {
+        store.put({ ...current, expiresAt: 0 });
+      }
+      await transactionDone(tx);
     },
   };
 }

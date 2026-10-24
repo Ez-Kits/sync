@@ -28,6 +28,7 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:coverage": "vp test run --coverage",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
@@ -35,7 +36,8 @@
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "catalog:",
     "bumpp": "^11.0.1",
+    "fake-indexeddb": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "^0.1.11"
+    "vite-plus": "catalog:"
   }
 }

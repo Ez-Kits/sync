@@ -59,7 +59,7 @@ export const db = drizzle(() => Promise.resolve({ rows: [] }), {
 const collection = defineDrizzleCollection({
   name: "users",
   table: users,
-  sync: {
+  syncAdapter: {
     pull: (options) => {
       options.commitChanges({
         changes: [],
@@ -87,7 +87,7 @@ const syncClient = createSyncClient({
     serializer: (checkpoint: string) => JSON.stringify(checkpoint),
     deserializer: (value: string) => JSON.parse(value) as string,
   }),
-  sync: {
+  syncAdapter: {
     pull: (options) => {
       options.commitChanges({
         changes: [],

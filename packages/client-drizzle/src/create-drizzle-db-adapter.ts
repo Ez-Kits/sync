@@ -132,6 +132,20 @@ function createOperations<
       }
       return row;
     },
+    async getOptional<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>> | undefined> {
+      const table = resolvedSchema[collection] as Table;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const rows = (await queryDb
+        .select()
+        .from(table)
+        .where(primaryCondition(table, primaryField, id))) as InferCollectionSelectModel<
+        ConfigForName<C, N>
+      >[];
+      return rows[0];
+    },
     async getMany<N extends CollectionNames<C>>(
       collection: N,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {

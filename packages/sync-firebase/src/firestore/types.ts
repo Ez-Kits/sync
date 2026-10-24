@@ -16,7 +16,7 @@ import type {
 } from "firebase/firestore";
 import type { CollectionKey } from "../shared/types.ts";
 
-export interface FirestoreCollectionSyncHandlers<
+export interface FirestoreSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
@@ -62,12 +62,12 @@ export interface FirestoreCollectionSyncHandlers<
   serializeDelete?: (id: C[N]["delete"]) => DocumentData;
 }
 
-/** Options for per-collection sync (`CollectionConfig.sync`). */
-export interface FirestoreCollectionSyncOptionsConfig<
+/** Firestore adapter configuration for one collection. */
+export interface FirestoreCollectionSyncAdapterConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends FirestoreCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends FirestoreSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Firestore;
   /**
    * Local collection name used in change-bus events.
@@ -79,8 +79,8 @@ export interface FirestoreCollectionSyncOptionsConfig<
   collectionPath: string;
 }
 
-/** Common options shared by all collections on a sync client. */
-export interface FirestoreSyncCommonOptions {
+/** Common Firestore adapter configuration shared by all collections. */
+export interface FirestoreSyncCommonAdapterConfig {
   db: Firestore;
   includeMetadataChanges?: boolean;
 }
@@ -95,43 +95,43 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
     }
   >;
 
-/** Per-collection options when configuring client-level Firestore sync. */
-export type FirestoreCollectionSyncConfigInput<
+/** Collection mapping input used by the client-level Firestore adapter. */
+export type FirestoreCollectionSyncAdapterConfigInput<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
 > = {
   collectionConfig: Col;
   collectionPath: string;
-} & FirestoreCollectionSyncHandlers<
+} & FirestoreSyncAdapterCollectionHandlers<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
   InferCollectionCheckpoint<Col>
 >;
 
-/** Resolved per-collection sync config returned by {@link defineFirestoreCollectionSyncConfig}. */
-export interface FirestoreCollectionSyncConfig<
+/** Resolved per-collection sync config returned by {@link defineFirestoreCollectionSyncAdapterConfig}. */
+export interface FirestoreSyncAdapterCollectionConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends FirestoreCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends FirestoreSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   collectionName: N;
   collectionPath: string;
 }
 
-/** Client-level sync options: common options + per-collection configs. */
-export interface FirestoreSyncOptionsConfig<
+/** Client-level Firestore adapter configuration. */
+export interface FirestoreSyncAdapterConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends FirestoreSyncCommonOptions {
-  collections: readonly FirestoreCollectionSyncConfig<C, N, TCheckpoint>[];
+> extends FirestoreSyncCommonAdapterConfig {
+  collections: readonly FirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
 }
 
 /** Internal resolved shape used by pull/push. */
-export interface ResolvedFirestoreCollectionSync<
+export interface ResolvedFirestoreSyncAdapterCollectionConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends FirestoreCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends FirestoreSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   collectionName: N;
   collectionPath: string;
 }

@@ -6,14 +6,14 @@ import {
   type BaseSyncHandlerConfig,
   type SyncHandlerDataMap,
 } from "./base-sync-handler";
-import type { SyncOptions } from "./types";
+import type { SyncAdapter } from "./types";
 
 export interface GlobalSyncHandlerConfig<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandlerConfig<C, DB, TCheckpoint> {
-  sync?: SyncOptions<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>;
+  syncAdapter?: SyncAdapter<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>;
 }
 
 export class GlobalSyncHandler<
@@ -24,14 +24,15 @@ export class GlobalSyncHandler<
   private pullCleanup: (() => void) | undefined;
   private pushUnsubscribe: (() => void) | undefined;
   private startToken: object | undefined;
+  private pullCommitQueue: Promise<void> = Promise.resolve();
 
   constructor(protected override readonly config: GlobalSyncHandlerConfig<C, DB, TCheckpoint>) {
     super(config);
   }
 
   start(): void {
-    const sync = this.config.sync;
-    if (!sync) return;
+    const syncAdapter = this.config.syncAdapter;
+    if (!syncAdapter) return;
     if (this.pullCleanup || this.pushUnsubscribe || this.startToken) return;
 
     const startToken = {};
@@ -39,19 +40,37 @@ export class GlobalSyncHandler<
 
     void (async () => {
       try {
+        this.pushUnsubscribe = this.config.changeBus.subscribe(
+          (_events) => {
+            void this.enqueuePush("global", () =>
+              this.collectAllPendingPushEvents().then((events) => {
+                if (events.length === 0) return;
+                return syncAdapter.push({
+                  events,
+                  commitChanges: ({ events: committedEvents }) => {
+                    void this.commitPushChanges(committedEvents);
+                  },
+                });
+              }),
+            );
+          },
+          { stream: "local" },
+        );
+
         for (const collection of this.config.collections) {
           const collectionName = collection.name as CollectionNames<C>;
           await this.flushPendingPushEvents(
             collectionName,
-            sync as SyncOptions<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>,
+            syncAdapter as SyncAdapter<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>,
             (events) => this.commitPushChanges(events),
+            "global",
           );
         }
 
         if (this.startToken !== startToken) return;
 
         const checkpointMap = await this.readCheckpointMap();
-        const cleanup = sync.pull({
+        const cleanup = await syncAdapter.pull({
           checkpoint: checkpointMap,
           commitChanges: ({ changes, checkpoint }) => {
             void this.commitPullChanges(changes, checkpoint);
@@ -60,18 +79,8 @@ export class GlobalSyncHandler<
         if (typeof cleanup === "function") {
           this.pullCleanup = cleanup;
         }
-
-        this.pushUnsubscribe = this.config.changeBus.subscribe(
-          (events) => {
-            sync.push({
-              events,
-              commitChanges: ({ events: committedEvents }) => {
-                void this.commitPushChanges(committedEvents);
-              },
-            });
-          },
-          { stream: "local" },
-        );
+      } catch (error) {
+        this.config.onSyncError?.(error);
       } finally {
         if (this.startToken === startToken) {
           this.startToken = undefined;
@@ -94,16 +103,25 @@ export class GlobalSyncHandler<
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
     checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
   ): Promise<void> {
-    if (changes.length > 0) {
-      await this.config.db.transaction(async (tx) => {
-        for (const event of changes) {
-          await this.applyAnyCollectionEvent(event, tx);
+    const next = this.pullCommitQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (changes.length > 0) {
+          await this.config.db.transaction(async (tx) => {
+            for (const event of changes) {
+              const resolved = await this.resolveRemoteEvent(event);
+              if (!resolved) continue;
+              await this.applyAnyCollectionEvent(resolved, tx);
+            }
+          });
         }
-      });
-    }
 
-    this.config.changeBus.publishRemoteBatch(changes);
-    await this.saveCheckpointMap(checkpoint);
+        this.config.changeBus.publishRemoteBatch(changes);
+        await this.saveCheckpointMap(checkpoint);
+        this.config.onSyncSuccess?.();
+      });
+    this.pullCommitQueue = next.catch((error) => this.config.onSyncError?.(error));
+    return this.pullCommitQueue;
   }
 
   private async commitPushChanges(events: ChangeBusEvent<SyncHandlerDataMap<C>>[]): Promise<void> {

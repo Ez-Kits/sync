@@ -1,25 +1,35 @@
 import type { ChangeBusEvent, ChangeBusEventDataMap } from "../change-bus";
 
-export interface SyncOptions<
+/** Public lifecycle states emitted by a sync client. */
+export type SyncStatus = "stopped" | "starting" | "syncing" | "idle" | "offline" | "error";
+
+export interface SyncStatusEvent {
+  status: SyncStatus;
+  /** Present when status is `error`. */
+  error?: unknown;
+  /** Number of locally queued events, when available. */
+  pendingEvents?: number;
+  changedAt: number;
+}
+
+/** App supplied policy for reconciling an incoming remote event with local data. */
+export type ConflictResolution<
+  C extends ChangeBusEventDataMap,
+  N extends keyof C = keyof C,
+> = (options: {
+  remote: ChangeBusEvent<C, N>;
+  local: unknown;
+}) => "remote" | "local" | { data: unknown } | Promise<"remote" | "local" | { data: unknown }>;
+
+export interface SyncAdapter<
   C extends ChangeBusEventDataMap,
   N extends keyof C = keyof C,
   TCheckpoint = unknown,
 > {
-  /**
-   * Pull changes from the remote server.
-   * This function is called once when the sync client is initialized.
-   * Setup your sync stream here.
-   * @param options - The options for the pull operation.
-   * @returns A function to clean up the pull operation.
-   */
-  pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void);
-
-  /**
-   * Push changes to the remote server.
-   * This function is called when local changes.
-   * @param options - The options for the push operation.
-   */
-  push(options: PushOptions<C, N>): void;
+  /** Open a pull stream. A returned cleanup function must stop every listener. */
+  pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
+  /** Resolve only after the provider has durably accepted every supplied event. */
+  push(options: PushOptions<C, N>): void | Promise<void>;
 }
 
 export type PullCheckpointMap<

@@ -6,7 +6,7 @@ import {
   type BaseSyncHandlerConfig,
   type SyncHandlerDataMap,
 } from "./base-sync-handler";
-import type { SyncOptions } from "./types";
+import type { SyncAdapter } from "./types";
 
 export type CollectionSyncHandlerConfig<
   C extends CollectionConfigMap<TCheckpoint>,
@@ -22,6 +22,7 @@ export class CollectionSyncHandler<
   private pullCleanups = new Map<CollectionNames<C>, Array<() => void>>();
   private pushUnsubscribes = new Map<CollectionNames<C>, () => void>();
   private startTokens = new Map<CollectionNames<C>, object>();
+  private pullCommitQueues = new Map<CollectionNames<C>, Promise<void>>();
 
   start<N extends CollectionNames<C>>(collectionName: N): void {
     if (
@@ -35,17 +36,20 @@ export class CollectionSyncHandler<
     const collectionConfig = this.collectionMap.get(collectionName);
     if (!collectionConfig) return;
 
-    const syncOptions = collectionConfig.sync as
-      | SyncOptions<SyncHandlerDataMap<C>, N, TCheckpoint>
+    const syncAdapter = collectionConfig.syncAdapter as
+      | SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>
       | undefined;
-    if (!syncOptions) return;
+    if (!syncAdapter) return;
 
     const startToken = {};
     this.startTokens.set(collectionName, startToken);
 
     void (async () => {
       try {
-        await this.flushPendingPushEvents(collectionName, syncOptions, (events) =>
+        const unsubscribe = this.startPushLoop(collectionName, syncAdapter);
+        if (unsubscribe) this.pushUnsubscribes.set(collectionName, unsubscribe);
+
+        await this.flushPendingPushEvents(collectionName, syncAdapter, (events) =>
           this.commitPushChanges(collectionName, events),
         );
 
@@ -53,12 +57,9 @@ export class CollectionSyncHandler<
 
         const pullCleanupList: Array<() => void> = [];
         this.pullCleanups.set(collectionName, pullCleanupList);
-        this.startPullLoop(collectionName, syncOptions, pullCleanupList);
-
-        const unsubscribe = this.startPushLoop(collectionName, syncOptions);
-        if (unsubscribe) {
-          this.pushUnsubscribes.set(collectionName, unsubscribe);
-        }
+        this.startPullLoop(collectionName, syncAdapter, pullCleanupList);
+      } catch (error) {
+        this.config.onSyncError?.(error);
       } finally {
         if (this.startTokens.get(collectionName) === startToken) {
           this.startTokens.delete(collectionName);
@@ -93,7 +94,7 @@ export class CollectionSyncHandler<
 
   private startPullLoop<N extends CollectionNames<C>>(
     collectionName: N,
-    syncOptions: SyncOptions<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
     pullCleanupList: Array<() => void>,
   ): void {
     void (async () => {
@@ -102,7 +103,7 @@ export class CollectionSyncHandler<
         checkpoint === undefined
           ? undefined
           : ({ [collectionName]: checkpoint } as Partial<Record<CollectionNames<C>, TCheckpoint>>);
-      const cleanup = syncOptions.pull({
+      const cleanup = await syncAdapter.pull({
         checkpoint: checkpointMap as Partial<Record<N, TCheckpoint>> | undefined,
         commitChanges: (options) => {
           void this.commitPullChanges(collectionName, options.changes, options.checkpoint);
@@ -111,22 +112,27 @@ export class CollectionSyncHandler<
       if (typeof cleanup === "function") {
         pullCleanupList.push(cleanup);
       }
-    })();
+    })().catch((error) => this.config.onSyncError?.(error));
   }
 
   private startPushLoop<N extends CollectionNames<C>>(
     collectionName: N,
-    syncOptions: SyncOptions<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
   ): (() => void) | undefined {
     return this.config.changeBus.subscribe(
       collectionName,
-      (events) => {
-        syncOptions.push({
-          events,
-          commitChanges: ({ events: committedEvents }) => {
-            void this.commitPushChanges(collectionName, committedEvents);
-          },
-        });
+      (_events) => {
+        void this.enqueuePush(String(collectionName), () =>
+          this.collectPendingPushEvents(collectionName).then((events) => {
+            if (events.length === 0) return;
+            return syncAdapter.push({
+              events,
+              commitChanges: ({ events: committedEvents }) => {
+                void this.commitPushChanges(collectionName, committedEvents);
+              },
+            });
+          }),
+        );
       },
       { stream: "local" },
     );
@@ -137,16 +143,29 @@ export class CollectionSyncHandler<
     changes: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
     checkpoint: Partial<Record<N, TCheckpoint>>,
   ): Promise<void> {
-    if (changes.length > 0) {
-      await this.config.db.transaction(async (tx) => {
-        for (const event of changes) {
-          await this.applyEvent(collectionName, event, tx);
+    const previous = this.pullCommitQueues.get(collectionName) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (changes.length > 0) {
+          await this.config.db.transaction(async (tx) => {
+            for (const event of changes) {
+              const resolved = await this.resolveRemoteEvent(
+                event as ChangeBusEvent<SyncHandlerDataMap<C>>,
+              );
+              if (!resolved) continue;
+              await this.applyEvent(collectionName, resolved as never, tx);
+            }
+          });
         }
-      });
-    }
 
-    this.config.changeBus.publishRemoteBatch(changes);
-    await this.saveCheckpointMap(checkpoint);
+        this.config.changeBus.publishRemoteBatch(changes);
+        await this.saveCheckpointMap(checkpoint);
+        this.config.onSyncSuccess?.();
+      });
+    const safeNext = next.catch((error) => this.config.onSyncError?.(error));
+    this.pullCommitQueues.set(collectionName, safeNext);
+    return safeNext;
   }
 
   private async commitPushChanges<N extends CollectionNames<C>>(

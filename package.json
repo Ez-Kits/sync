@@ -5,16 +5,19 @@
   "type": "module",
   "scripts": {
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
-    "test": "vp run test -r",
+    "test": "vp test",
+    "test:coverage": "vp test --coverage",
     "dev": "pnpm run --filter './packages/*' --parallel dev",
     "prepare": "vp config"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.11.0"
   },
   "packageManager": "pnpm@10.32.1"
 }

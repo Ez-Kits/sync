@@ -1,5 +1,11 @@
-import type { SyncOptions } from "@ez-kits/sync-client-core";
-import type { Column, InferInsertModel, InferSelectModel, Table } from "drizzle-orm";
+import type { SyncAdapter } from "@ez-kits/sync-client-core";
+import {
+  getColumns,
+  type Column,
+  type InferInsertModel,
+  type InferSelectModel,
+  type Table,
+} from "drizzle-orm";
 import type { DrizzleCollectionConfig, InferPrimaryField } from "./types";
 
 type DefaultPrimaryField<T extends Table> = Extract<
@@ -17,7 +23,7 @@ export type DefineDrizzleCollectionOptions<
   name: TName;
   table: T;
   primaryField?: PrimaryField;
-  sync?: SyncOptions<
+  syncAdapter?: SyncAdapter<
     Record<
       TName,
       {
@@ -48,20 +54,26 @@ export function defineDrizzleCollection<
   PrimaryField,
   TCheckpoint
 > {
-  const { name, table, primaryField, sync } = options;
+  const { name, table, primaryField, syncAdapter } = options;
   return {
     name,
     adapterConfig: {
       table,
     },
     primaryField: (primaryField ?? getPrimaryField(table)) as PrimaryField,
-    sync,
+    syncAdapter,
   };
 }
 
 function getPrimaryField<T extends Table>(table: T): DefaultPrimaryField<T> {
-  const columns = Object.entries(table._.columns) as [string, Column][];
-  const primaryField = columns.find(([, column]) => column._.isPrimaryKey);
+  const columns = Object.entries(getColumns(table)) as [string, Column][];
+  const primaryField = columns.find(([, column]) => {
+    const metadata = column as Column & {
+      primary?: boolean;
+      _?: { isPrimaryKey?: boolean };
+    };
+    return metadata.primary ?? metadata._?.isPrimaryKey ?? false;
+  });
 
   if (!primaryField) {
     throw new Error("Primary field not found");

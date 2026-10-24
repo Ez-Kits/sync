@@ -1,4 +1,4 @@
-import type { ChangeBusEvent, ChangeBusEventDataMap, SyncOptions } from "@ez-kits/sync-client-core";
+import type { ChangeBusEvent, ChangeBusEventDataMap, SyncAdapter } from "@ez-kits/sync-client-core";
 import {
   off,
   onChildAdded,
@@ -12,7 +12,7 @@ import {
 } from "firebase/database";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import type { CollectionKey } from "../shared/types.ts";
-import type { ResolvedRealtimeDBCollectionSync } from "./types.ts";
+import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Target for `onChild*` listeners (collection root or a narrowed RTDB `query`). */
 type RealtimeChildListenTarget = ReturnType<typeof ref> | Query;
@@ -44,14 +44,14 @@ function assignMergePaths(updates: Record<string, unknown>, path: string, payloa
   }
 }
 
-export function createRealtimeDBSyncOptionsFromResolved<
+export function createRealtimeDBSyncAdapterFromResolved<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
 >(
   db: Database,
-  collections: readonly ResolvedRealtimeDBCollectionSync<C, N, TCheckpoint>[],
-): SyncOptions<C, N, TCheckpoint> {
+  collections: readonly ResolvedRealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
+): SyncAdapter<C, N, TCheckpoint> {
   return {
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
@@ -181,10 +181,12 @@ export function createRealtimeDBSyncOptionsFromResolved<
       );
 
       const updates: Record<string, unknown> = {};
+      const handledEvents: ChangeBusEvent<C, N>[] = [];
 
       for (const event of events) {
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
+        handledEvents.push(event as ChangeBusEvent<C, N>);
 
         const { collectionPath } = collectionConfig;
 
@@ -221,7 +223,7 @@ export function createRealtimeDBSyncOptionsFromResolved<
       if (Object.keys(updates).length > 0) {
         await update(ref(db), updates);
       }
-      commitChanges({ events });
+      if (handledEvents.length > 0) commitChanges({ events: handledEvents });
     },
   };
 }

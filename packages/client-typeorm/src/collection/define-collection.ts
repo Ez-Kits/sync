@@ -1,4 +1,4 @@
-import type { SyncOptions } from "@ez-kits/sync-client-core";
+import type { SyncAdapter } from "@ez-kits/sync-client-core";
 import { getMetadataArgsStorage, type DeepPartial } from "typeorm";
 import type { EntityClass, TypeOrmCollectionConfig } from "./types";
 
@@ -11,7 +11,7 @@ export type DefineTypeormCollectionOptions<
   name: TName;
   entity: E;
   primaryField: PK;
-  sync?: SyncOptions<
+  syncAdapter?: SyncAdapter<
     Record<
       TName,
       {
@@ -33,7 +33,7 @@ export function defineTypeormCollection<
 >(
   options: DefineTypeormCollectionOptions<TName, E, PK, TCheckpoint>,
 ): TypeOrmCollectionConfig<TName, InstanceType<E>, E, PK, TCheckpoint> {
-  const { name, entity, primaryField, sync } = options;
+  const { name, entity, primaryField, syncAdapter } = options;
   const metaPk = getPrimaryKeyPropertyName(entity);
   if (metaPk !== primaryField) {
     throw new Error(
@@ -46,7 +46,7 @@ export function defineTypeormCollection<
       entity,
     },
     primaryField,
-    sync,
+    syncAdapter,
   };
 }
 

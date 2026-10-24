@@ -10,7 +10,7 @@ import type {
 import type { DataSnapshot, Database, Query } from "firebase/database";
 import type { CollectionKey } from "../shared/types.ts";
 
-export interface RealtimeDBCollectionSyncHandlers<
+export interface RealtimeDBSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
@@ -47,12 +47,12 @@ export interface RealtimeDBCollectionSyncHandlers<
   serializeDelete?: (id: C[N]["delete"]) => unknown;
 }
 
-/** Options for per-collection sync (`CollectionConfig.sync`). */
-export interface RealtimeDBCollectionSyncOptionsConfig<
+/** Realtime Database adapter configuration for one collection. */
+export interface RealtimeDBCollectionSyncAdapterConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends RealtimeDBCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends RealtimeDBSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Database;
   /**
    * Local collection name used in change-bus events.
@@ -64,8 +64,8 @@ export interface RealtimeDBCollectionSyncOptionsConfig<
   collectionPath: string;
 }
 
-/** Common options shared by all collections on a sync client. */
-export interface RealtimeDBSyncCommonOptions {
+/** Common Realtime Database adapter configuration. */
+export interface RealtimeDBSyncCommonAdapterConfig {
   db: Database;
 }
 
@@ -79,43 +79,43 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
     }
   >;
 
-/** Per-collection options when configuring client-level Realtime DB sync. */
-export type RealtimeDBCollectionSyncConfigInput<
+/** Collection mapping input used by the client-level RTDB adapter. */
+export type RealtimeDBCollectionSyncAdapterConfigInput<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
 > = {
   collectionConfig: Col;
   collectionPath: string;
-} & RealtimeDBCollectionSyncHandlers<
+} & RealtimeDBSyncAdapterCollectionHandlers<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
   InferCollectionCheckpoint<Col>
 >;
 
-/** Resolved per-collection sync config returned by {@link defineRealtimeDBCollectionSyncConfig}. */
-export interface RealtimeDBCollectionSyncConfig<
+/** Resolved per-collection sync config returned by {@link defineRealtimeDBCollectionSyncAdapterConfig}. */
+export interface RealtimeDBSyncAdapterCollectionConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends RealtimeDBCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends RealtimeDBSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   collectionName: N;
   collectionPath: string;
 }
 
-/** Client-level sync options: common options + per-collection configs. */
-export interface RealtimeDBSyncOptionsConfig<
+/** Client-level Realtime Database adapter configuration. */
+export interface RealtimeDBSyncAdapterConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends RealtimeDBSyncCommonOptions {
-  collections: readonly RealtimeDBCollectionSyncConfig<C, N, TCheckpoint>[];
+> extends RealtimeDBSyncCommonAdapterConfig {
+  collections: readonly RealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
 }
 
 /** Internal resolved shape used by pull/push. */
-export interface ResolvedRealtimeDBCollectionSync<
+export interface ResolvedRealtimeDBSyncAdapterCollectionConfig<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
-> extends RealtimeDBCollectionSyncHandlers<C, N, TCheckpoint> {
+> extends RealtimeDBSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   collectionName: N;
   collectionPath: string;
 }

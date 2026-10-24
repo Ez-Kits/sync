@@ -21,9 +21,20 @@ export class CollectionRuntime<
     private localChangeStore: ILocalChangeStore,
   ) {}
 
-  async insert(data: InferCollectionInsertModel<C>): Promise<void> {
-    await this.db.insert(this.config.name, data);
+  private async commitLocalChange(
+    event: StoredChangeBusEvent,
+    mutate: () => Promise<void>,
+  ): Promise<void> {
+    const persistOutboxEvent = () => this.localChangeStore.appendEvents([event]);
+    if (this.db.commitLocalMutation) {
+      await this.db.commitLocalMutation({ mutate, persistOutboxEvent });
+      return;
+    }
+    await mutate();
+    await persistOutboxEvent();
+  }
 
+  async insert(data: InferCollectionInsertModel<C>): Promise<void> {
     const eventId = crypto.randomUUID();
     const recordId = String((data as Record<string, unknown>)[String(this.config.primaryField)]);
     const now = Date.now();
@@ -37,7 +48,7 @@ export class CollectionRuntime<
       createdAt: now,
     };
 
-    await this.localChangeStore.appendEvents([storedEvent]);
+    await this.commitLocalChange(storedEvent, () => this.db.insert(this.config.name, data));
     await this.localChangeStore.upsertDirtyRecord({
       collection: this.config.name,
       recordId,
@@ -54,8 +65,6 @@ export class CollectionRuntime<
   }
 
   async update(data: InferCollectionUpdateModel<C>): Promise<void> {
-    await this.db.update(this.config.name, data);
-
     const eventId = crypto.randomUUID();
     const recordId = String((data as Record<string, unknown>)[String(this.config.primaryField)]);
     const now = Date.now();
@@ -69,7 +78,7 @@ export class CollectionRuntime<
       createdAt: now,
     };
 
-    await this.localChangeStore.appendEvents([storedEvent]);
+    await this.commitLocalChange(storedEvent, () => this.db.update(this.config.name, data));
     await this.localChangeStore.upsertDirtyRecord({
       collection: this.config.name,
       recordId,
@@ -86,8 +95,6 @@ export class CollectionRuntime<
   }
 
   async delete(id: InferCollectionPrimaryFieldType<C>): Promise<void> {
-    await this.db.delete(this.config.name, id);
-
     const eventId = crypto.randomUUID();
     const recordId = String(id);
     const now = Date.now();
@@ -100,7 +107,7 @@ export class CollectionRuntime<
       createdAt: now,
     };
 
-    await this.localChangeStore.appendEvents([storedEvent]);
+    await this.commitLocalChange(storedEvent, () => this.db.delete(this.config.name, id));
     await this.localChangeStore.upsertDirtyRecord({
       collection: this.config.name,
       recordId,

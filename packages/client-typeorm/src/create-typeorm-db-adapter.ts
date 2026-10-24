@@ -70,6 +70,17 @@ function createOperations<
       });
       return row as InferCollectionSelectModel<ConfigForName<C, N>>;
     },
+    async getOptional<N extends CollectionNames<C>>(
+      collection: N,
+      id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+    ): Promise<InferCollectionSelectModel<ConfigForName<C, N>> | undefined> {
+      const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
+      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const row = await source.getRepository(entity).findOne({
+        where: primaryWhere(primaryField, id),
+      });
+      return row === null ? undefined : (row as InferCollectionSelectModel<ConfigForName<C, N>>);
+    },
     async getMany<N extends CollectionNames<C>>(
       collection: N,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]> {

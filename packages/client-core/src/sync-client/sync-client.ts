@@ -11,8 +11,10 @@ import {
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter";
 import { createLocalChangeStore } from "../local-change-store";
+import type { ILocalChangeStore } from "../local-change-store";
 import { SyncHandler } from "../sync-handler";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
+import type { SyncStatusEvent } from "../sync-handler";
 
 type NetworkHost = {
   navigator?: { onLine?: boolean };
@@ -39,13 +41,22 @@ export class SyncClientImpl<
   private syncHandler: SyncHandler<C, DB, TCheckpoint>;
   private wantsSync = false;
   private networkCleanup: (() => void) | undefined;
+  private status: SyncStatusEvent = { status: "stopped", changedAt: Date.now() };
+  private statusListeners = new Set<(event: SyncStatusEvent) => void>();
+  private readonly localChangeStore: ILocalChangeStore;
+  private readonly leaseOwner = `sync-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+  private leaseToken: number | undefined;
+  private leaseTimer: ReturnType<typeof setInterval> | undefined;
+  private broadcastChannel: BroadcastChannel | undefined;
+  private broadcastCleanup: (() => void) | undefined;
 
   constructor(
     private config: SyncClientConfig<C, DB, TCheckpoint>,
     private db: DB,
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
-    const localChangeStore = createLocalChangeStore();
+    const localChangeStore = config.localChangeStore ?? createLocalChangeStore();
+    this.localChangeStore = localChangeStore;
 
     this.syncHandler = new SyncHandler<C, DB, TCheckpoint>({
       collections: config.collections,
@@ -53,7 +64,10 @@ export class SyncClientImpl<
       changeBus: this.changeBus,
       checkpointStorage: config.checkpointStorage,
       localChangeStore,
-      sync: config.sync,
+      syncAdapter: config.syncAdapter,
+      onSyncError: (error) => this.setStatus("error", error),
+      onSyncSuccess: () => this.setStatus("syncing"),
+      conflictResolver: config.resolveConflict,
     });
 
     this.collections = Object.fromEntries(
@@ -62,6 +76,21 @@ export class SyncClientImpl<
         new CollectionRuntime(col, this.db, this.changeBus, localChangeStore),
       ]),
     ) as unknown as TCollectionRuntimeRecord<C>;
+
+    if (typeof BroadcastChannel !== "undefined") {
+      const key = config.coordinationKey ?? "default";
+      this.broadcastChannel = new BroadcastChannel(`ez-sync:${key}`);
+      this.broadcastChannel.onmessage = (message: MessageEvent) => {
+        const payload = message.data as { type?: string; events?: ChangeBusEvent<any>[] };
+        if (payload?.type === "local-change" && Array.isArray(payload.events)) {
+          this.changeBus.publishRemoteBatch(payload.events);
+        }
+      };
+      this.broadcastCleanup = this.changeBus.subscribe(
+        (events) => this.broadcastChannel?.postMessage({ type: "local-change", events }),
+        { stream: "local" },
+      );
+    }
   }
 
   subscribe: SubscribeFn<C> = (...args: unknown[]) => {
@@ -134,15 +163,123 @@ export class SyncClientImpl<
     this.wantsSync = true;
     this.attachNetworkListeners();
     if (isBrowserNetworkAvailable()) {
-      this.syncHandler.startAll();
+      this.setStatus("starting");
+      this.startLeadership();
+    } else {
+      this.setStatus("offline");
     }
   };
 
   stopSync = () => {
     this.wantsSync = false;
     this.detachNetworkListeners();
-    this.syncHandler.stopAll();
+    this.stopLeadership();
+    this.setStatus("stopped");
   };
+
+  dispose = () => {
+    this.stopSync();
+    this.broadcastCleanup?.();
+    this.broadcastCleanup = undefined;
+    this.broadcastChannel?.close();
+    this.broadcastChannel = undefined;
+    this.statusListeners.clear();
+  };
+
+  subscribeStatus = (listener: (event: SyncStatusEvent) => void) => {
+    this.statusListeners.add(listener);
+    try {
+      listener(this.status);
+    } catch {
+      // A status observer cannot interrupt client construction or subscription.
+    }
+    return () => this.statusListeners.delete(listener);
+  };
+
+  private setStatus(status: SyncStatusEvent["status"], error?: unknown): void {
+    this.status = { status, error, changedAt: Date.now() };
+    try {
+      this.config.onSyncStatus?.(this.status);
+    } catch {
+      // Application observers must not interrupt sync lifecycle transitions.
+    }
+    for (const listener of this.statusListeners) {
+      try {
+        listener(this.status);
+      } catch {
+        // One observer must not block delivery to other observers.
+      }
+    }
+  }
+
+  private startLeadership(): void {
+    const browserClient = Boolean(getNetworkHost().navigator);
+    if (
+      this.config.coordinateTabs === false ||
+      !browserClient ||
+      !this.localChangeStore.acquireLease ||
+      !this.localChangeStore.supportsCrossContextLeases
+    ) {
+      this.syncHandler.startAll();
+      this.setStatus("syncing");
+      return;
+    }
+
+    if (!this.leaseTimer) {
+      void this.renewLeadership();
+      this.leaseTimer = setInterval(() => void this.renewLeadership(), 5_000);
+    }
+  }
+
+  private async renewLeadership(): Promise<void> {
+    if (!this.wantsSync || !isBrowserNetworkAvailable()) return;
+    try {
+      const token = await this.localChangeStore.acquireLease!(
+        this.config.coordinationKey ?? "default",
+        this.leaseOwner,
+        Date.now(),
+        15_000,
+      );
+      if (!this.wantsSync || !isBrowserNetworkAvailable()) {
+        if (token !== undefined) {
+          await this.localChangeStore.releaseLease?.(
+            this.config.coordinationKey ?? "default",
+            this.leaseOwner,
+            token,
+          );
+        }
+        return;
+      }
+      if (token === undefined) {
+        if (this.leaseToken !== undefined) this.syncHandler.stopAll();
+        this.leaseToken = undefined;
+        this.setStatus("idle");
+        return;
+      }
+      this.leaseToken = token;
+      this.syncHandler.startAll();
+      this.setStatus("syncing");
+    } catch (error) {
+      this.syncHandler.stopAll();
+      this.leaseToken = undefined;
+      this.setStatus("error", error);
+    }
+  }
+
+  private stopLeadership(): void {
+    if (this.leaseTimer) clearInterval(this.leaseTimer);
+    this.leaseTimer = undefined;
+    this.syncHandler.stopAll();
+    const token = this.leaseToken;
+    this.leaseToken = undefined;
+    if (token !== undefined) {
+      void this.localChangeStore.releaseLease?.(
+        this.config.coordinationKey ?? "default",
+        this.leaseOwner,
+        token,
+      );
+    }
+  }
 
   private attachNetworkListeners(): void {
     const host = getNetworkHost();
@@ -152,10 +289,12 @@ export class SyncClientImpl<
 
     const onOnline = () => {
       if (!this.wantsSync) return;
-      this.syncHandler.startAll();
+      this.setStatus("starting");
+      this.startLeadership();
     };
     const onOffline = () => {
-      this.syncHandler.stopAll();
+      this.stopLeadership();
+      this.setStatus("offline");
     };
 
     host.addEventListener("online", onOnline);

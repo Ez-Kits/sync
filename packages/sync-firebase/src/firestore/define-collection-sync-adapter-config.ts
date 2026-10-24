@@ -6,8 +6,8 @@ import type {
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type {
-  RealtimeDBCollectionSyncConfig,
-  RealtimeDBCollectionSyncConfigInput,
+  FirestoreSyncAdapterCollectionConfig,
+  FirestoreCollectionSyncAdapterConfigInput,
 } from "./types.ts";
 
 type EventMapFromCollectionConfig<Col extends CollectionConfig<any, any, any, any, any, any>> =
@@ -21,14 +21,14 @@ type EventMapFromCollectionConfig<Col extends CollectionConfig<any, any, any, an
   >;
 
 /**
- * Define per-collection Realtime DB sync config for use with
- * {@link createRealtimeDBSyncOptions}.
+ * Define per-collection Firestore sync config for use with
+ * {@link createFirestoreSyncAdapter}.
  */
-export function defineRealtimeDBCollectionSyncConfig<
+export function defineFirestoreCollectionSyncAdapterConfig<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
 >(
-  config: RealtimeDBCollectionSyncConfigInput<Col>,
-): RealtimeDBCollectionSyncConfig<
+  config: FirestoreCollectionSyncAdapterConfigInput<Col>,
+): FirestoreSyncAdapterCollectionConfig<
   EventMapFromCollectionConfig<Col>,
   Col["name"],
   InferCollectionCheckpoint<Col>

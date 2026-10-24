@@ -28,6 +28,11 @@ export interface DBAdapterOperations<C extends CollectionConfigMap> {
     collection: N,
     id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
   ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>>;
+  /** Return `undefined` only when the row is absent; database errors must reject. */
+  getOptional?<N extends CollectionNames<C>>(
+    collection: N,
+    id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
+  ): Promise<InferCollectionSelectModel<ConfigForName<C, N>> | undefined>;
   getMany<N extends CollectionNames<C>>(
     collection: N,
   ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]>;
@@ -45,4 +50,12 @@ export interface BaseDBAdapter<
    * All writes succeed together or none are applied.
    */
   transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T>;
+  /**
+   * Optional capability to atomically persist a local mutation and its outbox
+   * event. When omitted, the client uses best-effort sequential persistence.
+   */
+  commitLocalMutation?(options: {
+    mutate: () => Promise<void>;
+    persistOutboxEvent: () => Promise<void>;
+  }): Promise<void>;
 }

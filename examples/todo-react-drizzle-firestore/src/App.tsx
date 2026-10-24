@@ -19,7 +19,7 @@ function TodoApp() {
 
   const queryTodos = useCallback(
     (queryDb: typeof db) =>
-      queryDb.select().from(todos).orderBy(desc(todos.updatedAt)).limit(VISIBLE_TODO_LIMIT),
+      queryDb.select().from(todos).orderBy(desc(todos.id)).limit(VISIBLE_TODO_LIMIT),
     [],
   );
 
@@ -72,7 +72,7 @@ function TodoApp() {
         id: crypto.randomUUID(),
         title,
         completed: false,
-        updatedAt: Date.now(),
+        // updatedAt: Date.now(),
       });
       setDraft("");
     },
@@ -84,7 +84,7 @@ function TodoApp() {
       await client.collections.todos.update({
         id: todo.id,
         completed: !todo.completed,
-        updatedAt: Date.now(),
+        // updatedAt: Date.now(),
       });
     },
     [client],

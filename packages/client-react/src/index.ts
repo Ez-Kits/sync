@@ -53,29 +53,35 @@ export function createSyncClientReact<
     const client = useSyncClient();
     const dataRef = useRef<TResult | undefined>(undefined);
     const [isPending, setIsPending] = useState(false);
+    const [error, setError] = useState<Error | undefined>(undefined);
+    const collectionKey = options.collections?.join("\0");
+    const collections = useMemo(() => options.collections, [collectionKey]);
 
     const result = useSyncExternalStore(
       useCallback(
         (cb) => {
-          client.liveQuery({
-            collections: options.collections,
+          return client.liveQuery({
+            collections,
             query: async (qb, schema) => {
               try {
                 setIsPending(true);
+                setError(undefined);
                 return await options.query(qb, schema);
+              } catch (reason) {
+                setError(reason instanceof Error ? reason : new Error(String(reason)));
+                return undefined as TResult;
               } finally {
                 setIsPending(false);
               }
             },
             onData: (data) => {
-              cb();
               dataRef.current = data;
+              setIsPending(false);
+              cb();
             },
           });
-
-          return () => {};
         },
-        [options.collections, options.query],
+        [collections, options.query],
       ),
       () => {
         return dataRef.current;
@@ -85,7 +91,7 @@ export function createSyncClientReact<
     return {
       data: result,
       isPending,
-      error: undefined,
+      error,
     };
   }
   const result: CreateSyncClientReactResult<C, DB, TCheckpoint> = {

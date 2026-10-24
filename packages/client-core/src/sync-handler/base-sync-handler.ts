@@ -7,7 +7,8 @@ import type { ICheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
 import type { BaseDBAdapter, DBAdapterOperations } from "../db-adapter";
 import type { DirtyRecordState, ILocalChangeStore } from "../local-change-store";
-import type { SyncOptions } from "./types";
+import type { SyncAdapter } from "./types";
+import type { ConflictResolution } from "./types";
 
 export type SyncHandlerDataMap<C extends CollectionConfigMap> =
   ChangeBusEventDataMapFromCollectionConfigMap<C>;
@@ -22,6 +23,9 @@ export interface BaseSyncHandlerConfig<
   changeBus: ChangeBus<SyncHandlerDataMap<C>>;
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
   localChangeStore: ILocalChangeStore;
+  onSyncError?: (error: unknown) => void;
+  onSyncSuccess?: () => void;
+  conflictResolver?: ConflictResolution<SyncHandlerDataMap<C>>;
 }
 
 export abstract class BaseSyncHandler<
@@ -30,11 +34,39 @@ export abstract class BaseSyncHandler<
   TCheckpoint,
 > {
   protected readonly collectionMap: Map<CollectionNames<C>, C[number]>;
+  private pushQueues = new Map<string, Promise<void>>();
 
   constructor(protected readonly config: BaseSyncHandlerConfig<C, DB, TCheckpoint>) {
     this.collectionMap = new Map(
       config.collections.map((collection) => [collection.name, collection]),
     );
+  }
+
+  /** Serialize provider pushes and retry transient failures without acknowledging events. */
+  protected enqueuePush(key: string, push: () => void | Promise<void>): Promise<void> {
+    const previous = this.pushQueues.get(key) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        let delayMs = 250;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await push();
+            this.config.onSyncSuccess?.();
+            return;
+          } catch (error) {
+            this.config.onSyncError?.(error);
+            if (attempt >= 5) return;
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            delayMs = Math.min(delayMs * 2, 8_000);
+          }
+        }
+      });
+    this.pushQueues.set(key, next);
+    void next.finally(() => {
+      if (this.pushQueues.get(key) === next) this.pushQueues.delete(key);
+    });
+    return next;
   }
 
   protected async applyEvent<N extends CollectionNames<C>>(
@@ -67,6 +99,49 @@ export abstract class BaseSyncHandler<
     await this.applyEvent(event.collection as CollectionNames<C>, event as never, db);
   }
 
+  /** Apply the configured conflict hook only when this record has local pending writes. */
+  protected async resolveRemoteEvent(
+    event: ChangeBusEvent<SyncHandlerDataMap<C>>,
+  ): Promise<ChangeBusEvent<SyncHandlerDataMap<C>> | undefined> {
+    const resolver = this.config.conflictResolver;
+    if (!resolver) return event;
+    const collection = event.collection as CollectionNames<C>;
+    const primaryField = this.primaryFieldName(collection);
+    const recordId = String(
+      event.type === "delete" ? event.id : (event.data as Record<string, unknown>)[primaryField],
+    );
+    const [dirty, pending] = await Promise.all([
+      this.config.localChangeStore.getDirtyRecords(String(collection)),
+      this.config.localChangeStore.getPendingEvents(String(collection)),
+    ]);
+    if (
+      !dirty.some((record) => record.recordId === recordId) &&
+      !pending.some((record) => record.recordId === recordId)
+    ) {
+      return event;
+    }
+
+    let local: unknown;
+    try {
+      local = this.config.db.getOptional
+        ? await this.config.db.getOptional(collection, coerceRecordId(recordId) as never)
+        : await this.config.db.get(collection, coerceRecordId(recordId) as never);
+    } catch {
+      local = undefined;
+    }
+    const resolution = await resolver({ remote: event, local });
+    if (resolution === "local") return undefined;
+    if (resolution === "remote") return event;
+    if (event.type === "delete") {
+      return {
+        type: "update",
+        collection: event.collection,
+        data: resolution.data,
+      } as ChangeBusEvent<SyncHandlerDataMap<C>>;
+    }
+    return { ...event, data: resolution.data } as ChangeBusEvent<SyncHandlerDataMap<C>>;
+  }
+
   /**
    * Build push events from pending ChangeBusEvents persisted in the local change store.
    * Used on sync start to flush changes made while offline / before sync.
@@ -97,20 +172,32 @@ export abstract class BaseSyncHandler<
     });
   }
 
+  protected async collectAllPendingPushEvents(): Promise<ChangeBusEvent<SyncHandlerDataMap<C>>[]> {
+    const batches = await Promise.all(
+      this.config.collections.map((collection) =>
+        this.collectPendingPushEvents(collection.name as CollectionNames<C>),
+      ),
+    );
+    return batches.flat();
+  }
+
   protected async flushPendingPushEvents<N extends CollectionNames<C>>(
     collectionName: N,
-    syncOptions: SyncOptions<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
     commitPushChanges: (events: ChangeBusEvent<SyncHandlerDataMap<C>, N>[]) => Promise<void>,
+    queueKey = String(collectionName),
   ): Promise<void> {
     const events = await this.collectPendingPushEvents(collectionName);
     if (events.length === 0) return;
 
-    syncOptions.push({
-      events,
-      commitChanges: ({ events: committedEvents }) => {
-        void commitPushChanges(committedEvents);
-      },
-    });
+    await this.enqueuePush(queueKey, () =>
+      syncAdapter.push({
+        events,
+        commitChanges: ({ events: committedEvents }) => {
+          void commitPushChanges(committedEvents);
+        },
+      }),
+    );
   }
 
   /**
@@ -200,6 +287,15 @@ export abstract class BaseSyncHandler<
     const primaryField = collectionConfig.primaryField;
     const id = row[String(primaryField)];
     if (id !== undefined) {
+      if (db.getOptional) {
+        const existing = await db.getOptional(collectionName, id as never);
+        if (existing !== undefined) {
+          await db.update(collectionName, row as never);
+          return;
+        }
+        await db.insert(collectionName, row as never);
+        return;
+      }
       try {
         await db.get(collectionName, id as never);
         await db.update(collectionName, row as never);

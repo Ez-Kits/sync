@@ -33,7 +33,7 @@ export async function seedTodosOnce(): Promise<void> {
         id: faker.string.uuid(),
         title: faker.lorem.sentence(),
         completed: faker.datatype.boolean(),
-        updatedAt: faker.date.recent({ days: 365 }).getTime(),
+        // updatedAt: faker.date.recent({ days: 365 }).getTime(),
       });
 
       const inserted = i + 1;

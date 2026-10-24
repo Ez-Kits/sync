@@ -27,6 +27,7 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:coverage": "vp test run --coverage",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
@@ -38,7 +39,7 @@
     "reflect-metadata": "^0.2.2",
     "typeorm": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "^0.1.14"
+    "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "@ez-kits/sync-client-core": "workspace:*",

@@ -28,6 +28,7 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:coverage": "vp test run --coverage",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
@@ -35,13 +36,18 @@
     "@ez-kits/sync-client-core": "workspace:*"
   },
   "devDependencies": {
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
     "@types/node": "^25.5.0",
     "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "@typescript/native-preview": "catalog:",
     "bumpp": "^11.0.1",
+    "jsdom": "catalog:",
     "react": "catalog:",
+    "react-dom": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "^0.1.14"
+    "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "react": "catalog:"

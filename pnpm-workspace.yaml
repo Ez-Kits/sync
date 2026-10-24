@@ -5,24 +5,31 @@ packages:
   - examples/*
 
 catalog:
+  "@testing-library/dom": ^10.4.2
+  "@testing-library/react": ^16.3.3
   "@types/node": ^24
   "@types/react": ^19.2.14
+  "@types/react-dom": ^19.2.3
   "@typescript/native-preview": npm:typescript@^7
+  "@vitest/coverage-v8": 5.0.5
   drizzle-orm: 1.0.0-beta.9-e89174b
+  fake-indexeddb: ^6.2.6
   firebase: ^12.12.1
+  firebase-tools: ^15.34.1
+  jsdom: ^30.1.3
   react: ^19.2.5
   react-dom: ^19.2.5
   typeorm: ^0.3.28
   typescript: ^7
-  vite: npm:@voidzero-dev/vite-plus-core@latest
-  vite-plus: latest
-  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite-plus: 1.4.0
+  vitest: 5.0.5
 
 catalogMode: prefer
 overrides:
   typescript: "catalog:"
-  vite: "catalog:"
-  vitest: "catalog:"
+  vite@*: "catalog:"
+  vitest@*: "catalog:"
 peerDependencyRules:
   allowAny:
     - vite

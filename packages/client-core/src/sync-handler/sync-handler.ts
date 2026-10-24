@@ -3,14 +3,14 @@ import type { BaseDBAdapter } from "../db-adapter";
 import { type BaseSyncHandlerConfig, type SyncHandlerDataMap } from "./base-sync-handler";
 import { CollectionSyncHandler } from "./collection-sync-handler";
 import { GlobalSyncHandler } from "./global-sync-handler";
-import type { SyncOptions } from "./types";
+import type { SyncAdapter } from "./types";
 
 export interface SyncHandlerConfig<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandlerConfig<C, DB, TCheckpoint> {
-  sync?: SyncOptions<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>;
+  syncAdapter?: SyncAdapter<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>;
 }
 
 /**

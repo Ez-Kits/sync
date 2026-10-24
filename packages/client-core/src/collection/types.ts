@@ -1,4 +1,4 @@
-import type { SyncOptions } from "../sync-handler";
+import type { SyncAdapter } from "../sync-handler";
 
 export interface CollectionConfig<
   TCollectionName extends string,
@@ -12,7 +12,7 @@ export interface CollectionConfig<
   name: TCollectionName;
   adapterConfig: AdapterConfig;
   primaryField: PrimaryField;
-  sync?: SyncOptions<
+  syncAdapter?: SyncAdapter<
     Record<
       TCollectionName,
       {

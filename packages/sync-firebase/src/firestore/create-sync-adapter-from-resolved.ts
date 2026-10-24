@@ -1,4 +1,4 @@
-import type { ChangeBusEvent, ChangeBusEventDataMap, SyncOptions } from "@ez-kits/sync-client-core";
+import type { ChangeBusEvent, ChangeBusEventDataMap, SyncAdapter } from "@ez-kits/sync-client-core";
 import {
   doc,
   collection as getCollectionRef,
@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import type { CollectionKey } from "../shared/types.ts";
-import type { ResolvedFirestoreCollectionSync } from "./types.ts";
+import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Firestore allows at most 500 writes per batch. */
 const FIRESTORE_BATCH_LIMIT = 500;
@@ -36,15 +36,15 @@ function buildPullSource(
   return query(collectionRef, ...constraints);
 }
 
-export function createFirestoreSyncOptionsFromResolved<
+export function createFirestoreSyncAdapterFromResolved<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
   TCheckpoint,
 >(
   db: Firestore,
-  collections: readonly ResolvedFirestoreCollectionSync<C, N, TCheckpoint>[],
+  collections: readonly ResolvedFirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
   common: { includeMetadataChanges?: boolean } = {},
-): SyncOptions<C, N, TCheckpoint> {
+): SyncAdapter<C, N, TCheckpoint> {
   return {
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
@@ -143,6 +143,7 @@ export function createFirestoreSyncOptionsFromResolved<
       );
 
       const batches: WriteBatch[] = [];
+      const handledEvents: ChangeBusEvent<C, N>[] = [];
       let currentBatch = writeBatch(db);
       let opsInCurrentBatch = 0;
 
@@ -169,6 +170,7 @@ export function createFirestoreSyncOptionsFromResolved<
       for (const event of events) {
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
+        handledEvents.push(event as ChangeBusEvent<C, N>);
 
         const { collectionPath } = collectionConfig;
 
@@ -208,7 +210,7 @@ export function createFirestoreSyncOptionsFromResolved<
       for (const batch of batches) {
         await batch.commit();
       }
-      commitChanges({ events });
+      if (handledEvents.length > 0) commitChanges({ events: handledEvents });
     },
   };
 }

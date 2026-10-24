@@ -1,11 +1,11 @@
-export { createFirestoreCollectionSyncOptions } from "./create-collection-sync-options.ts";
-export { createFirestoreSyncOptions } from "./create-sync-options.ts";
-export { defineFirestoreCollectionSyncConfig } from "./define-collection-sync-config.ts";
+export { createFirestoreCollectionSyncAdapter } from "./create-collection-sync-adapter.ts";
+export { createFirestoreSyncAdapter } from "./create-sync-adapter.ts";
+export { defineFirestoreCollectionSyncAdapterConfig } from "./define-collection-sync-adapter-config.ts";
 export type {
-  FirestoreCollectionSyncConfig,
-  FirestoreCollectionSyncConfigInput,
-  FirestoreCollectionSyncHandlers,
-  FirestoreCollectionSyncOptionsConfig,
-  FirestoreSyncCommonOptions,
-  FirestoreSyncOptionsConfig,
+  FirestoreSyncAdapterCollectionConfig,
+  FirestoreCollectionSyncAdapterConfigInput,
+  FirestoreSyncAdapterCollectionHandlers,
+  FirestoreCollectionSyncAdapterConfig,
+  FirestoreSyncCommonAdapterConfig,
+  FirestoreSyncAdapterConfig,
 } from "./types.ts";

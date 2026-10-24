@@ -1,11 +1,11 @@
-export { createRealtimeDBCollectionSyncOptions } from "./create-collection-sync-options.ts";
-export { createRealtimeDBSyncOptions } from "./create-sync-options.ts";
-export { defineRealtimeDBCollectionSyncConfig } from "./define-collection-sync-config.ts";
+export { createRealtimeDBCollectionSyncAdapter } from "./create-collection-sync-adapter.ts";
+export { createRealtimeDBSyncAdapter } from "./create-sync-adapter.ts";
+export { defineRealtimeDBCollectionSyncAdapterConfig } from "./define-collection-sync-adapter-config.ts";
 export type {
-  RealtimeDBCollectionSyncConfig,
-  RealtimeDBCollectionSyncConfigInput,
-  RealtimeDBCollectionSyncHandlers,
-  RealtimeDBCollectionSyncOptionsConfig,
-  RealtimeDBSyncCommonOptions,
-  RealtimeDBSyncOptionsConfig,
+  RealtimeDBSyncAdapterCollectionConfig,
+  RealtimeDBCollectionSyncAdapterConfigInput,
+  RealtimeDBSyncAdapterCollectionHandlers,
+  RealtimeDBCollectionSyncAdapterConfig,
+  RealtimeDBSyncCommonAdapterConfig,
+  RealtimeDBSyncAdapterConfig,
 } from "./types.ts";
