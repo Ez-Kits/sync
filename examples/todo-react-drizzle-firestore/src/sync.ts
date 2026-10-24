@@ -1,6 +1,6 @@
 import { createLocalStorageCheckpointStorage } from "@ez-kits/sync-client-core";
 import {
-  createDrizzleDBAdapter,
+  createDrizzleStorage,
   defineDrizzleCollection,
 } from "@ez-kits/sync-client-drizzle-adapter";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
@@ -16,7 +16,7 @@ import {
   type QuerySnapshot,
 } from "firebase/firestore";
 import { db } from "./db/index.ts";
-import { schema, todos } from "./db/schema.ts";
+import { dirtyRecords, schema, syncEvents, todos } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
 
 export type TodoCheckpoint = Timestamp;
@@ -90,12 +90,12 @@ function createTodoFirestoreSyncAdapter() {
 export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
-    dbAdapter: (collections) =>
-      createDrizzleDBAdapter({
-        db,
-        collections,
-        schema,
-      }),
+    storage: createDrizzleStorage({
+      db,
+      collections: [todosCollection],
+      schema,
+      localChangeTables: { events: syncEvents, dirtyRecords },
+    }),
     checkpointStorage: createLocalStorageCheckpointStorage<string, TodoCheckpoint>({
       key: "ez-sync-todo-checkpoint",
       serializer: (checkpoint) =>

@@ -27,9 +27,6 @@ catalogs:
     drizzle-orm:
       specifier: 1.0.0-beta.9-e89174b
       version: 1.0.0-beta.9-e89174b
-    fake-indexeddb:
-      specifier: ^6.2.6
-      version: 6.2.6
     firebase:
       specifier: ^12.12.1
       version: 12.12.1
@@ -239,9 +236,6 @@ importers:
       bumpp:
         specifier: ^11.0.1
         version: 11.0.1
-      fake-indexeddb:
-        specifier: 'catalog:'
-        version: 6.2.6
       typescript:
         specifier: ^7
         version: 7.0.2
@@ -2766,10 +2760,6 @@ packages:
 
   extend@3.0.2:
     resolution: {integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==}
-
-  fake-indexeddb@6.2.6:
-    resolution: {integrity: sha512-ihhmr0KoET51jT8R4YhbUYuLLvr1qqO6INISygtN16i8loR8kAxtAUr4+EKHTSMjL+lggaAn4OC7DRqzrNgnuQ==}
-    engines: {node: '>=18'}
 
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
@@ -7087,8 +7077,6 @@ snapshots:
       - supports-color
 
   extend@3.0.2: {}
-
-  fake-indexeddb@6.2.6: {}
 
   fast-deep-equal@3.1.3: {}
 

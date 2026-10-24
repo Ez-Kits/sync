@@ -119,5 +119,16 @@ export function createTypeOrmDBAdapter<
         fn(createOperations(manager, resolvedSchema, collections)),
       );
     },
+    async commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
+      return db.transaction(async (manager) => {
+        const context = {
+          operations: createOperations(manager, resolvedSchema, collections),
+          native: manager,
+        };
+        await mutate(context);
+        await persistOutboxEvent(context);
+        await persistDirtyRecord(context);
+      });
+    },
   };
 }

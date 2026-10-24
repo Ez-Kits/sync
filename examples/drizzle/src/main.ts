@@ -1,10 +1,10 @@
 import { createLocalStorageCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import {
-  createDrizzleDBAdapter,
+  createDrizzleStorage,
   defineDrizzleCollection,
 } from "@ez-kits/sync-client-drizzle-adapter";
 import { defineRelations } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { drizzle } from "drizzle-orm/sqlite-proxy";
 
 const users = sqliteTable(
@@ -28,10 +28,32 @@ const usersPosts = sqliteTable("users_posts", {
   postId: integer().references(() => posts.id),
 });
 
+const syncEvents = sqliteTable("ez_sync_events", {
+  id: text().primaryKey(),
+  type: text().notNull(),
+  collection: text().notNull(),
+  data: text({ mode: "json" }),
+  recordId: text().notNull(),
+  createdAt: integer().notNull(),
+});
+
+const dirtyRecords = sqliteTable(
+  "ez_sync_dirty_records",
+  {
+    collection: text().notNull(),
+    recordId: text().notNull(),
+    state: text().notNull(),
+    updatedAt: integer().notNull(),
+  },
+  (table) => [uniqueIndex("ez_sync_dirty_record_key").on(table.collection, table.recordId)],
+);
+
 const schema = {
   users,
   posts,
   usersPosts,
+  syncEvents,
+  dirtyRecords,
 };
 
 const relations = defineRelations(schema, (relation) => {
@@ -51,6 +73,8 @@ const relations = defineRelations(schema, (relation) => {
   };
 });
 
+// This query-only proxy is a placeholder; replace it with durable transactional
+// storage before using local collection mutations.
 export const db = drizzle(() => Promise.resolve({ rows: [] }), {
   schema,
   relations,
@@ -74,14 +98,16 @@ const collection = defineDrizzleCollection({
   },
 });
 
+const storage = createDrizzleStorage({
+  db,
+  collections: [collection],
+  schema,
+  localChangeTables: { events: syncEvents, dirtyRecords },
+});
+
 const syncClient = createSyncClient({
   collections: [collection],
-  dbAdapter: (collections) =>
-    createDrizzleDBAdapter({
-      db,
-      collections,
-      schema,
-    }),
+  storage,
   checkpointStorage: createLocalStorageCheckpointStorage({
     key: "checkpoint",
     serializer: (checkpoint: string) => JSON.stringify(checkpoint),

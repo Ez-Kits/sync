@@ -1,6 +1,7 @@
 import type { ChangeBus } from "../change-bus";
-import type { BaseDBAdapter } from "../db-adapter";
-import type { ILocalChangeStore, StoredChangeBusEvent } from "../local-change-store";
+import type { BaseDBAdapter, DBAdapterOperations } from "../db-adapter";
+import type { LocalMutationTransactionContext } from "../db-adapter/types";
+import type { AtomicLocalChangeStore, StoredChangeBusEvent } from "../local-change-store";
 import type {
   CollectionConfig,
   InferCollectionInsertModel,
@@ -18,20 +19,32 @@ export class CollectionRuntime<
     private config: C,
     private db: DB,
     private changeBus: ChangeBus<any>,
-    private localChangeStore: ILocalChangeStore,
+    private localChangeStore: AtomicLocalChangeStore,
   ) {}
 
   private async commitLocalChange(
     event: StoredChangeBusEvent,
-    mutate: () => Promise<void>,
+    mutate: (operations: DBAdapterOperations<any>) => Promise<void>,
+    dirtyRecord: {
+      collection: string;
+      recordId: string;
+      state: "dirty" | "deleted";
+      updatedAt: number;
+    },
   ): Promise<void> {
-    const persistOutboxEvent = () => this.localChangeStore.appendEvents([event]);
-    if (this.db.commitLocalMutation) {
-      await this.db.commitLocalMutation({ mutate, persistOutboxEvent });
-      return;
+    if (typeof this.db.commitLocalMutation !== "function") {
+      throw new Error("The database adapter must implement atomic local mutations.");
     }
-    await mutate();
-    await persistOutboxEvent();
+
+    const persistOutboxEvent = (context: LocalMutationTransactionContext<any>) =>
+      this.localChangeStore.appendEvents([event], context.native);
+    const persistDirtyRecord = (context: LocalMutationTransactionContext<any>) =>
+      this.localChangeStore.upsertDirtyRecord(dirtyRecord, context.native);
+    await this.db.commitLocalMutation({
+      mutate: (context) => mutate(context.operations),
+      persistOutboxEvent,
+      persistDirtyRecord,
+    });
   }
 
   async insert(data: InferCollectionInsertModel<C>): Promise<void> {
@@ -48,13 +61,16 @@ export class CollectionRuntime<
       createdAt: now,
     };
 
-    await this.commitLocalChange(storedEvent, () => this.db.insert(this.config.name, data));
-    await this.localChangeStore.upsertDirtyRecord({
-      collection: this.config.name,
-      recordId,
-      state: "dirty",
-      updatedAt: now,
-    });
+    await this.commitLocalChange(
+      storedEvent,
+      (operations) => operations.insert(this.config.name, data),
+      {
+        collection: this.config.name,
+        recordId,
+        state: "dirty",
+        updatedAt: now,
+      },
+    );
 
     this.changeBus.publishLocal({
       type: "create",
@@ -78,13 +94,16 @@ export class CollectionRuntime<
       createdAt: now,
     };
 
-    await this.commitLocalChange(storedEvent, () => this.db.update(this.config.name, data));
-    await this.localChangeStore.upsertDirtyRecord({
-      collection: this.config.name,
-      recordId,
-      state: "dirty",
-      updatedAt: now,
-    });
+    await this.commitLocalChange(
+      storedEvent,
+      (operations) => operations.update(this.config.name, data),
+      {
+        collection: this.config.name,
+        recordId,
+        state: "dirty",
+        updatedAt: now,
+      },
+    );
 
     this.changeBus.publishLocal({
       type: "update",
@@ -103,17 +122,21 @@ export class CollectionRuntime<
       id: eventId,
       type: "delete",
       collection: this.config.name,
+      data: null,
       recordId,
       createdAt: now,
     };
 
-    await this.commitLocalChange(storedEvent, () => this.db.delete(this.config.name, id));
-    await this.localChangeStore.upsertDirtyRecord({
-      collection: this.config.name,
-      recordId,
-      state: "deleted",
-      updatedAt: now,
-    });
+    await this.commitLocalChange(
+      storedEvent,
+      (operations) => operations.delete(this.config.name, id),
+      {
+        collection: this.config.name,
+        recordId,
+        state: "deleted",
+        updatedAt: now,
+      },
+    );
 
     this.changeBus.publishLocal({
       type: "delete",

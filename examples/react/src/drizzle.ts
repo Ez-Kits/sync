@@ -1,12 +1,12 @@
 import {
-  createDrizzleDBAdapter,
+  createDrizzleStorage,
   defineDrizzleCollection,
 } from "@ez-kits/sync-client-drizzle-adapter";
-import { defineRelations } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { drizzle } from "drizzle-orm/sqlite-proxy";
-import { createSyncClientReact } from "@ez-kits/sync-client-react";
 import { createLocalStorageCheckpointStorage } from "@ez-kits/sync-client-core";
+import { createSyncClientReact } from "@ez-kits/sync-client-react";
+import { defineRelations } from "drizzle-orm";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { drizzle } from "drizzle-orm/sqlite-proxy";
 
 const users = sqliteTable(
   "users",
@@ -29,10 +29,32 @@ const usersPosts = sqliteTable("users_posts", {
   postId: integer().references(() => posts.id),
 });
 
+const syncEvents = sqliteTable("ez_sync_events", {
+  id: text().primaryKey(),
+  type: text().notNull(),
+  collection: text().notNull(),
+  data: text({ mode: "json" }),
+  recordId: text().notNull(),
+  createdAt: integer().notNull(),
+});
+
+const dirtyRecords = sqliteTable(
+  "ez_sync_dirty_records",
+  {
+    collection: text().notNull(),
+    recordId: text().notNull(),
+    state: text().notNull(),
+    updatedAt: integer().notNull(),
+  },
+  (table) => [uniqueIndex("ez_sync_dirty_record_key").on(table.collection, table.recordId)],
+);
+
 const schema = {
   users,
   posts,
   usersPosts,
+  syncEvents,
+  dirtyRecords,
 };
 
 const relations = defineRelations(schema, (relation) => {
@@ -64,12 +86,12 @@ const collection = defineDrizzleCollection({
 
 const { useLiveQuery } = createSyncClientReact({
   collections: [collection],
-  dbAdapter: (collections) =>
-    createDrizzleDBAdapter({
-      db,
-      collections,
-      schema,
-    }),
+  storage: createDrizzleStorage({
+    db,
+    collections: [collection],
+    schema,
+    localChangeTables: { events: syncEvents, dirtyRecords },
+  }),
   checkpointStorage: createLocalStorageCheckpointStorage({
     key: "checkpoint",
     serializer: (checkpoint: string) => JSON.stringify(checkpoint),
@@ -77,6 +99,8 @@ const { useLiveQuery } = createSyncClientReact({
   }),
 });
 
+// This query-only proxy is a placeholder; replace it with durable transactional
+// storage before using local collection mutations.
 export function useTestUseLiveQuery() {
   const { data } = useLiveQuery({
     query: (db) =>

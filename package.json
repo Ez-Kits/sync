@@ -7,7 +7,7 @@
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "test": "vp test",
     "test:coverage": "vp test --coverage",
-    "dev": "pnpm run --filter './packages/*' --parallel dev",
+    "dev": "vp run --filter './packages/*' --parallel dev",
     "prepare": "vp config"
   },
   "devDependencies": {

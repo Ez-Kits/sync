@@ -1,9 +1,9 @@
 import { expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
-import { createMemoryLocalChangeStore } from "../src/local-change-store/memory";
 import { CollectionSyncHandler } from "../src/sync-handler/collection-sync-handler";
 import { GlobalSyncHandler } from "../src/sync-handler/global-sync-handler";
 import { SyncHandler } from "../src/sync-handler/sync-handler";
+import { createTestLocalChangeStore } from "./helpers/local-change-store";
 
 const collection = (syncAdapter?: any) => ({
   name: "todos",
@@ -24,7 +24,7 @@ function fixture(adapter: any, overrides: Record<string, unknown> = {}) {
     transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
   };
   const changeBus = new ChangeBus<any>();
-  const localChangeStore = createMemoryLocalChangeStore();
+  const localChangeStore = createTestLocalChangeStore();
   const checkpointStorage = {
     getCheckpoint: vi.fn(async (): Promise<unknown> => undefined),
     saveCheckpoint: vi.fn(async () => {}),
@@ -163,7 +163,7 @@ test("collection handler handles missing adapters, pull errors, and database fai
 
 test("collection handler reports initial flush errors and recovers pull commit queue", async () => {
   const errors: unknown[] = [];
-  const badStore = createMemoryLocalChangeStore();
+  const badStore = createTestLocalChangeStore();
   vi.spyOn(badStore, "getPendingEvents").mockRejectedValueOnce(new Error("outbox read failed"));
   const failedStart = new CollectionSyncHandler(
     fixture(
@@ -215,7 +215,7 @@ test("collection handler reports initial flush errors and recovers pull commit q
 
 test("stopping while initial flush is pending cancels the pending start", async () => {
   let resolve!: (events: never[]) => void;
-  const store = createMemoryLocalChangeStore();
+  const store = createTestLocalChangeStore();
   vi.spyOn(store, "getPendingEvents").mockImplementationOnce(
     () =>
       new Promise((done) => {
@@ -288,7 +288,7 @@ test("global handler coordinates pull and push lifecycle and the wrapper keeps s
   };
   const f = fixture(adapter);
   await f.localChangeStore.appendEvents([
-    { id: "pending", type: "delete", collection: "todos", recordId: "2", createdAt: 1 },
+    { id: "pending", type: "delete", collection: "todos", data: null, recordId: "2", createdAt: 1 },
   ]);
   const global = new GlobalSyncHandler(f.config as never);
   global.start();
@@ -396,7 +396,7 @@ test("global handler pushes local events and recovers its pull commit queue", as
 
 test("global stop cancels a pending startup and local no-op events skip empty pushes", async () => {
   let resolve!: (events: never[]) => void;
-  const store = createMemoryLocalChangeStore();
+  const store = createTestLocalChangeStore();
   vi.spyOn(store, "getPendingEvents").mockImplementationOnce(
     () =>
       new Promise((done) => {

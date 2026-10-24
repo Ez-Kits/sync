@@ -5,7 +5,8 @@ import type {
   ChangeBusSubscribeOptions,
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
-import type { ILocalChangeStore } from "../local-change-store";
+import type { AtomicLocalMutationStorage } from "./storage-pair";
+import type { AtomicLocalChangeStore } from "../local-change-store";
 import type {
   CollectionConfigMap,
   CollectionNames,
@@ -19,17 +20,16 @@ export interface SyncClientConfig<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
+  Store extends AtomicLocalChangeStore,
 > {
   collections: C;
-  dbAdapter: (schema: C) => DB;
+  storage: AtomicLocalMutationStorage<DB, Store>;
   syncAdapter?: SyncAdapter<
     ChangeBusEventDataMapFromCollectionConfigMap<C>,
     CollectionNames<C>,
     TCheckpoint
   >;
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
-  /** Override the default IndexedDB/memory outbox with an application adapter. */
-  localChangeStore?: ILocalChangeStore;
   /** Optional lifecycle notifications. Sync errors never include document payloads. */
   onSyncStatus?: (event: SyncStatusEvent) => void;
   /** Resolves a remote change when the same record has unpushed local writes. */

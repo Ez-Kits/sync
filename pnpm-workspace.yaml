@@ -13,7 +13,6 @@ catalog:
   "@typescript/native-preview": npm:typescript@^7
   "@vitest/coverage-v8": 5.0.5
   drizzle-orm: 1.0.0-beta.9-e89174b
-  fake-indexeddb: ^6.2.6
   firebase: ^12.12.1
   firebase-tools: ^15.34.1
   jsdom: ^30.1.3

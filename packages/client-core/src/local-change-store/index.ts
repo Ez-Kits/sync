@@ -1,8 +1,8 @@
-export { createLocalChangeStore } from "./create-local-change-store";
 export type {
   DirtyRecord,
   DirtyRecordKey,
   DirtyRecordState,
+  AtomicLocalChangeStore,
   ILocalChangeStore,
   StoredChangeBusEvent,
 } from "./types";

@@ -10,7 +10,25 @@ Implement a `SyncAdapter` with provider `pull` and `push` methods. `pull` and `p
 
 ## Persistence guarantees
 
-The default outbox uses IndexedDB in browsers and memory where IndexedDB is unavailable. Supply `localChangeStore` for another durable implementation. Local database writes and outbox writes are sequential by default, so a process failure between the two can leave local data without a pending event. A database adapter may implement `commitLocalMutation` to atomically perform both operations. Adapters that cannot provide this capability should describe their durability as best effort.
+Every local collection mutation is crash-safe: the collection row, outbox event, and dirty-record state commit together or none are persisted. A `SyncClient` therefore requires an opaque, typed storage pair built from one database handle. The pair keeps the outbox abstraction separate while preventing callers from independently combining, spreading, or replacing a database adapter and store; provider adapters should use their paired storage creator.
+
+Custom database integrations can create the pair with `createAtomicLocalMutationStorage`. Both participants must be constructed using the supplied database handle, and the store must implement `AtomicLocalChangeStore`:
+
+```ts
+const storage = createAtomicLocalMutationStorage(
+  database,
+  (db) => createDatabaseAdapter(db),
+  (db) => createOutboxStore(db),
+);
+
+const client = createSyncClient({
+  collections,
+  storage,
+  checkpointStorage,
+});
+```
+
+The database adapter's required `commitLocalMutation` method must run the row mutation and both local-change writes in the same durable transaction. It passes its native transaction context to the store write methods, and the change bus is notified only after commit. Unsupported or incompatible storage rejects; there is no default outbox or best-effort mutation path. Core exports the local-change-store types only; database integrations provide the storage implementation.
 
 An adapter may implement `getOptional` to distinguish an absent record from a database failure. `get` remains available when callers require the row to exist.
 

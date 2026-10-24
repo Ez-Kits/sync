@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
-import { createMemoryLocalChangeStore } from "../src/local-change-store/memory";
 import { BaseSyncHandler } from "../src/sync-handler/base-sync-handler";
+import { createTestLocalChangeStore } from "./helpers/local-change-store";
 
 const collection = { name: "todos", adapterConfig: {}, primaryField: "id" };
 function fixture(overrides: Record<string, unknown> = {}) {
@@ -18,7 +18,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
     getCheckpoint: vi.fn(async (_name: string): Promise<unknown> => undefined),
     saveCheckpoint: vi.fn(async () => {}),
   };
-  const localChangeStore = createMemoryLocalChangeStore();
+  const localChangeStore = createTestLocalChangeStore();
   const config = {
     collections: [collection],
     db,
@@ -88,7 +88,7 @@ test("base handler maps pending events and maintains dirty state after acknowled
   const { handler, localChangeStore } = fixture();
   await localChangeStore.appendEvents([
     { id: "c", type: "create", collection: "todos", recordId: "1", data: { id: 1 }, createdAt: 1 },
-    { id: "d", type: "delete", collection: "todos", recordId: "2", createdAt: 2 },
+    { id: "d", type: "delete", collection: "todos", data: null, recordId: "2", createdAt: 2 },
   ]);
   expect(await handler.collect()).toEqual([
     { type: "create", collection: "todos", data: { id: 1 }, eventId: "c" },
@@ -113,7 +113,7 @@ test("acknowledging one of several changes preserves the latest dirty state", as
       data: { id: 1 },
       createdAt: 1,
     },
-    { id: "new", type: "delete", collection: "todos", recordId: "1", createdAt: 2 },
+    { id: "new", type: "delete", collection: "todos", data: null, recordId: "1", createdAt: 2 },
   ]);
   await localChangeStore.upsertDirtyRecord({
     collection: "todos",

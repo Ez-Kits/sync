@@ -36,7 +36,6 @@
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "catalog:",
     "bumpp": "^11.0.1",
-    "fake-indexeddb": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

@@ -185,5 +185,16 @@ export function createDrizzleDBAdapter<
     async transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
       return drizzleDb.transaction((tx) => fn(createOperations(tx, resolvedSchema, collections)));
     },
+    async commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
+      return drizzleDb.transaction(async (tx) => {
+        const context = {
+          operations: createOperations(tx, resolvedSchema, collections),
+          native: tx,
+        };
+        await mutate(context);
+        await persistOutboxEvent(context);
+        await persistDirtyRecord(context);
+      });
+    },
   };
 }

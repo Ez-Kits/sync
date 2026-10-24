@@ -26,6 +26,30 @@ export async function migrateLocalSchema(): Promise<void> {
     "run",
   );
 
+  await sqlJsWorker.exec(
+    `CREATE TABLE IF NOT EXISTS ez_sync_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      type TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      data TEXT,
+      recordId TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    )`,
+    [],
+    "run",
+  );
+  await sqlJsWorker.exec(
+    `CREATE TABLE IF NOT EXISTS ez_sync_dirty_records (
+      collection TEXT NOT NULL,
+      recordId TEXT NOT NULL,
+      state TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      UNIQUE (collection, recordId)
+    )`,
+    [],
+    "run",
+  );
+
   try {
     await sqlJsWorker.exec(
       `ALTER TABLE todos ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,

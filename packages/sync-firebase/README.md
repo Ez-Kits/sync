@@ -23,6 +23,8 @@ Deletes use tombstones by default (`deleted: true` with `deletedAt`) so listener
 
 Configure Firebase authentication and restrictive Firestore/Realtime Database security rules in the application. Never treat client configuration as authorization. Test reads, creates, updates, and tombstones under the production rules before release. The adapter does not install or manage Firebase rules.
 
+The Firebase Emulator Suite integration tests run with authenticated anonymous users against user-scoped test rules. They cover retry-safe pushes, updates, tombstones, permission-denied reads/writes, and Firestore checkpoint ties and cursor advancement. Run them with `pnpm --filter @ez-kits/sync-firebase test:emulator`. These fixtures exercise the adapter's release behavior; each host app must also verify its own deployed rules and authentication configuration.
+
 ## Development
 
 ```bash

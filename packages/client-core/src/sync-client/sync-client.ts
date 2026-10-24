@@ -10,11 +10,12 @@ import {
   type TCollectionRuntimeRecord,
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter";
-import { createLocalChangeStore } from "../local-change-store";
 import type { ILocalChangeStore } from "../local-change-store";
+import type { AtomicLocalChangeStore } from "../local-change-store";
 import { SyncHandler } from "../sync-handler";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 import type { SyncStatusEvent } from "../sync-handler";
+import { assertAtomicLocalMutationStorage } from "./storage-pair";
 
 type NetworkHost = {
   navigator?: { onLine?: boolean };
@@ -36,8 +37,10 @@ export class SyncClientImpl<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
+  Store extends AtomicLocalChangeStore,
 > implements SyncClient<C, DB, TCheckpoint> {
   readonly collections: TCollectionRuntimeRecord<C>;
+  private readonly db: DB;
   private syncHandler: SyncHandler<C, DB, TCheckpoint>;
   private wantsSync = false;
   private networkCleanup: (() => void) | undefined;
@@ -51,11 +54,13 @@ export class SyncClientImpl<
   private broadcastCleanup: (() => void) | undefined;
 
   constructor(
-    private config: SyncClientConfig<C, DB, TCheckpoint>,
-    private db: DB,
+    private config: SyncClientConfig<C, DB, TCheckpoint, Store>,
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
-    const localChangeStore = config.localChangeStore ?? createLocalChangeStore();
+    assertAtomicLocalMutationStorage(config.storage);
+    const localChangeStore = config.storage.localChangeStore;
+    const db = config.storage.dbAdapter;
+    this.db = db;
     this.localChangeStore = localChangeStore;
 
     this.syncHandler = new SyncHandler<C, DB, TCheckpoint>({

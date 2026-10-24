@@ -1,15 +1,13 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import "fake-indexeddb/auto";
 import { ChangeBus } from "../src/change-bus";
-import { createLocalChangeStore } from "../src/local-change-store/create-local-change-store";
-import { isIndexedDBAvailable } from "../src/local-change-store/indexed-db";
-import { createMemoryLocalChangeStore } from "../src/local-change-store/memory";
 import { createSyncClient } from "../src/sync-client/create-sync-client";
 import { SyncClientImpl } from "../src/sync-client/sync-client";
+import { createAtomicLocalMutationStorage } from "../src/sync-client/storage-pair";
+import { createTestLocalChangeStore } from "./helpers/local-change-store";
 
 const collection = { name: "todos", adapterConfig: {}, primaryField: "id" };
 function dbFixture() {
-  const db = {
+  const db: any = {
     queryBuilder: {},
     querySchema: { todos: {} },
     insert: vi.fn(async () => {}),
@@ -19,20 +17,34 @@ function dbFixture() {
     getMany: vi.fn(async () => []),
     transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
   };
+  db.commitLocalMutation = vi.fn(
+    async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
+      const context = { operations: db, native: db };
+      await mutate(context);
+      await persistOutboxEvent(context);
+      await persistDirtyRecord(context);
+    },
+  );
   return db;
 }
-function config(
-  db: any,
-  store = createMemoryLocalChangeStore(),
-  extra: Record<string, unknown> = {},
-) {
+function atomicMemoryStore() {
+  return {
+    ...createTestLocalChangeStore(),
+    atomicLocalMutationCapability: "atomic" as const,
+  };
+}
+function config(db: any, store: any = atomicMemoryStore(), extra: Record<string, unknown> = {}) {
   return {
     collections: [collection],
     checkpointStorage: {
       getCheckpoint: vi.fn(async () => undefined),
       saveCheckpoint: vi.fn(async () => {}),
     },
-    localChangeStore: store,
+    storage: createAtomicLocalMutationStorage(
+      db,
+      (database) => database,
+      () => store,
+    ),
     coordinateTabs: false,
     ...extra,
   } as any;
@@ -47,30 +59,87 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("store factory selects IndexedDB when available and memory when unavailable", async () => {
-  expect(isIndexedDBAvailable()).toBe(true);
-  const indexed = createLocalChangeStore();
-  expect(indexed.supportsCrossContextLeases).toBe(true);
-  const original = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
-  vi.stubGlobal("indexedDB", undefined);
-  expect(isIndexedDBAvailable()).toBe(false);
-  const memory = createLocalChangeStore();
-  expect(memory.supportsCrossContextLeases).toBe(false);
-  if (original) Object.defineProperty(globalThis, "indexedDB", original);
-});
-
-test("client creates its own local store when one is not configured", () => {
+test("client rejects missing paired storage instead of using a default outbox", () => {
   const db = dbFixture();
   const settings = { ...config(db) } as any;
-  delete settings.localChangeStore;
-  const client = new SyncClientImpl(settings, db as never, new ChangeBus<any>() as never);
-  client.dispose();
+  delete settings.storage;
+  expect(() => new SyncClientImpl(settings, new ChangeBus<any>() as never)).toThrow(
+    "Sync clients require a paired database adapter and local-change store",
+  );
+});
+
+test("client rejects a storage pair reassembled at runtime", () => {
+  const db = dbFixture();
+  const pair = createAtomicLocalMutationStorage(
+    db,
+    (database) => database,
+    () => atomicMemoryStore(),
+  );
+  // oxlint-disable-next-line typescript/no-misused-spread -- verifies runtime detection of a reassembled pair
+  const reassembled = { ...pair, localChangeStore: atomicMemoryStore() };
+
+  expect(
+    () =>
+      new SyncClientImpl(
+        {
+          collections: [collection],
+          storage: reassembled,
+          checkpointStorage: {
+            getCheckpoint: vi.fn(async () => undefined),
+            saveCheckpoint: vi.fn(async () => {}),
+          },
+        } as never,
+        new ChangeBus<any>(),
+      ),
+  ).toThrow("paired database adapter and local-change store");
+});
+
+test("storage API rejects unpaired adapters and non-atomic stores at type level", () => {
+  const db = dbFixture();
+  const store = atomicMemoryStore();
+  const checkpointStorage = {
+    getCheckpoint: vi.fn(async () => undefined),
+    saveCheckpoint: vi.fn(async () => {}),
+  };
+  const pairedStorage = createAtomicLocalMutationStorage(
+    db,
+    (database) => database,
+    () => store,
+  );
+  const reassembledStorage = {
+    // oxlint-disable-next-line typescript/no-misused-spread -- verifies that spreading loses the opaque pair type
+    ...pairedStorage,
+    localChangeStore: atomicMemoryStore(),
+  };
+  const invalidCalls = () => {
+    createSyncClient({
+      collections: [collection],
+      // @ts-expect-error clients require one branded database/store pair
+      dbAdapter: () => db,
+      localChangeStore: atomicMemoryStore(),
+      checkpointStorage,
+    });
+    createAtomicLocalMutationStorage(
+      db,
+      (database) => database,
+      // @ts-expect-error memory stores cannot satisfy the atomic store contract
+      () => createTestLocalChangeStore(),
+    );
+    createSyncClient({
+      collections: [collection],
+      // @ts-expect-error a pair cannot be reassembled with another local-change store
+      storage: reassembledStorage,
+      checkpointStorage,
+    });
+  };
+
+  expect(invalidCalls).toBeTypeOf("function");
 });
 
 test("factory creates a client, subscribe overloads filter streams, and live queries rerun on changes", async () => {
   vi.stubGlobal("BroadcastChannel", undefined);
   const db = dbFixture();
-  const client = createSyncClient({ ...config(db), dbAdapter: () => db as never } as never);
+  const client = createSyncClient(config(db) as never);
   const all = vi.fn();
   const remote = vi.fn();
   const single = vi.fn();
@@ -110,11 +179,10 @@ test("status callbacks are isolated, listeners receive initial state, and missin
     throw new Error("observer failed");
   });
   const client = new SyncClientImpl(
-    config(db, createMemoryLocalChangeStore(), {
+    config(db, atomicMemoryStore(), {
       coordinateTabs: true,
       onSyncStatus: statuses,
     }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   const badListener = vi.fn(() => {
@@ -159,14 +227,13 @@ test("browser coordination renews and releases leases, responds to network event
   });
   const db = dbFixture();
   const store = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(async (): Promise<number | undefined> => 7),
     releaseLease: vi.fn(async () => {}),
   };
   const client = new SyncClientImpl(
     config(db, store, { coordinateTabs: true, coordinationKey: "key" }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   const statuses: string[] = [];
@@ -221,14 +288,13 @@ test("lease loss and errors update status; a late lease is released after sync s
     resolveLease = resolve;
   });
   const store = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(() => late),
     releaseLease: vi.fn(async () => {}),
   };
   const client = new SyncClientImpl(
     config(db, store, { coordinateTabs: true }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   const statuses: string[] = [];
@@ -248,7 +314,7 @@ test("lease loss and errors update status; a late lease is released after sync s
   client.dispose();
 
   const failing = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(async () => {
       throw new Error("lease failed");
@@ -256,7 +322,6 @@ test("lease loss and errors update status; a late lease is released after sync s
   };
   const failedClient = new SyncClientImpl(
     config(db, failing, { coordinateTabs: true }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   const failedStatuses: string[] = [];
@@ -271,14 +336,13 @@ test("lease release uses the default coordination key", async () => {
   vi.stubGlobal("BroadcastChannel", undefined);
   const db = dbFixture();
   const store = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(async () => 1),
     releaseLease: vi.fn(async () => {}),
   };
   const client = new SyncClientImpl(
     config(db, store, { coordinateTabs: true }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   vi.useFakeTimers();
@@ -297,13 +361,12 @@ test("undefined lease leaves an unowned client idle", async () => {
   vi.stubGlobal("navigator", { onLine: true });
   const db = dbFixture();
   const store = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(async () => undefined),
   };
   const client = new SyncClientImpl(
     config(db, store, { coordinateTabs: true }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   client.startSync();
@@ -320,14 +383,13 @@ test("lease renewal skips offline or disabled clients and releases a late empty 
     resolveLease = resolve;
   });
   const store = {
-    ...createMemoryLocalChangeStore(),
+    ...atomicMemoryStore(),
     supportsCrossContextLeases: true,
     acquireLease: vi.fn(() => pending),
     releaseLease: vi.fn(async () => {}),
   };
   const client = new SyncClientImpl(
     config(db, store, { coordinateTabs: true }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   await (client as any).renewLeadership();
@@ -355,12 +417,11 @@ test("sync client maps handler success and failures into public status callbacks
     }),
   };
   const client = new SyncClientImpl(
-    config(db, createMemoryLocalChangeStore(), {
+    config(db, atomicMemoryStore(), {
       coordinateTabs: false,
       collections: [{ ...collection, syncAdapter: adapter }],
       syncAdapter: adapter,
     }) as never,
-    db as never,
     new ChangeBus<any>() as never,
   );
   const statuses: string[] = [];

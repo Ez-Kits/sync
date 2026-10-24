@@ -38,6 +38,11 @@ export interface DBAdapterOperations<C extends CollectionConfigMap> {
   ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]>;
 }
 
+export interface LocalMutationTransactionContext<C extends CollectionConfigMap> {
+  operations: DBAdapterOperations<C>;
+  native: unknown;
+}
+
 export interface BaseDBAdapter<
   C extends CollectionConfigMap,
   TQueryBuilder,
@@ -50,12 +55,10 @@ export interface BaseDBAdapter<
    * All writes succeed together or none are applied.
    */
   transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T>;
-  /**
-   * Optional capability to atomically persist a local mutation and its outbox
-   * event. When omitted, the client uses best-effort sequential persistence.
-   */
-  commitLocalMutation?(options: {
-    mutate: () => Promise<void>;
-    persistOutboxEvent: () => Promise<void>;
+  /** Atomically commit the row mutation with outbox and dirty-record writes. */
+  commitLocalMutation(options: {
+    mutate: (context: LocalMutationTransactionContext<C>) => Promise<void>;
+    persistOutboxEvent: (context: LocalMutationTransactionContext<C>) => Promise<void>;
+    persistDirtyRecord: (context: LocalMutationTransactionContext<C>) => Promise<void>;
   }): Promise<void>;
 }

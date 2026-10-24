@@ -1,11 +1,11 @@
 import { createLocalStorageCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import {
-  createTypeOrmDBAdapter,
+  createTypeOrmStorage,
   defineTypeormCollection,
 } from "@ez-kits/sync-client-typeorm-adapter";
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import { Post, User, UsersPosts } from "./entities/index.ts";
+import { Post, SyncDirtyRecord, SyncEvent, User, UsersPosts } from "./entities/index.ts";
 
 const schema = {
   users: User,
@@ -16,8 +16,10 @@ const schema = {
 export const dataSource = new DataSource({
   type: "sqljs",
   synchronize: true,
+  location: "ez-sync-typeorm-example",
+  autoSave: true,
   logging: false,
-  entities: [User, Post, UsersPosts],
+  entities: [User, Post, UsersPosts, SyncEvent, SyncDirtyRecord],
 });
 
 await dataSource.initialize();
@@ -30,12 +32,13 @@ const collection = defineTypeormCollection({
 
 const syncClient = createSyncClient({
   collections: [collection],
-  dbAdapter: (collections) =>
-    createTypeOrmDBAdapter({
-      db: dataSource,
-      collections,
-      schema,
-    }),
+  storage: createTypeOrmStorage({
+    db: dataSource,
+    collections: [collection],
+    schema,
+    eventEntity: SyncEvent,
+    dirtyRecordEntity: SyncDirtyRecord,
+  }),
   checkpointStorage: createLocalStorageCheckpointStorage({
     key: "checkpoint",
     serializer: (checkpoint: string) => JSON.stringify(checkpoint),

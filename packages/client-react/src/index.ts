@@ -2,6 +2,7 @@ import type {
   BaseDBAdapter,
   CollectionConfigMap,
   CollectionNames,
+  AtomicLocalChangeStore,
 } from "@ez-kits/sync-client-core";
 import { createSyncClient } from "@ez-kits/sync-client-core";
 import {
@@ -26,12 +27,13 @@ export function createSyncClientReact<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
+  Store extends AtomicLocalChangeStore,
 >(
-  options: CreateSyncClientReactOptions<C, DB, TCheckpoint>,
+  options: CreateSyncClientReactOptions<C, DB, TCheckpoint, Store>,
 ): CreateSyncClientReactResult<C, DB, TCheckpoint> {
-  const syncClient = createSyncClient(options);
+  const syncClient = createSyncClient<C, DB, TCheckpoint, Store>(options);
   const SyncClientContext = createContext<ReturnType<
-    typeof createSyncClient<C, DB, TCheckpoint>
+    typeof createSyncClient<C, DB, TCheckpoint, Store>
   > | null>(null);
 
   function SyncClientProvider({ children }: { children: ReactNode }) {
@@ -39,7 +41,7 @@ export function createSyncClientReact<
     return createElement(SyncClientContext.Provider, { value }, children);
   }
 
-  function useSyncClient(): ReturnType<typeof createSyncClient<C, DB, TCheckpoint>> {
+  function useSyncClient(): ReturnType<typeof createSyncClient<C, DB, TCheckpoint, Store>> {
     const ctx = useContext(SyncClientContext);
     if (!ctx) {
       throw new Error("useSyncClient must be used within the createSyncClientReact Provider");

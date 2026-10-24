@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { createSyncClientReact } from "../src/index";
+import { createAtomicLocalMutationStorage } from "@ez-kits/sync-client-core";
 
 const todoCollection = { name: "todos", adapterConfig: {}, primaryField: "id" };
 function setup() {
@@ -14,22 +15,32 @@ function setup() {
     get: vi.fn(async () => undefined),
     getMany: vi.fn(async () => []),
     transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
+    commitLocalMutation: vi.fn(async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
+      const context = { operations: db, native: db };
+      await mutate(context);
+      await persistOutboxEvent(context);
+      await persistDirtyRecord(context);
+    }),
   };
   const client = createSyncClientReact({
     collections: [todoCollection],
-    dbAdapter: () => db as never,
+    storage: createAtomicLocalMutationStorage(
+      db,
+      (database) => database as never,
+      () => ({
+        atomicLocalMutationCapability: "atomic" as const,
+        supportsCrossContextLeases: false,
+        appendEvents: vi.fn(async () => {}),
+        getPendingEvents: vi.fn(async () => []),
+        deleteEvents: vi.fn(async () => {}),
+        upsertDirtyRecord: vi.fn(async () => {}),
+        removeDirtyRecords: vi.fn(async () => {}),
+        getDirtyRecords: vi.fn(async () => []),
+      }),
+    ),
     checkpointStorage: {
       getCheckpoint: vi.fn(async () => undefined),
       saveCheckpoint: vi.fn(async () => {}),
-    },
-    localChangeStore: {
-      supportsCrossContextLeases: false,
-      appendEvents: vi.fn(async () => {}),
-      getPendingEvents: vi.fn(async () => []),
-      deleteEvents: vi.fn(async () => {}),
-      upsertDirtyRecord: vi.fn(async () => {}),
-      removeDirtyRecords: vi.fn(async () => {}),
-      getDirtyRecords: vi.fn(async () => []),
     },
   } as never);
   return { client, db };

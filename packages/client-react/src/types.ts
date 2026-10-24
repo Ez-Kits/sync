@@ -7,6 +7,7 @@ import type {
   SyncClientConfig,
 } from "@ez-kits/sync-client-core";
 import type { ComponentType, ReactNode } from "react";
+import type { AtomicLocalChangeStore } from "@ez-kits/sync-client-core";
 
 export interface CreateSyncClientReactResult<
   C extends CollectionConfigMap,
@@ -25,7 +26,8 @@ export interface CreateSyncClientReactOptions<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
-> extends SyncClientConfig<C, DB, TCheckpoint> {}
+  Store extends AtomicLocalChangeStore,
+> extends SyncClientConfig<C, DB, TCheckpoint, Store> {}
 
 export type UseLiveQuery<C extends CollectionConfigMap, DB extends BaseDBAdapter<C, any, any>> = <
   TResult,
