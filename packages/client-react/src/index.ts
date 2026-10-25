@@ -23,6 +23,8 @@ import type {
   UseLiveQueryResult,
 } from "./types.ts";
 
+export type * from "./types.ts";
+
 export function createSyncClientReact<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,

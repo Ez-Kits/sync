@@ -7,8 +7,7 @@ import type { ICheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
 import type { BaseDBAdapter, DBAdapterOperations } from "../db-adapter";
 import type { DirtyRecordState, ILocalChangeStore } from "../local-change-store";
-import type { SyncAdapter } from "./types";
-import type { ConflictResolution } from "./types";
+import type { ConflictResolution, SyncAdapter } from "./types";
 
 export type SyncHandlerDataMap<C extends CollectionConfigMap> =
   ChangeBusEventDataMapFromCollectionConfigMap<C>;

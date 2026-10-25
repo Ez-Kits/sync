@@ -52,6 +52,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     push(key: string, fn: () => void | Promise<void>, signal?: AbortSignal) {
       return this.enqueuePush(key, fn, signal);
     }
+    pull(subscribe: Parameters<BaseSyncHandler<any, any, any>["retryPull"]>[0]) {
+      return this.retryPull(subscribe);
+    }
   }
   return { handler: new Harness(config as never), db, checkpointStorage, localChangeStore };
 }
@@ -306,4 +309,57 @@ test("conflict resolver falls back to get and missing primary-field metadata use
     await noOptional.handler.resolve({ type: "update", collection: "todos", data: { id: 1 } }),
   ).toBeTruthy();
   expect(noOptional.db.get).toHaveBeenCalledWith("todos", 1);
+});
+
+test("push queue stops without retrying when aborted during a failed push", async () => {
+  const errors: unknown[] = [];
+  const { handler } = fixture({ onSyncError: (e: unknown) => errors.push(e) });
+  const abortedDuringPush = new AbortController();
+  const push = vi.fn(async () => {
+    abortedDuringPush.abort();
+    throw new Error("push failed after abort");
+  });
+  await handler.push("aborted-push", push, abortedDuringPush.signal);
+  expect(push).toHaveBeenCalledOnce();
+  expect(errors).toEqual([]);
+
+  const abortedByErrorHandler = new AbortController();
+  const { handler: other } = fixture({ onSyncError: () => abortedByErrorHandler.abort() });
+  const failing = vi.fn(async () => {
+    throw new Error("push failed");
+  });
+  await other.push("aborted-retry", failing, abortedByErrorHandler.signal);
+  expect(failing).toHaveBeenCalledOnce();
+});
+
+test("pull retries coalesce repeated errors and skip reconnects while still connecting", async () => {
+  vi.useFakeTimers();
+  try {
+    const errors: unknown[] = [];
+    const { handler } = fixture({ onSyncError: (e: unknown) => errors.push(e) });
+    let finishFirstConnect!: () => void;
+    const subscribe = vi
+      .fn()
+      .mockImplementationOnce(async (onError: (error: unknown) => void) => {
+        onError(new Error("first"));
+        onError(new Error("second"));
+        await new Promise<void>((resolve) => {
+          finishFirstConnect = resolve;
+        });
+      })
+      .mockImplementation(async () => {});
+    const stop = handler.pull(subscribe);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(errors).toHaveLength(2);
+    expect(subscribe).toHaveBeenCalledOnce();
+
+    finishFirstConnect();
+    await vi.advanceTimersByTimeAsync(0);
+    stop();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(subscribe).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
 });

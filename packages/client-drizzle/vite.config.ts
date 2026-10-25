@@ -27,6 +27,12 @@ export default defineConfig({
     // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
     clearMocks: false,
     include: ["tests/**/*.test.ts"],
+    // Type-level tests guarding the public API; run with `vp run test:types`.
+    typecheck: {
+      enabled: true,
+      include: ["tests/types/**/*.test-d.ts"],
+      tsconfig: "./tsconfig.test.json",
+    },
     coverage: {
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/**/*.d.ts", "src/**/types.ts"],

@@ -510,3 +510,51 @@ test("sync client maps handler success and failures into public status callbacks
   expect(statuses).toContain("error");
   client.dispose();
 });
+
+test("Web Locks ignore duplicate starts and empty grants and report request failures", async () => {
+  vi.stubGlobal("BroadcastChannel", undefined);
+  const requests: Array<{
+    name: string;
+    callback: (lock: unknown) => Promise<void>;
+    reject: (error: unknown) => void;
+  }> = [];
+  const locks = {
+    request: vi.fn(
+      (name: string, _options: unknown, callback: (lock: unknown) => Promise<void>) =>
+        new Promise<void>((_resolve, reject) => {
+          requests.push({ name, callback, reject });
+        }),
+    ),
+  };
+  vi.stubGlobal("navigator", { onLine: true, locks });
+  const statuses: Array<{ status: string; error?: unknown }> = [];
+  const client = new SyncClientImpl(
+    config(dbFixture(), atomicMemoryStore(), {
+      coordinateTabs: true,
+      onSyncStatus: (event: { status: string; error?: unknown }) => statuses.push(event),
+    }) as never,
+    new ChangeBus<any>() as never,
+  );
+  const startAll = vi.spyOn((client as any).syncHandler, "startAll");
+
+  client.startSync();
+  client.startSync();
+  expect(locks.request).toHaveBeenCalledOnce();
+  expect(requests[0]!.name).toBe("ez-sync:default");
+
+  await requests[0]!.callback(null);
+  expect(startAll).not.toHaveBeenCalled();
+
+  const failure = new Error("lock request failed");
+  requests[0]!.reject(failure);
+  await tick();
+  expect(statuses.at(-1)).toMatchObject({ status: "error", error: failure });
+
+  client.startSync();
+  expect(locks.request).toHaveBeenCalledTimes(2);
+  client.stopSync();
+  requests[1]!.reject(new Error("aborted"));
+  await tick();
+  expect(statuses.at(-1)).toMatchObject({ status: "stopped" });
+  client.dispose();
+});

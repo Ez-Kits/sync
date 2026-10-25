@@ -74,10 +74,14 @@ const relations = defineRelations(schema, (relation) => {
   };
 });
 
-export const db = drizzle(() => Promise.resolve({ rows: [] }), {
-  schema,
-  relations,
-});
+export const db = drizzle(
+  {
+    all: () => Promise.resolve([]),
+    get: () => Promise.resolve(undefined),
+    run: () => Promise.resolve(undefined),
+  },
+  { relations },
+);
 
 const collection = defineDrizzleCollection({
   name: "users",

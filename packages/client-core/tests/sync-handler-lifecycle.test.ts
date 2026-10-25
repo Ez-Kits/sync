@@ -517,3 +517,110 @@ test("global pull skips locally selected conflicts and reports commit failures",
   );
   handler.stop();
 });
+
+test("collection handler reports a rejected initial flush", async () => {
+  const onSyncError = vi.fn();
+  const f = fixture({ push: vi.fn(), pull: vi.fn() }, { onSyncError });
+  const handler = new CollectionSyncHandler(f.config as never);
+  vi.spyOn(handler as any, "flushPendingPushEvents").mockRejectedValueOnce(
+    new Error("flush failed"),
+  );
+  handler.start("todos" as never);
+  await tick();
+  expect(onSyncError).toHaveBeenCalledWith(expect.objectContaining({ message: "flush failed" }));
+  handler.stopAll();
+});
+
+test("collection handler skips pull startup when stopped during start and reports startup errors", async () => {
+  const adapter = { push: vi.fn(), pull: vi.fn() };
+  let handler!: CollectionSyncHandler<any, any, any>;
+  const reentrantBus = {
+    subscribe: vi.fn(() => {
+      handler.stop("todos" as never);
+      return undefined;
+    }),
+  };
+  handler = new CollectionSyncHandler(
+    fixture(adapter, { changeBus: reentrantBus }).config as never,
+  );
+  handler.start("todos" as never);
+  await tick();
+  expect(adapter.pull).not.toHaveBeenCalled();
+
+  const onSyncError = vi.fn();
+  const throwingBus = {
+    subscribe: vi.fn(() => {
+      throw new Error("subscribe failed");
+    }),
+  };
+  const failing = new CollectionSyncHandler(
+    fixture(adapter, { changeBus: throwingBus, onSyncError }).config as never,
+  );
+  failing.start("todos" as never);
+  expect(onSyncError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "subscribe failed" }),
+  );
+  failing.stopAll();
+});
+
+test("collection handler does not pull when stopped while reading its checkpoint", async () => {
+  let resolveCheckpoint!: (checkpoint: unknown) => void;
+  const adapter = { push: vi.fn(), pull: vi.fn() };
+  const f = fixture(adapter);
+  f.checkpointStorage.getCheckpoint.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveCheckpoint = resolve)),
+  );
+  const handler = new CollectionSyncHandler(f.config as never);
+  handler.start("todos" as never);
+  await tick();
+  handler.stop("todos" as never);
+  resolveCheckpoint({ cursor: 1 });
+  await tick();
+  expect(adapter.pull).not.toHaveBeenCalled();
+});
+
+test("global handler skips pull startup when stopped during start and reports startup errors", async () => {
+  const adapter = { push: vi.fn(), pull: vi.fn() };
+  let handler!: GlobalSyncHandler<any, any, any>;
+  const reentrantBus = {
+    subscribe: vi.fn(() => {
+      handler.stop();
+      return undefined;
+    }),
+  };
+  handler = new GlobalSyncHandler(fixture(adapter, { changeBus: reentrantBus }).config as never);
+  handler.start();
+  await tick();
+  expect(adapter.pull).not.toHaveBeenCalled();
+
+  const onSyncError = vi.fn();
+  const throwingBus = {
+    subscribe: vi.fn(() => {
+      throw new Error("subscribe failed");
+    }),
+  };
+  const failing = new GlobalSyncHandler(
+    fixture(adapter, { changeBus: throwingBus, onSyncError }).config as never,
+  );
+  failing.start();
+  expect(onSyncError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "subscribe failed" }),
+  );
+  failing.stop();
+});
+
+test("global handler does not pull when stopped while reading checkpoints", async () => {
+  let resolveCheckpoint!: (checkpoint: unknown) => void;
+  const adapter = { push: vi.fn(), pull: vi.fn() };
+  const f = fixture(adapter);
+  f.checkpointStorage.getCheckpoint.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveCheckpoint = resolve)),
+  );
+  const handler = new GlobalSyncHandler(f.config as never);
+  handler.start();
+  await tick();
+  handler.stop();
+  resolveCheckpoint({ cursor: 1 });
+  await tick();
+  expect(adapter.pull).not.toHaveBeenCalled();
+});

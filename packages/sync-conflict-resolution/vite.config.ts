@@ -17,5 +17,11 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["tests/**/*.test.ts"],
+    // Type-level tests guarding the public API; run with `vp run test:types`.
+    typecheck: {
+      enabled: true,
+      include: ["tests/types/**/*.test-d.ts"],
+      tsconfig: "./tsconfig.test.json",
+    },
   },
 });

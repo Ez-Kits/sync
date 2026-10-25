@@ -1,16 +1,17 @@
 import { drizzle } from "drizzle-orm/sqlite-proxy";
-import { schema } from "./schema.ts";
-import { SqlJsWorkerClient } from "./sqljs-worker-client.ts";
+import { SqlJsWorkerClient, type RowMode } from "./sqljs-worker-client.ts";
 
 export const sqlJsWorker = new SqlJsWorkerClient();
 
-export const db = drizzle(
-  async (sql, params, method) => {
-    const result = await sqlJsWorker.exec(sql, params, method);
-    return { rows: result.rows as unknown[] };
+export const db = drizzle({
+  all: async (sql: string, params: unknown[], rowMode?: RowMode) =>
+    (await sqlJsWorker.exec(sql, params, "all", rowMode)).rows as any[],
+  get: async (sql: string, params: unknown[], rowMode?: RowMode) =>
+    (await sqlJsWorker.exec(sql, params, "get", rowMode)).rows as any,
+  run: async (sql: string, params: unknown[]) => {
+    await sqlJsWorker.exec(sql, params, "run");
   },
-  { schema },
-);
+});
 
 export async function migrateLocalSchema(): Promise<void> {
   await sqlJsWorker.exec(

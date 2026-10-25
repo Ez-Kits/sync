@@ -75,10 +75,14 @@ const relations = defineRelations(schema, (relation) => {
 
 // This query-only proxy is a placeholder; replace it with durable transactional
 // storage before using local collection mutations.
-export const db = drizzle(() => Promise.resolve({ rows: [] }), {
-  schema,
-  relations,
-});
+export const db = drizzle(
+  {
+    all: () => Promise.resolve([]),
+    get: () => Promise.resolve(undefined),
+    run: () => Promise.resolve(undefined),
+  },
+  { relations },
+);
 
 const collection = defineDrizzleCollection({
   name: "users",

@@ -531,3 +531,21 @@ test("Realtime Database default push handles no-op batches, generated IDs, tombs
   expect(updates["todos/gone/deletedAt"]).toEqual(expect.any(Number));
   expect(commit).toHaveBeenCalledOnce();
 });
+
+test("Firestore pull reads tombstone timestamps exposed through toMillis", () => {
+  const adapter = createFirestoreCollectionSyncAdapter({
+    db: {} as never,
+    collectionPath: "todos",
+    createCheckpoint: () => "checkpoint",
+  } as never);
+  const commitChanges = vi.fn();
+  const cleanup = adapter.pull({ commitChanges } as never) as () => void;
+  const tombstone = docSnapshot("5", { deleted: true, deletedAt: { toMillis: () => 789 } });
+  sdk.firestoreCallbacks[0]!({ docChanges: () => [{ type: "modified", doc: tombstone }] });
+  expect(commitChanges).toHaveBeenCalledWith(
+    expect.objectContaining({
+      changes: [{ type: "delete", collection: "todos", id: "5", deletedAt: 789 }],
+    }),
+  );
+  cleanup();
+});

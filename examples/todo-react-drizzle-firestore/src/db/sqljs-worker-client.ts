@@ -1,4 +1,5 @@
-type ExecMethod = "run" | "all" | "values" | "get";
+type ExecMethod = "run" | "all" | "get";
+export type RowMode = "array" | "object";
 
 type WorkerRequest =
   | { id: number; action: "open"; buffer?: ArrayBuffer | null }
@@ -111,7 +112,12 @@ export class SqlJsWorkerClient {
     });
   }
 
-  async exec(sql: string, params: unknown[], method: ExecMethod): Promise<{ rows: unknown }> {
+  async exec(
+    sql: string,
+    params: unknown[],
+    method: ExecMethod,
+    rowMode: RowMode = "array",
+  ): Promise<{ rows: unknown }> {
     await this.ready;
     const depthDelta = transactionDepthDelta(sql);
 
@@ -126,16 +132,23 @@ export class SqlJsWorkerClient {
       this.transactionDepth = Math.max(0, this.transactionDepth + depthDelta);
     }
 
-    const values = response.results?.[0]?.values ?? [];
+    const result = response.results?.[0];
+    const values = result?.values ?? [];
 
     if (method === "run") {
       await this.persistIfIdle();
       return { rows: [] };
     }
+    const rows =
+      rowMode === "object"
+        ? values.map((row) =>
+            Object.fromEntries(result!.columns.map((column, index) => [column, row[index]])),
+          )
+        : values;
     if (method === "get") {
-      return { rows: values[0] };
+      return { rows: rows[0] };
     }
-    return { rows: values };
+    return { rows };
   }
 
   private async persistIfIdle(): Promise<void> {

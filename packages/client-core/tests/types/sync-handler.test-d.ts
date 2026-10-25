@@ -1,0 +1,57 @@
+import { expectTypeOf, test } from "vite-plus/test";
+import type {
+  ChangeBusEvent,
+  ChangeBusEventDataMapFromCollectionConfigMap,
+  ConflictResolution,
+  PullCheckpointMap,
+  PullOptions,
+  PushOptions,
+  SyncAdapter,
+  SyncStatus,
+} from "../../src";
+import type { Checkpoint, Collections, TodoSelect } from "./fixtures";
+
+type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<Collections>;
+type Adapter = SyncAdapter<DataMap, "todos" | "users", Checkpoint>;
+
+test("sync status is a closed union", () => {
+  expectTypeOf<SyncStatus>().toEqualTypeOf<
+    "stopped" | "starting" | "syncing" | "idle" | "offline" | "error"
+  >();
+});
+
+test("pull options carry typed checkpoints and events", () => {
+  expectTypeOf<Adapter["pull"]>()
+    .parameter(0)
+    .toEqualTypeOf<PullOptions<DataMap, "todos" | "users", Checkpoint>>();
+  expectTypeOf<PullCheckpointMap<DataMap, "todos" | "users", Checkpoint>>().toEqualTypeOf<{
+    todos?: Checkpoint;
+    users?: Checkpoint;
+  }>();
+  type Commit = PullOptions<DataMap, "todos", Checkpoint>["commitChanges"];
+  expectTypeOf<Commit>()
+    .parameter(0)
+    .toHaveProperty("changes")
+    .toEqualTypeOf<ChangeBusEvent<DataMap, "todos">[]>();
+});
+
+test("push options carry typed events", () => {
+  expectTypeOf<Adapter["push"]>()
+    .parameter(0)
+    .toEqualTypeOf<PushOptions<DataMap, "todos" | "users">>();
+  expectTypeOf<PushOptions<DataMap, "users">["events"]>().toEqualTypeOf<
+    ChangeBusEvent<DataMap, "users">[]
+  >();
+});
+
+test("conflict resolution receives the typed local record", () => {
+  type Context = Parameters<ConflictResolution<DataMap, "todos">>[0];
+  expectTypeOf<Context["local"]>().toEqualTypeOf<TodoSelect | undefined>();
+  expectTypeOf<Context["remote"]>().toEqualTypeOf<ChangeBusEvent<DataMap, "todos">>();
+
+  const resolve: ConflictResolution<DataMap> = () => "local";
+  expectTypeOf(resolve).returns.not.toBeAny();
+  // @ts-expect-error decisions are limited to local, remote, or replacement data
+  const invalid: ConflictResolution<DataMap> = () => "merge";
+  void invalid;
+});

@@ -27,6 +27,7 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
+    "test:types": "vp test run --typecheck.only",
     "test:coverage": "vp test run --coverage",
     "check": "vp check",
     "prepublishOnly": "vp run build"
