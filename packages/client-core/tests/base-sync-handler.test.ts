@@ -97,7 +97,7 @@ test("base handler maps pending events and maintains dirty state after acknowled
   ]);
   expect(await handler.collect()).toEqual([
     { type: "create", collection: "todos", data: { id: 1 }, eventId: "c" },
-    { type: "delete", collection: "todos", id: 2, eventId: "d" },
+    { type: "delete", collection: "todos", id: 2, deletedAt: 2, eventId: "d" },
   ]);
   expect((await handler.collectAll()).length).toBe(2);
   await handler.ack([{ type: "create", collection: "todos", data: { id: 1 }, eventId: "c" }]);

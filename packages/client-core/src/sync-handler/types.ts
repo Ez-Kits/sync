@@ -18,8 +18,14 @@ export type ConflictResolution<
   N extends keyof C = keyof C,
 > = (options: {
   remote: ChangeBusEvent<C, N>;
-  local: unknown;
+  local: ConflictLocalRecord<C, N> | undefined;
 }) => "remote" | "local" | { data: unknown } | Promise<"remote" | "local" | { data: unknown }>;
+
+type ConflictLocalRecord<C extends ChangeBusEventDataMap, N extends keyof C> = C[N] extends {
+  record: infer Record;
+}
+  ? Record
+  : C[N]["create"] | C[N]["update"];
 
 export interface SyncAdapter<
   C extends ChangeBusEventDataMap,

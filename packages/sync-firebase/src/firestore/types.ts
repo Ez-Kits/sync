@@ -5,6 +5,7 @@ import type {
   InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
+  InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type {
@@ -57,9 +58,13 @@ export interface FirestoreSyncAdapterCollectionHandlers<
     data: DocumentData,
     context: { snapshot: QueryDocumentSnapshot<DocumentData> },
   ) => boolean;
+  resolveDeletedAt?: (
+    data: DocumentData,
+    context: { snapshot: QueryDocumentSnapshot<DocumentData> },
+  ) => number | undefined;
   serializeCreate?: (data: C[N]["create"]) => DocumentData;
   serializeUpdate?: (data: C[N]["update"]) => DocumentData;
-  serializeDelete?: (id: C[N]["delete"]) => DocumentData;
+  serializeDelete?: (id: C[N]["delete"], context: { deletedAt: number }) => DocumentData;
 }
 
 /** Firestore adapter configuration for one collection. */
@@ -92,6 +97,7 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
       create: InferCollectionInsertModel<Col>;
       update: InferCollectionUpdateModel<Col>;
       delete: InferCollectionPrimaryFieldType<Col>;
+      record: InferCollectionSelectModel<Col>;
     }
   >;
 

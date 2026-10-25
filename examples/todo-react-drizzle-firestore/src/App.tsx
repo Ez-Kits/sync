@@ -17,15 +17,12 @@ function TodoApp() {
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
 
-  const queryTodos = useCallback(
-    (queryDb: typeof db) =>
-      queryDb.select().from(todos).orderBy(desc(todos.id)).limit(VISIBLE_TODO_LIMIT),
-    [],
-  );
-
   const { data, isPending } = useLiveQuery({
     collections: useMemo(() => ["todos"], []),
-    query: queryTodos,
+    query: useCallback(
+      (queryDb) => queryDb.select().from(todos).orderBy(desc(todos.id)).limit(VISIBLE_TODO_LIMIT),
+      [],
+    ),
   });
 
   useEffect(() => {
@@ -72,7 +69,7 @@ function TodoApp() {
         id: crypto.randomUUID(),
         title,
         completed: false,
-        // updatedAt: Date.now(),
+        updatedAt: Date.now(),
       });
       setDraft("");
     },
@@ -84,7 +81,7 @@ function TodoApp() {
       await client.collections.todos.update({
         id: todo.id,
         completed: !todo.completed,
-        // updatedAt: Date.now(),
+        updatedAt: Date.now(),
       });
     },
     [client],

@@ -3,6 +3,7 @@ import type {
   InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
+  InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type {
@@ -17,6 +18,7 @@ type EventMapFromCollectionConfig<Col extends CollectionConfig<any, any, any, an
       create: InferCollectionInsertModel<Col>;
       update: InferCollectionUpdateModel<Col>;
       delete: InferCollectionPrimaryFieldType<Col>;
+      record: InferCollectionSelectModel<Col>;
     }
   >;
 

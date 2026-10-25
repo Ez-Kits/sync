@@ -79,6 +79,9 @@ test("collection runtime persists outbox and dirty records before publishing, an
     "update",
     "delete",
   ]);
+  expect(listener.mock.calls.flatMap(([events]) => events as any[]).at(-1)?.deletedAt).toEqual(
+    expect.any(Number),
+  );
   expect(db.insert).toHaveBeenCalledWith("todos", { id: "1", title: "a" });
   expect(db.get).toHaveBeenCalledWith("todos", "1");
   expect(db.getMany).toHaveBeenCalledWith("todos");

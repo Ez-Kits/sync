@@ -9,6 +9,7 @@ EzSync is a modular, local-first sync library for TypeScript applications. The c
 - `@ez-kits/sync-client-typeorm-adapter`: local database adapter for TypeORM.
 - `@ez-kits/sync-client-react`: React bindings.
 - `@ez-kits/sync-firebase`: Firestore and Realtime Database remote adapters.
+- `@ez-kits/sync-conflict-resolution`: provider-neutral built-in conflict policies.
 
 See each package README for setup and adapter configuration. Firebase authentication and security rules are configured by the host application.
 

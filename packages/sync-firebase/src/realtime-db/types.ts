@@ -5,6 +5,7 @@ import type {
   InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
+  InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { DataSnapshot, Database, Query } from "firebase/database";
@@ -42,9 +43,10 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
   deserializeUpdate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["update"];
   deserializeDeleteId?: (context: { snapshot: DataSnapshot }) => C[N]["delete"];
   isDeleted?: (data: unknown, context: { snapshot: DataSnapshot }) => boolean;
+  resolveDeletedAt?: (data: unknown, context: { snapshot: DataSnapshot }) => number | undefined;
   serializeCreate?: (data: C[N]["create"]) => unknown;
   serializeUpdate?: (data: C[N]["update"]) => unknown;
-  serializeDelete?: (id: C[N]["delete"]) => unknown;
+  serializeDelete?: (id: C[N]["delete"], context: { deletedAt: number }) => unknown;
 }
 
 /** Realtime Database adapter configuration for one collection. */
@@ -76,6 +78,7 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
       create: InferCollectionInsertModel<Col>;
       update: InferCollectionUpdateModel<Col>;
       delete: InferCollectionPrimaryFieldType<Col>;
+      record: InferCollectionSelectModel<Col>;
     }
   >;
 

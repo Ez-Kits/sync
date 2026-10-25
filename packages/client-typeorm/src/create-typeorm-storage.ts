@@ -1,15 +1,19 @@
+import type {
+  AtomicLocalChangeStore,
+  DirtyRecord,
+  StoredChangeBusEvent,
+} from "@ez-kits/sync-client-core";
 import {
   createAtomicLocalMutationStorage,
   type CollectionConfigMap,
   type CollectionNames,
 } from "@ez-kits/sync-client-core";
 import type { DataSource } from "typeorm";
-import type { EntityClass, BuildSchemaFromCollections } from "./collection";
+import type { BuildSchemaFromCollections, EntityClass } from "./collection";
 import { createTypeOrmDBAdapter } from "./create-typeorm-db-adapter";
-import { createTypeOrmLocalChangeStore } from "./create-typeorm-local-change-store";
 import type { TypeOrmSchemaTypeCheck } from "./create-typeorm-local-change-store";
-import type { DirtyRecord, StoredChangeBusEvent } from "@ez-kits/sync-client-core";
-import type { TypeOrmDBAdapterConfig } from "./types";
+import { createTypeOrmLocalChangeStore } from "./create-typeorm-local-change-store";
+import type { TypeOrmDBAdapter, TypeOrmDBAdapterConfig } from "./types";
 
 export type TypeOrmStorageConfig<
   C extends CollectionConfigMap,
@@ -33,7 +37,11 @@ export function createTypeOrmStorage<
   ...typeCheck: TypeOrmSchemaTypeCheck<TEventEntity, TDirtyEntity>
 ) {
   void typeCheck;
-  return createAtomicLocalMutationStorage(
+  return createAtomicLocalMutationStorage<
+    TDataSource,
+    TypeOrmDBAdapter<C, TDataSource, TSchema>,
+    AtomicLocalChangeStore
+  >(
     config.db,
     (db) =>
       createTypeOrmDBAdapter({

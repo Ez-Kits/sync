@@ -26,6 +26,19 @@ function defaultIsDeleted(data: unknown): boolean {
   );
 }
 
+function deletedAtFrom(data: unknown): number {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "deletedAt" in data &&
+    typeof data.deletedAt === "number" &&
+    Number.isFinite(data.deletedAt)
+  ) {
+    return data.deletedAt;
+  }
+  return Date.now();
+}
+
 function recordPath(collectionPath: string, recordId: string): string {
   return `${collectionPath}/${recordId}`;
 }
@@ -96,6 +109,8 @@ export function createRealtimeDBSyncAdapterFromResolved<
                     type: "delete",
                     collection: collectionName,
                     id,
+                    deletedAt:
+                      collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
                   } as unknown as ChangeBusEvent<C, N>,
                 ],
                 checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
@@ -133,6 +148,8 @@ export function createRealtimeDBSyncAdapterFromResolved<
                     type: "delete",
                     collection: collectionName,
                     id,
+                    deletedAt:
+                      collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
                   } as unknown as ChangeBusEvent<C, N>,
                 ],
                 checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
@@ -162,12 +179,16 @@ export function createRealtimeDBSyncAdapterFromResolved<
             const id = collectionConfig.deserializeDeleteId
               ? collectionConfig.deserializeDeleteId({ snapshot })
               : (snapshot.key as C[N]["delete"]);
+            const raw = snapshot.val();
+            const deletedAt =
+              collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw);
             commitChanges({
               changes: [
                 {
                   type: "delete",
                   collection: collectionName,
                   id,
+                  deletedAt,
                 } as unknown as ChangeBusEvent<C, N>,
               ],
               checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
@@ -203,11 +224,12 @@ export function createRealtimeDBSyncAdapterFromResolved<
         const { collectionPath } = collectionConfig;
 
         if (event.type === "delete") {
+          const deletedAt = event.deletedAt ?? Date.now();
           const payload = collectionConfig.serializeDelete
-            ? collectionConfig.serializeDelete(event.id as C[N]["delete"])
+            ? collectionConfig.serializeDelete(event.id as C[N]["delete"], { deletedAt })
             : {
                 deleted: true,
-                deletedAt: Date.now(),
+                deletedAt,
               };
           assignMergePaths(updates, recordPath(collectionPath, String(event.id)), payload);
           continue;

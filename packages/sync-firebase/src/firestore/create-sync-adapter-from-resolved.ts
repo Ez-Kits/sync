@@ -28,6 +28,19 @@ function defaultIsDeleted(data: DocumentData): boolean {
   return data.deleted === true;
 }
 
+function deletedAtFrom(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "toMillis" in value &&
+    typeof value.toMillis === "function"
+  ) {
+    return value.toMillis();
+  }
+  return Date.now();
+}
+
 function buildPullSource(
   collectionRef: CollectionReference<DocumentData>,
   constraints: QueryConstraint[],
@@ -70,6 +83,7 @@ export function createFirestoreSyncAdapterFromResolved<
           (snapshot) => {
             const changes = snapshot.docChanges().map((change) => {
               if (change.type === "removed") {
+                const raw = getSnapshotData(change.doc);
                 const id = collectionConfig.deserializeDeleteId
                   ? collectionConfig.deserializeDeleteId({ snapshot: change.doc })
                   : (change.doc.id as C[N]["delete"]);
@@ -77,6 +91,9 @@ export function createFirestoreSyncAdapterFromResolved<
                   type: "delete",
                   collection: collectionName,
                   id,
+                  deletedAt:
+                    collectionConfig.resolveDeletedAt?.(raw, { snapshot: change.doc }) ??
+                    deletedAtFrom(raw.deletedAt),
                 } as unknown as ChangeBusEvent<C, N>;
               }
 
@@ -89,6 +106,9 @@ export function createFirestoreSyncAdapterFromResolved<
                   type: "delete",
                   collection: collectionName,
                   id,
+                  deletedAt:
+                    collectionConfig.resolveDeletedAt?.(raw, { snapshot: change.doc }) ??
+                    deletedAtFrom(raw.deletedAt),
                 } as unknown as ChangeBusEvent<C, N>;
               }
 
@@ -172,11 +192,12 @@ export function createFirestoreSyncAdapterFromResolved<
         const { collectionPath } = collectionConfig;
 
         if (event.type === "delete") {
+          const deletedAt = event.deletedAt ?? Date.now();
           const payload = collectionConfig.serializeDelete
-            ? collectionConfig.serializeDelete(event.id as C[N]["delete"])
+            ? collectionConfig.serializeDelete(event.id as C[N]["delete"], { deletedAt })
             : ({
                 deleted: true,
-                deletedAt: Date.now(),
+                deletedAt,
               } satisfies DocumentData);
           enqueueSet(collectionPath, String(event.id), payload, { merge: true });
           continue;

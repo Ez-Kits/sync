@@ -8,6 +8,7 @@ export default defineConfig({
       "./packages/client-react",
       "./packages/client-typeorm",
       "./packages/sync-firebase",
+      "./packages/sync-conflict-resolution",
     ],
     coverage: {
       include: ["packages/*/src/**/*.{ts,tsx}"],

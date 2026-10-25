@@ -4,6 +4,7 @@ export const todos = sqliteTable("todos", {
   id: text().primaryKey(),
   title: text().notNull(),
   completed: integer({ mode: "boolean" }).notNull().default(false),
+  updatedAt: integer().notNull(),
 });
 
 export const syncEvents = sqliteTable("ez_sync_events", {

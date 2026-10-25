@@ -4,13 +4,14 @@ import {
   defineDrizzleCollection,
 } from "@ez-kits/sync-client-drizzle-adapter";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
+import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
 import {
   createFirestoreSyncAdapter,
   defineFirestoreCollectionSyncAdapterConfig,
 } from "@ez-kits/sync-firebase/sync-firestore";
 import {
-  orderBy,
   documentId,
+  orderBy,
   serverTimestamp,
   startAfter,
   Timestamp,
@@ -51,6 +52,11 @@ function checkpointFromSnapshot(
   return next ?? { updatedAt: Timestamp.fromMillis(0), id: "" };
 }
 
+function timestampToMillis(value: unknown): number | undefined {
+  if (value instanceof Timestamp) return value.toMillis();
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function createTodoFirestoreSyncAdapter() {
   if (!firestore || !isFirebaseConfigured()) return undefined;
 
@@ -84,15 +90,23 @@ function createTodoFirestoreSyncAdapter() {
           updatedAt: serverTimestamp(),
           deleted: false,
         }),
+        serializeDelete: (_id, { deletedAt }) => ({
+          deleted: true,
+          deletedAt: Timestamp.fromMillis(deletedAt),
+          updatedAt: Timestamp.fromMillis(deletedAt),
+        }),
+        resolveDeletedAt: (data) => timestampToMillis(data.deletedAt),
         deserializeCreate: (data) => ({
           id: String(data.id),
           title: String(data.title ?? ""),
           completed: Boolean(data.completed),
+          updatedAt: timestampToMillis(data.updatedAt) ?? 0,
         }),
         deserializeUpdate: (data) => ({
           id: String(data.id),
           title: String(data.title ?? ""),
           completed: Boolean(data.completed),
+          updatedAt: timestampToMillis(data.updatedAt) ?? 0,
         }),
         deserializeDeleteId: ({ snapshot }) => snapshot.id,
       }),
@@ -129,6 +143,18 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
           id: parsed.id,
         };
       },
+    }),
+    resolveConflict: lastWriteWins({
+      getLocalVersion(local) {
+        if (!local) return undefined;
+        return local.updatedAt;
+      },
+      getRemoteVersion(remote) {
+        if (remote.type === "delete") return remote.deletedAt;
+        return remote.data.updatedAt;
+      },
+      onMissingVersion: "local",
+      onTie: "local",
     }),
     syncAdapter: createTodoFirestoreSyncAdapter(),
   });

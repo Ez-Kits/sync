@@ -192,7 +192,7 @@ test("Firestore pull maps create, update, removed and tombstone events, advances
   } as never) as () => void;
   const added = docSnapshot("1", { id: "1", title: "a" });
   const changed = docSnapshot("2", { id: "2", title: "b" });
-  const tombstone = docSnapshot("3", { deleted: true });
+  const tombstone = docSnapshot("3", { deleted: true, deletedAt: 123 });
   const removed = docSnapshot("4", {});
   sdk.firestoreCallbacks[0]!({
     docChanges: () => [
@@ -207,8 +207,13 @@ test("Firestore pull maps create, update, removed and tombstone events, advances
       changes: [
         { type: "create", collection: "todos", data: { id: "1", title: "a" } },
         { type: "update", collection: "todos", data: { id: "2", title: "b" } },
-        { type: "delete", collection: "todos", id: "3" },
-        { type: "delete", collection: "todos", id: "4" },
+        { type: "delete", collection: "todos", id: "3", deletedAt: 123 },
+        {
+          type: "delete",
+          collection: "todos",
+          id: "4",
+          deletedAt: expect.any(Number),
+        },
       ],
       checkpoint: { todos: "old!" },
     }),
@@ -220,6 +225,7 @@ test("Firestore pull maps create, update, removed and tombstone events, advances
 
 test("Firestore pull uses custom mappings, defaults, and ignores empty snapshots", () => {
   const isDeleted = vi.fn((raw: any) => raw.gone === true);
+  const resolveDeletedAt = vi.fn((raw: any) => raw.removedOn);
   const adapter = createFirestoreCollectionSyncAdapter({
     db: {} as never,
     collectionName: "todos",
@@ -230,6 +236,7 @@ test("Firestore pull uses custom mappings, defaults, and ignores empty snapshots
     deserializeUpdate: (raw: any) => ({ ...raw, mapped: true }),
     deserializeDeleteId: ({ snapshot }: any) => `custom-${snapshot.id}`,
     isDeleted,
+    resolveDeletedAt,
     buildPullQueryConstraints: () => ["where"],
   } as never);
   const commit = vi.fn();
@@ -239,18 +246,32 @@ test("Firestore pull uses custom mappings, defaults, and ignores empty snapshots
   sdk.firestoreCallbacks[0]!({
     docChanges: () => [
       { type: "added", doc: docSnapshot("x", { id: "x" }) },
-      { type: "added", doc: docSnapshot("y", { gone: true }) },
+      { type: "added", doc: docSnapshot("y", { gone: true, removedOn: 234 }) },
       { type: "modified", doc: docSnapshot("z", { id: "z" }) },
       { type: "removed", doc: docSnapshot("w", {}) },
     ],
   });
   expect(commit.mock.calls[0]?.[0].changes).toEqual([
     { type: "create", collection: "todos", data: { id: "x", mapped: true } },
-    { type: "delete", collection: "todos", id: "custom-y" },
+    {
+      type: "delete",
+      collection: "todos",
+      id: "custom-y",
+      deletedAt: 234,
+    },
     { type: "update", collection: "todos", data: { id: "z", mapped: true } },
-    { type: "delete", collection: "todos", id: "custom-w" },
+    {
+      type: "delete",
+      collection: "todos",
+      id: "custom-w",
+      deletedAt: expect.any(Number),
+    },
   ]);
   expect(isDeleted).toHaveBeenCalled();
+  expect(resolveDeletedAt).toHaveBeenCalledWith(
+    { gone: true, removedOn: 234 },
+    { snapshot: expect.objectContaining({ id: "y" }) },
+  );
 });
 
 test("Firestore pull covers unfiltered defaults, empty document data, and default checkpoint fallback", () => {
@@ -274,7 +295,12 @@ test("Firestore pull covers unfiltered defaults, empty document data, and defaul
       changes: [
         { type: "create", collection: "todos", data: {} },
         { type: "update", collection: "todos", data: { id: "y" } },
-        { type: "delete", collection: "todos", id: "z" },
+        {
+          type: "delete",
+          collection: "todos",
+          id: "z",
+          deletedAt: expect.any(Number),
+        },
       ],
       checkpoint: { todos: "fallback" },
     }),
@@ -282,6 +308,7 @@ test("Firestore pull covers unfiltered defaults, empty document data, and defaul
 });
 
 test("Firestore push serializes events, skips unknown collections, batches at 500, and rejects failed commits", async () => {
+  const serializeDelete = vi.fn(() => ({ deleted: true }));
   const adapter = createFirestoreSyncAdapter({
     db: {} as never,
     collections: [
@@ -291,7 +318,7 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
         createCheckpoint: () => 1,
         serializeCreate: (data: any) => ({ ...data, remote: true }),
         serializeUpdate: (data: any) => data,
-        serializeDelete: () => ({ deleted: true }),
+        serializeDelete,
         resolveDocumentId: (e: any) => (e.type === "delete" ? "deleted" : String(e.data.id)),
       },
     ],
@@ -312,9 +339,10 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
   expect(commit).toHaveBeenCalledOnce();
   const pushed = [
     { type: "update", collection: "todos", data: { id: "u" } },
-    { type: "delete", collection: "todos", id: "d" },
+    { type: "delete", collection: "todos", id: "d", deletedAt: 456 },
   ];
   await adapter.push({ events: pushed, commitChanges: commit } as never);
+  expect(serializeDelete).toHaveBeenCalledWith("d", { deletedAt: 456 });
   expect(sdk.firestoreSets.at(-2)?.[2]).toEqual({ merge: true });
   expect(sdk.firestoreSets.at(-1)?.[1]).toEqual({ deleted: true });
   sdk.failCommit = true;
@@ -367,19 +395,19 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
   } as never) as () => void;
   const added = docSnapshot("a", { id: "a" });
   const changed = docSnapshot("b", { id: "b" });
-  const tombstone = docSnapshot("d", { deleted: true });
+  const tombstone = docSnapshot("d", { deleted: true, deletedAt: 567 });
   const removed = docSnapshot("c", {});
   sdk.rtdbCallbacks.added![0]!(added);
   sdk.rtdbCallbacks.added![0]!(tombstone);
   sdk.rtdbCallbacks.changed![0]!(changed);
-  sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { deleted: true }));
+  sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { deleted: true, deletedAt: 678 }));
   sdk.rtdbCallbacks.removed![0]!(removed);
   expect(commit.mock.calls.map(([call]) => call.changes[0])).toEqual([
     { type: "create", collection: "todos", data: { id: "a" } },
-    { type: "delete", collection: "todos", id: "d" },
+    { type: "delete", collection: "todos", id: "d", deletedAt: 567 },
     { type: "update", collection: "todos", data: { id: "b" } },
-    { type: "delete", collection: "todos", id: "e" },
-    { type: "delete", collection: "todos", id: "c" },
+    { type: "delete", collection: "todos", id: "e", deletedAt: 678 },
+    { type: "delete", collection: "todos", id: "c", deletedAt: expect.any(Number) },
   ]);
   expect(commit.mock.calls[4]?.[0].checkpoint).toEqual({ todos: "old!!!!!" });
   cleanup();
@@ -387,6 +415,7 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
 });
 
 test("Realtime Database pull uses default listeners and custom mapping hooks", () => {
+  const resolveDeletedAt = vi.fn((raw: any) => raw?.removedOn);
   const adapter = createRealtimeDBCollectionSyncAdapter({
     db: {} as never,
     collectionName: "todos",
@@ -396,24 +425,45 @@ test("Realtime Database pull uses default listeners and custom mapping hooks", (
     deserializeUpdate: (raw: any) => ({ ...raw, updated: true }),
     deserializeDeleteId: ({ snapshot }: any) => `custom-${snapshot.key}`,
     isDeleted: (raw: any) => raw?.gone === true,
+    resolveDeletedAt,
   } as never);
   const commit = vi.fn();
   void adapter.pull({ commitChanges: commit } as never);
   sdk.rtdbCallbacks.added![0]!(docSnapshot("a", { id: "a" }));
-  sdk.rtdbCallbacks.added![0]!(docSnapshot("d", { gone: true }));
+  sdk.rtdbCallbacks.added![0]!(docSnapshot("d", { gone: true, removedOn: 345 }));
   sdk.rtdbCallbacks.changed![0]!(docSnapshot("b", { id: "b" }));
-  sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { gone: true }));
+  sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { gone: true, removedOn: 456 }));
   sdk.rtdbCallbacks.removed![0]!(docSnapshot("c", {}));
   expect(commit.mock.calls.map(([call]) => call.changes[0])).toEqual([
     { type: "create", collection: "todos", data: { id: "a", created: true } },
-    { type: "delete", collection: "todos", id: "custom-d" },
+    {
+      type: "delete",
+      collection: "todos",
+      id: "custom-d",
+      deletedAt: 345,
+    },
     { type: "update", collection: "todos", data: { id: "b", updated: true } },
-    { type: "delete", collection: "todos", id: "custom-e" },
-    { type: "delete", collection: "todos", id: "custom-c" },
+    {
+      type: "delete",
+      collection: "todos",
+      id: "custom-e",
+      deletedAt: 456,
+    },
+    {
+      type: "delete",
+      collection: "todos",
+      id: "custom-c",
+      deletedAt: expect.any(Number),
+    },
   ]);
+  expect(resolveDeletedAt).toHaveBeenCalledWith(
+    { gone: true, removedOn: 345 },
+    { snapshot: expect.objectContaining({ key: "d" }) },
+  );
 });
 
 test("Realtime Database push merges update paths, replaces non-objects, skips unknown collections, and propagates errors", async () => {
+  const serializeDelete = vi.fn(() => "gone");
   const adapter = createRealtimeDBCollectionSyncAdapter({
     db: {} as never,
     collectionName: "todos",
@@ -421,7 +471,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     createCheckpoint: () => 1,
     serializeCreate: (data: any) => ({ ...data, encoded: true }),
     serializeUpdate: () => ({ nested: { value: 2 } }),
-    serializeDelete: () => "gone",
+    serializeDelete,
     resolveRecordId: (event: any) => String(event.data.id),
   } as never);
   const commit = vi.fn();
@@ -429,7 +479,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     events: [
       { type: "create", collection: "todos", data: { id: "1" } },
       { type: "update", collection: "todos", data: { id: "1" } },
-      { type: "delete", collection: "todos", id: "2" },
+      { type: "delete", collection: "todos", id: "2", deletedAt: 789 },
       { type: "create", collection: "other", data: { id: "3" } },
     ],
     commitChanges: commit,
@@ -439,6 +489,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     "todos/1/nested": { value: 2 },
     "todos/2": "gone",
   });
+  expect(serializeDelete).toHaveBeenCalledWith("2", { deletedAt: 789 });
   expect(commit).toHaveBeenCalledOnce();
   sdk.failCommit = true;
   await expect(

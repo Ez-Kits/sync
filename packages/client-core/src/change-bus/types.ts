@@ -4,6 +4,7 @@ import type {
   ConfigForName,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
+  InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "../collection";
 
@@ -27,6 +28,8 @@ type ChangeBusEventUnion<C extends ChangeBusEventDataMap> = {
         type: "delete";
         collection: N;
         id: C[N]["delete"];
+        /** Epoch milliseconds when the record was deleted, when known. */
+        deletedAt?: number;
         /** Persisted local event id; used to ack after push. */
         eventId?: string;
       };
@@ -45,6 +48,7 @@ export type ChangeBusEventDataMapFromCollectionConfigMap<C extends CollectionCon
     create: InferCollectionInsertModel<ConfigForName<C, N>>;
     update: InferCollectionUpdateModel<ConfigForName<C, N>>;
     delete: InferCollectionPrimaryFieldType<ConfigForName<C, N>>;
+    record: InferCollectionSelectModel<ConfigForName<C, N>>;
   };
 };
 

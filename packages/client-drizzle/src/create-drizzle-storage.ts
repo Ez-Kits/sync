@@ -1,8 +1,11 @@
 import {
   createAtomicLocalMutationStorage,
+  type AtomicLocalChangeStore,
   type CollectionConfigMap,
   type CollectionNames,
 } from "@ez-kits/sync-client-core";
+import type { BuildSchemaFromCollections } from "./collection";
+import { createDrizzleDBAdapter, type DrizzleDBAdapterConfig } from "./create-drizzle-db-adapter";
 import type {
   DrizzleDirtyRecordTable,
   DrizzleEventTable,
@@ -10,8 +13,7 @@ import type {
   DrizzleSchemaTypeCheck,
 } from "./create-drizzle-local-change-store";
 import { createDrizzleLocalChangeStore } from "./create-drizzle-local-change-store";
-import { createDrizzleDBAdapter, type DrizzleDBAdapterConfig } from "./create-drizzle-db-adapter";
-import type { BuildSchemaFromCollections } from "./collection";
+import type { DrizzleDBAdapter } from "./types";
 
 export type DrizzleStorageConfig<
   C extends CollectionConfigMap,
@@ -34,16 +36,20 @@ export function createDrizzleStorage<
   ...typeCheck: DrizzleSchemaTypeCheck<TEvents, TDirtyRecords>
 ) {
   void typeCheck;
-  return createAtomicLocalMutationStorage(
+  return createAtomicLocalMutationStorage<
+    TDrizzleDB,
+    DrizzleDBAdapter<C, TDrizzleDB, TTables>,
+    AtomicLocalChangeStore
+  >(
     config.db,
     (db) =>
-      createDrizzleDBAdapter({
+      createDrizzleDBAdapter<C, TDrizzleDB, TTables>({
         db,
         collections: config.collections,
         schema: config.schema,
       }),
     (db) =>
-      createDrizzleLocalChangeStore(
+      createDrizzleLocalChangeStore<TDrizzleDB, TEvents, TDirtyRecords>(
         {
           db,
           tables: config.localChangeTables,

@@ -142,6 +142,7 @@ export class CollectionRuntime<
       type: "delete",
       collection: this.config.name,
       id,
+      deletedAt: now,
       eventId,
     });
   }

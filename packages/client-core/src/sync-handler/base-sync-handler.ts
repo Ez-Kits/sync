@@ -184,7 +184,7 @@ export abstract class BaseSyncHandler<
       return event;
     }
 
-    let local: unknown;
+    let local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined;
     local = this.config.db.getOptional
       ? await this.config.db.getOptional(collection, coerceRecordId(recordId) as never)
       : await this.config.db.get(collection, coerceRecordId(recordId) as never);
@@ -218,6 +218,7 @@ export abstract class BaseSyncHandler<
           type: "delete",
           collection: collectionName,
           id: coerceRecordId(stored.recordId),
+          deletedAt: stored.createdAt,
           eventId: stored.id,
         } as ChangeBusEvent<SyncHandlerDataMap<C>, N>;
       }
