@@ -1,16 +1,21 @@
-import { desc, sql } from "drizzle-orm";
-import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from "react";
+import { and, desc, eq, like, sql } from "drizzle-orm";
+import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import { db } from "./db/index.ts";
 import { todos, type Todo } from "./db/schema.ts";
 import { isFirebaseConfigured } from "./firebase.ts";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
 
-/** Keep the demo UI responsive after the one-time 1M seed. */
+/** Bound the rendered window even when the local database contains many rows. */
 const VISIBLE_TODO_LIMIT = 200;
+const TODO_COLLECTIONS: "todos"[] = ["todos"];
+
+type TodoFilter = "all" | "open" | "completed";
 
 function TodoApp() {
   const client = useSyncClient();
   const [draft, setDraft] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<TodoFilter>("all");
   const [syncEnabled, setSyncEnabled] = useState(false);
   const [todoCount, setTodoCount] = useState<number | null>(null);
   const [isOnline, setIsOnline] = useState(
@@ -18,10 +23,21 @@ function TodoApp() {
   );
 
   const { data, isPending } = useLiveQuery({
-    collections: useMemo(() => ["todos"], []),
+    collections: TODO_COLLECTIONS,
     query: useCallback(
-      (queryDb) => queryDb.select().from(todos).orderBy(desc(todos.id)).limit(VISIBLE_TODO_LIMIT),
-      [],
+      (queryDb) =>
+        queryDb
+          .select()
+          .from(todos)
+          .where(
+            and(
+              filter === "all" ? undefined : eq(todos.completed, filter === "completed"),
+              search.trim() ? like(todos.title, `%${search.trim()}%`) : undefined,
+            ),
+          )
+          .orderBy(desc(todos.updatedAt), desc(todos.id))
+          .limit(VISIBLE_TODO_LIMIT),
+      [filter, search],
     ),
   });
 
@@ -129,11 +145,43 @@ function TodoApp() {
         <button type="submit">Add</button>
       </form>
 
+      <div className="list-controls">
+        <label>
+          <span className="sr-only">Search todos</span>
+          <input
+            aria-label="Search todos"
+            placeholder="Search tasks"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+        <label>
+          <span className="sr-only">Filter todos</span>
+          <select
+            aria-label="Filter todos"
+            value={filter}
+            onChange={(event) => {
+              const value = event.target.value;
+              setFilter(value === "open" || value === "completed" ? value : "all");
+            }}
+          >
+            <option value="all">All tasks</option>
+            <option value="open">Open</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+      </div>
+
       <section className="list" aria-live="polite">
         {isPending && items.length === 0 ? (
           <p className="empty">Loading local database…</p>
         ) : items.length === 0 ? (
-          <p className="empty">No todos yet. Add one above.</p>
+          <p className="empty">
+            {search.trim() || filter !== "all"
+              ? "No tasks match these filters."
+              : "No todos yet. Add one above."}
+          </p>
         ) : (
           <ul>
             {items.map((todo) => (

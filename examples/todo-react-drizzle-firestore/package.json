@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vp dev",
     "build": "node scripts/copy-sqljs-assets.mjs && tsc && vp build",
+    "check": "vp check",
     "preview": "vp preview",
-    "postinstall": "node scripts/copy-sqljs-assets.mjs"
+    "postinstall": "node scripts/copy-sqljs-assets.mjs",
+    "test": "vp test"
   },
   "dependencies": {
     "@ez-kits/sync-client-core": "workspace:*",
