@@ -56,7 +56,7 @@ export function createTypeOrmLocalChangeStore<
     async getPendingEvents(collection) {
       const rows = await db.manager.getRepository(eventTarget).find({
         ...(collection ? { where: { collection } } : {}),
-        order: { createdAt: "ASC" },
+        order: { createdAt: "ASC", id: "ASC" },
       });
       return rows as StoredChangeBusEvent[];
     },

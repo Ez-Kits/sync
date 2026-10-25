@@ -10,33 +10,45 @@ import {
 } from "@ez-kits/sync-firebase/sync-firestore";
 import {
   orderBy,
+  documentId,
   serverTimestamp,
   startAfter,
   Timestamp,
   type QuerySnapshot,
 } from "firebase/firestore";
 import { db } from "./db/index.ts";
-import { dirtyRecords, schema, syncEvents, todos } from "./db/schema.ts";
+import { dirtyRecords, schema, syncEvents, todos, type Todo } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
 
-export type TodoCheckpoint = Timestamp;
+export interface TodoCheckpoint {
+  updatedAt: Timestamp;
+  id: string;
+}
 
-const todosCollection = defineDrizzleCollection({
+const todosCollection = defineDrizzleCollection<"todos", typeof todos, "id", Todo, TodoCheckpoint>({
   name: "todos",
   table: todos,
   primaryField: "id",
 });
 
-function checkpointFromSnapshot(snapshot: QuerySnapshot, previousCheckpoint?: unknown): Timestamp {
-  let next = previousCheckpoint instanceof Timestamp ? previousCheckpoint : undefined;
+function checkpointFromSnapshot(
+  snapshot: QuerySnapshot,
+  previousCheckpoint?: TodoCheckpoint,
+): TodoCheckpoint {
+  let next = previousCheckpoint;
   for (const change of snapshot.docChanges()) {
     const updatedAt = change.doc.data().updatedAt;
     if (!(updatedAt instanceof Timestamp)) continue;
-    if (!next || updatedAt.toMillis() > next.toMillis()) {
-      next = updatedAt;
+    const id = change.doc.id;
+    if (
+      !next ||
+      updatedAt.toMillis() > next.updatedAt.toMillis() ||
+      (updatedAt.toMillis() === next.updatedAt.toMillis() && id > next.id)
+    ) {
+      next = { updatedAt, id };
     }
   }
-  return next ?? Timestamp.now();
+  return next ?? { updatedAt: Timestamp.fromMillis(0), id: "" };
 }
 
 function createTodoFirestoreSyncAdapter() {
@@ -50,9 +62,10 @@ function createTodoFirestoreSyncAdapter() {
         collectionPath: "todos",
         buildPullQueryConstraints: ({ checkpoint }) => [
           orderBy("updatedAt", "asc"),
-          ...(checkpoint ? [startAfter(checkpoint)] : []),
+          orderBy(documentId(), "asc"),
+          ...(checkpoint ? [startAfter(checkpoint.updatedAt, checkpoint.id)] : []),
         ],
-        createCheckpoint: () => Timestamp.now(),
+        createCheckpoint: () => ({ updatedAt: Timestamp.fromMillis(0), id: "" }),
         createPullCheckpoint: ({ snapshot, previousCheckpoint }) =>
           checkpointFromSnapshot(snapshot, previousCheckpoint),
         resolveDocumentId: (event) => {
@@ -100,12 +113,21 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
       key: "ez-sync-todo-checkpoint",
       serializer: (checkpoint) =>
         JSON.stringify({
-          seconds: checkpoint.seconds,
-          nanoseconds: checkpoint.nanoseconds,
+          updatedAt: {
+            seconds: checkpoint.updatedAt.seconds,
+            nanoseconds: checkpoint.updatedAt.nanoseconds,
+          },
+          id: checkpoint.id,
         }),
       deserializer: (value) => {
-        const parsed = JSON.parse(value) as { seconds: number; nanoseconds: number };
-        return new Timestamp(parsed.seconds, parsed.nanoseconds);
+        const parsed = JSON.parse(value) as {
+          updatedAt: { seconds: number; nanoseconds: number };
+          id: string;
+        };
+        return {
+          updatedAt: new Timestamp(parsed.updatedAt.seconds, parsed.updatedAt.nanoseconds),
+          id: parsed.id,
+        };
       },
     }),
     syncAdapter: createTodoFirestoreSyncAdapter(),

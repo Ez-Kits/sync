@@ -17,8 +17,16 @@ import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./t
 import type { SyncStatusEvent } from "../sync-handler";
 import { assertAtomicLocalMutationStorage } from "./storage-pair";
 
+type BrowserLockManager = {
+  request<T>(
+    name: string,
+    options: { mode: "exclusive"; signal?: AbortSignal },
+    callback: (lock: unknown) => T | PromiseLike<T>,
+  ): Promise<T>;
+};
+
 type NetworkHost = {
-  navigator?: { onLine?: boolean };
+  navigator?: { onLine?: boolean; locks?: BrowserLockManager };
   addEventListener?: (type: string, listener: () => void) => void;
   removeEventListener?: (type: string, listener: () => void) => void;
 };
@@ -52,6 +60,7 @@ export class SyncClientImpl<
   private leaseTimer: ReturnType<typeof setInterval> | undefined;
   private broadcastChannel: BroadcastChannel | undefined;
   private broadcastCleanup: (() => void) | undefined;
+  private webLockController: AbortController | undefined;
 
   constructor(
     private config: SyncClientConfig<C, DB, TCheckpoint, Store>,
@@ -219,6 +228,11 @@ export class SyncClientImpl<
 
   private startLeadership(): void {
     const browserClient = Boolean(getNetworkHost().navigator);
+    const locks = getNetworkHost().navigator?.locks;
+    if (this.config.coordinateTabs !== false && browserClient && locks) {
+      this.startWebLockLeadership(locks);
+      return;
+    }
     if (
       this.config.coordinateTabs === false ||
       !browserClient ||
@@ -234,6 +248,33 @@ export class SyncClientImpl<
       void this.renewLeadership();
       this.leaseTimer = setInterval(() => void this.renewLeadership(), 5_000);
     }
+  }
+
+  private startWebLockLeadership(locks: BrowserLockManager): void {
+    if (this.webLockController || !this.wantsSync) return;
+    const controller = new AbortController();
+    this.webLockController = controller;
+    this.setStatus("idle");
+    void locks
+      .request(
+        `ez-sync:${this.config.coordinationKey ?? "default"}`,
+        { mode: "exclusive", signal: controller.signal },
+        async (lock) => {
+          if (!lock || controller.signal.aborted || !this.wantsSync) return;
+          this.syncHandler.startAll();
+          this.setStatus("syncing");
+          await new Promise<void>((resolve) => {
+            controller.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          this.syncHandler.stopAll();
+        },
+      )
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) this.setStatus("error", error);
+      })
+      .finally(() => {
+        if (this.webLockController === controller) this.webLockController = undefined;
+      });
   }
 
   private async renewLeadership(): Promise<void> {
@@ -272,6 +313,8 @@ export class SyncClientImpl<
   }
 
   private stopLeadership(): void {
+    this.webLockController?.abort();
+    this.webLockController = undefined;
     if (this.leaseTimer) clearInterval(this.leaseTimer);
     this.leaseTimer = undefined;
     this.syncHandler.stopAll();

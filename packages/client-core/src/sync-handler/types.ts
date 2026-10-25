@@ -57,6 +57,8 @@ export interface PullOptions<
    * @param options - The options for the commit operation.
    */
   commitChanges: (options: PullCommitChangesOptions<C, N, TCheckpoint>) => void;
+  /** Report provider listener failures so the client can retry the pull stream. */
+  onError?: (error: unknown) => void;
 }
 
 export interface PullCommitChangesOptions<

@@ -30,13 +30,17 @@ const client = createSyncClient({
 
 The database adapter's required `commitLocalMutation` method must run the row mutation and both local-change writes in the same durable transaction. It passes its native transaction context to the store write methods, and the change bus is notified only after commit. Unsupported or incompatible storage rejects; there is no default outbox or best-effort mutation path. Core exports the local-change-store types only; database integrations provide the storage implementation.
 
-An adapter may implement `getOptional` to distinguish an absent record from a database failure. `get` remains available when callers require the row to exist.
+Adapters should implement `getOptional` to distinguish an absent record from a database failure. When it is unavailable, core treats an explicit `undefined` from `get` as absence and propagates rejected reads; it never infers absence from an arbitrary database error. `get` remains available when callers require the row to exist.
 
 ## Conflicts and browser tabs
 
 Pass `resolveConflict` to inspect an incoming remote event when the same record has a locally pending write. Return `"remote"`, `"local"`, or `{ data }`. With no hook, remote changes are applied in arrival order. Applications should include comparable version metadata if they need a stronger deterministic winner policy.
 
-Browser clients coordinate a sync leader through the outbox lease when the configured store supports leases. Use a unique `coordinationKey` for each shared local database. `coordinateTabs: false` disables this behavior. Cross-tab change notifications use `BroadcastChannel` when available. Lease coordination is not a substitute for server-side conflict detection.
+Browser clients coordinate a sync leader through the Web Locks API when available, then through the outbox lease when the configured store supports cross-context leases. Use a unique `coordinationKey` for each shared local database. If neither mechanism is available, each tab may sync independently; provider writes must remain idempotent. `coordinateTabs: false` explicitly disables leadership coordination. Cross-tab change notifications use `BroadcastChannel` when available. Client-side coordination is not a substitute for server-side conflict detection.
+
+Outbox stores return events in deterministic `createdAt`, then event-ID order. Keep event IDs stable and unique so same-time events have a consistent replay order.
+
+Provider `pull` implementations should pass listener failures to the optional `onError` callback. Core reports the failure and retries the pull stream with capped backoff; stopping sync cancels the retry. Checkpoints remain tied to successfully committed local changes.
 
 ## Provider adapter responsibilities
 

@@ -21,6 +21,7 @@ export class CollectionSyncHandler<
 > extends BaseSyncHandler<C, DB, TCheckpoint> {
   private pullCleanups = new Map<CollectionNames<C>, Array<() => void>>();
   private pushUnsubscribes = new Map<CollectionNames<C>, () => void>();
+  private pushControllers = new Map<CollectionNames<C>, AbortController>();
   private startTokens = new Map<CollectionNames<C>, object>();
   private pullCommitQueues = new Map<CollectionNames<C>, Promise<void>>();
 
@@ -46,12 +47,18 @@ export class CollectionSyncHandler<
 
     void (async () => {
       try {
-        const unsubscribe = this.startPushLoop(collectionName, syncAdapter);
+        const pushController = new AbortController();
+        this.pushControllers.set(collectionName, pushController);
+        const unsubscribe = this.startPushLoop(collectionName, syncAdapter, pushController.signal);
         if (unsubscribe) this.pushUnsubscribes.set(collectionName, unsubscribe);
 
-        await this.flushPendingPushEvents(collectionName, syncAdapter, (events) =>
-          this.commitPushChanges(collectionName, events),
-        );
+        void this.flushPendingPushEvents(
+          collectionName,
+          syncAdapter,
+          (events) => this.commitPushChanges(collectionName, events),
+          String(collectionName),
+          pushController.signal,
+        ).catch((error) => this.config.onSyncError?.(error));
 
         if (this.startTokens.get(collectionName) !== startToken) return;
 
@@ -97,41 +104,48 @@ export class CollectionSyncHandler<
     syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
     pullCleanupList: Array<() => void>,
   ): void {
-    void (async () => {
-      const checkpoint = await this.config.checkpointStorage.getCheckpoint(collectionName);
-      const checkpointMap =
-        checkpoint === undefined
-          ? undefined
-          : ({ [collectionName]: checkpoint } as Partial<Record<CollectionNames<C>, TCheckpoint>>);
-      const cleanup = await syncAdapter.pull({
-        checkpoint: checkpointMap as Partial<Record<N, TCheckpoint>> | undefined,
-        commitChanges: (options) => {
-          void this.commitPullChanges(collectionName, options.changes, options.checkpoint);
-        },
-      });
-      if (typeof cleanup === "function") {
-        pullCleanupList.push(cleanup);
-      }
-    })().catch((error) => this.config.onSyncError?.(error));
+    pullCleanupList.push(
+      this.retryPull(async (onError, isActive) => {
+        const checkpoint = await this.config.checkpointStorage.getCheckpoint(collectionName);
+        if (!isActive()) return;
+        const checkpointMap =
+          checkpoint === undefined
+            ? undefined
+            : ({
+                [collectionName]: checkpoint,
+              } as Partial<Record<CollectionNames<C>, TCheckpoint>>);
+        return syncAdapter.pull({
+          checkpoint: checkpointMap as Partial<Record<N, TCheckpoint>> | undefined,
+          commitChanges: (options) => {
+            void this.commitPullChanges(collectionName, options.changes, options.checkpoint);
+          },
+          onError,
+        });
+      }),
+    );
   }
 
   private startPushLoop<N extends CollectionNames<C>>(
     collectionName: N,
     syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    signal: AbortSignal,
   ): (() => void) | undefined {
     return this.config.changeBus.subscribe(
       collectionName,
       (_events) => {
-        void this.enqueuePush(String(collectionName), () =>
-          this.collectPendingPushEvents(collectionName).then((events) => {
-            if (events.length === 0) return;
-            return syncAdapter.push({
-              events,
-              commitChanges: ({ events: committedEvents }) => {
-                void this.commitPushChanges(collectionName, committedEvents);
-              },
-            });
-          }),
+        void this.enqueuePush(
+          String(collectionName),
+          () =>
+            this.collectPendingPushEvents(collectionName).then((events) => {
+              if (events.length === 0) return;
+              return syncAdapter.push({
+                events,
+                commitChanges: ({ events: committedEvents }) => {
+                  void this.commitPushChanges(collectionName, committedEvents);
+                },
+              });
+            }),
+          signal,
         );
       },
       { stream: "local" },

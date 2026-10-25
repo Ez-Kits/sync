@@ -82,9 +82,83 @@ export function createRealtimeDBSyncAdapterFromResolved<
           return nextCheckpoint;
         };
 
-        const addedHandler = onChildAdded(listenTarget, (snapshot) => {
-          const raw = snapshot.val();
-          if (isDeleted(raw, { snapshot })) {
+        const addedHandler = onChildAdded(
+          listenTarget,
+          (snapshot) => {
+            const raw = snapshot.val();
+            if (isDeleted(raw, { snapshot })) {
+              const id = collectionConfig.deserializeDeleteId
+                ? collectionConfig.deserializeDeleteId({ snapshot })
+                : (snapshot.key as C[N]["delete"]);
+              commitChanges({
+                changes: [
+                  {
+                    type: "delete",
+                    collection: collectionName,
+                    id,
+                  } as unknown as ChangeBusEvent<C, N>,
+                ],
+                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+              });
+              return;
+            }
+            const data = collectionConfig.deserializeCreate
+              ? collectionConfig.deserializeCreate(raw, { snapshot })
+              : (raw as C[N]["create"]);
+            commitChanges({
+              changes: [
+                {
+                  type: "create",
+                  collection: collectionName,
+                  data,
+                } as unknown as ChangeBusEvent<C, N>,
+              ],
+              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+            });
+          },
+          (error: Error) => pullOptions.onError?.(error),
+        );
+
+        const changedHandler = onChildChanged(
+          listenTarget,
+          (snapshot) => {
+            const raw = snapshot.val();
+            if (isDeleted(raw, { snapshot })) {
+              const id = collectionConfig.deserializeDeleteId
+                ? collectionConfig.deserializeDeleteId({ snapshot })
+                : (snapshot.key as C[N]["delete"]);
+              commitChanges({
+                changes: [
+                  {
+                    type: "delete",
+                    collection: collectionName,
+                    id,
+                  } as unknown as ChangeBusEvent<C, N>,
+                ],
+                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+              });
+              return;
+            }
+            const data = collectionConfig.deserializeUpdate
+              ? collectionConfig.deserializeUpdate(raw, { snapshot })
+              : (raw as C[N]["update"]);
+            commitChanges({
+              changes: [
+                {
+                  type: "update",
+                  collection: collectionName,
+                  data,
+                } as unknown as ChangeBusEvent<C, N>,
+              ],
+              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+            });
+          },
+          (error: Error) => pullOptions.onError?.(error),
+        );
+
+        const removedHandler = onChildRemoved(
+          listenTarget,
+          (snapshot) => {
             const id = collectionConfig.deserializeDeleteId
               ? collectionConfig.deserializeDeleteId({ snapshot })
               : (snapshot.key as C[N]["delete"]);
@@ -98,71 +172,9 @@ export function createRealtimeDBSyncAdapterFromResolved<
               ],
               checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
             });
-            return;
-          }
-          const data = collectionConfig.deserializeCreate
-            ? collectionConfig.deserializeCreate(raw, { snapshot })
-            : (raw as C[N]["create"]);
-          commitChanges({
-            changes: [
-              {
-                type: "create",
-                collection: collectionName,
-                data,
-              } as unknown as ChangeBusEvent<C, N>,
-            ],
-            checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-          });
-        });
-
-        const changedHandler = onChildChanged(listenTarget, (snapshot) => {
-          const raw = snapshot.val();
-          if (isDeleted(raw, { snapshot })) {
-            const id = collectionConfig.deserializeDeleteId
-              ? collectionConfig.deserializeDeleteId({ snapshot })
-              : (snapshot.key as C[N]["delete"]);
-            commitChanges({
-              changes: [
-                {
-                  type: "delete",
-                  collection: collectionName,
-                  id,
-                } as unknown as ChangeBusEvent<C, N>,
-              ],
-              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-            });
-            return;
-          }
-          const data = collectionConfig.deserializeUpdate
-            ? collectionConfig.deserializeUpdate(raw, { snapshot })
-            : (raw as C[N]["update"]);
-          commitChanges({
-            changes: [
-              {
-                type: "update",
-                collection: collectionName,
-                data,
-              } as unknown as ChangeBusEvent<C, N>,
-            ],
-            checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-          });
-        });
-
-        const removedHandler = onChildRemoved(listenTarget, (snapshot) => {
-          const id = collectionConfig.deserializeDeleteId
-            ? collectionConfig.deserializeDeleteId({ snapshot })
-            : (snapshot.key as C[N]["delete"]);
-          commitChanges({
-            changes: [
-              {
-                type: "delete",
-                collection: collectionName,
-                id,
-              } as unknown as ChangeBusEvent<C, N>,
-            ],
-            checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-          });
-        });
+          },
+          (error: Error) => pullOptions.onError?.(error),
+        );
 
         unsubscribeFns.push(
           () => off(listenTarget, "child_added", addedHandler),

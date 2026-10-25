@@ -42,22 +42,26 @@ export abstract class BaseSyncHandler<
     );
   }
 
-  /** Serialize provider pushes and retry transient failures without acknowledging events. */
-  protected enqueuePush(key: string, push: () => void | Promise<void>): Promise<void> {
+  /** Serialize provider pushes and retry failures without acknowledging events. */
+  protected enqueuePush(
+    key: string,
+    push: () => void | Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const previous = this.pushQueues.get(key) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
         let delayMs = 250;
-        for (let attempt = 0; ; attempt += 1) {
+        while (!signal?.aborted) {
           try {
             await push();
             this.config.onSyncSuccess?.();
             return;
           } catch (error) {
+            if (signal?.aborted) return;
             this.config.onSyncError?.(error);
-            if (attempt >= 5) return;
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            if (!(await waitOrAbort(delayMs, signal))) return;
             delayMs = Math.min(delayMs * 2, 8_000);
           }
         }
@@ -67,6 +71,65 @@ export abstract class BaseSyncHandler<
       if (this.pushQueues.get(key) === next) this.pushQueues.delete(key);
     });
     return next;
+  }
+
+  /** Keep a pull listener alive across provider errors while retaining checkpoint safety. */
+  protected retryPull(
+    subscribe: (
+      onError: (error: unknown) => void,
+      isActive: () => boolean,
+    ) => void | (() => void) | Promise<void | (() => void)>,
+  ): () => void {
+    let active = true;
+    let connecting = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let currentCleanup: (() => void) | undefined;
+    let retryDelayMs = 250;
+
+    const scheduleRetry = (error: unknown) => {
+      if (!active) return;
+      this.config.onSyncError?.(error);
+      const cleanup = currentCleanup;
+      currentCleanup = undefined;
+      cleanup?.();
+      if (!active || retryTimer !== undefined) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, retryDelayMs);
+      retryDelayMs = Math.min(retryDelayMs * 2, 8_000);
+    };
+
+    const connect = async () => {
+      if (!active || connecting) return;
+      connecting = true;
+      const cleanup = currentCleanup;
+      currentCleanup = undefined;
+      cleanup?.();
+      try {
+        const unsubscribe = await subscribe(scheduleRetry, () => active);
+        if (active) {
+          if (typeof unsubscribe === "function") currentCleanup = unsubscribe;
+          retryDelayMs = 250;
+          this.config.onSyncSuccess?.();
+        } else {
+          unsubscribe?.();
+        }
+      } catch (error) {
+        scheduleRetry(error);
+      } finally {
+        connecting = false;
+      }
+    };
+
+    void connect();
+    return () => {
+      active = false;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+      retryTimer = undefined;
+      currentCleanup?.();
+      currentCleanup = undefined;
+    };
   }
 
   protected async applyEvent<N extends CollectionNames<C>>(
@@ -122,13 +185,9 @@ export abstract class BaseSyncHandler<
     }
 
     let local: unknown;
-    try {
-      local = this.config.db.getOptional
-        ? await this.config.db.getOptional(collection, coerceRecordId(recordId) as never)
-        : await this.config.db.get(collection, coerceRecordId(recordId) as never);
-    } catch {
-      local = undefined;
-    }
+    local = this.config.db.getOptional
+      ? await this.config.db.getOptional(collection, coerceRecordId(recordId) as never)
+      : await this.config.db.get(collection, coerceRecordId(recordId) as never);
     const resolution = await resolver({ remote: event, local });
     if (resolution === "local") return undefined;
     if (resolution === "remote") return event;
@@ -186,17 +245,21 @@ export abstract class BaseSyncHandler<
     syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
     commitPushChanges: (events: ChangeBusEvent<SyncHandlerDataMap<C>, N>[]) => Promise<void>,
     queueKey = String(collectionName),
+    signal?: AbortSignal,
   ): Promise<void> {
-    const events = await this.collectPendingPushEvents(collectionName);
-    if (events.length === 0) return;
-
-    await this.enqueuePush(queueKey, () =>
-      syncAdapter.push({
-        events,
-        commitChanges: ({ events: committedEvents }) => {
-          void commitPushChanges(committedEvents);
-        },
-      }),
+    await this.enqueuePush(
+      queueKey,
+      async () => {
+        const events = await this.collectPendingPushEvents(collectionName);
+        if (events.length === 0) return;
+        await syncAdapter.push({
+          events,
+          commitChanges: ({ events: committedEvents }) => {
+            void commitPushChanges(committedEvents);
+          },
+        });
+      },
+      signal,
     );
   }
 
@@ -296,12 +359,10 @@ export abstract class BaseSyncHandler<
         await db.insert(collectionName, row as never);
         return;
       }
-      try {
-        await db.get(collectionName, id as never);
+      const existing = await db.get(collectionName, id as never);
+      if (existing !== undefined) {
         await db.update(collectionName, row as never);
         return;
-      } catch {
-        // Row does not exist yet — fall through to insert.
       }
     }
     await db.insert(collectionName, row as never);
@@ -317,4 +378,19 @@ function coerceRecordId(recordId: string): string | number {
     return Number(recordId);
   }
   return recordId;
+}
+
+function waitOrAbort(delayMs: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

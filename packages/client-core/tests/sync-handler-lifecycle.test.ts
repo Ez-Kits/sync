@@ -161,6 +161,36 @@ test("collection handler handles missing adapters, pull errors, and database fai
   failing.stopAll();
 });
 
+test("collection handler retries pull listener failures and cancels retries on stop", async () => {
+  let currentPull: any;
+  const cleanup = vi.fn();
+  const adapter = {
+    push: vi.fn(),
+    pull: vi.fn((options: any) => {
+      currentPull = options;
+      return cleanup;
+    }),
+  };
+  const f = fixture(adapter);
+  const handler = new CollectionSyncHandler(f.config as never);
+  handler.start("todos" as never);
+  await tick();
+  expect(adapter.pull).toHaveBeenCalledTimes(1);
+
+  currentPull.onError(new Error("listener failed"));
+  expect(f.onSyncError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "listener failed" }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(adapter.pull).toHaveBeenCalledTimes(2);
+  expect(cleanup).toHaveBeenCalledOnce();
+
+  handler.stopAll();
+  currentPull.onError(new Error("failure after stop"));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(adapter.pull).toHaveBeenCalledTimes(2);
+});
+
 test("collection handler reports initial flush errors and recovers pull commit queue", async () => {
   const errors: unknown[] = [];
   const badStore = createTestLocalChangeStore();
@@ -213,25 +243,34 @@ test("collection handler reports initial flush errors and recovers pull commit q
   handler.stopAll();
 });
 
-test("stopping while initial flush is pending cancels the pending start", async () => {
+test("stopping aborts the pending initial outbox read without blocking pull startup", async () => {
   let resolve!: (events: never[]) => void;
+  let notifyReadStarted!: () => void;
+  const readStarted = new Promise<void>((done) => {
+    notifyReadStarted = done;
+  });
   const store = createTestLocalChangeStore();
   vi.spyOn(store, "getPendingEvents").mockImplementationOnce(
     () =>
       new Promise((done) => {
         resolve = done;
+        notifyReadStarted();
       }),
   );
-  const adapter = { push: vi.fn(), pull: vi.fn() };
+  const pullCleanup = vi.fn();
+  const adapter = { push: vi.fn(), pull: vi.fn(() => pullCleanup) };
   const handler = new CollectionSyncHandler(
     fixture(adapter, { localChangeStore: store }).config as never,
   );
   handler.start("todos" as never);
+  await readStarted;
   handler.stop("todos" as never);
   resolve([]);
   await tick();
   await tick();
-  expect(adapter.pull).not.toHaveBeenCalled();
+  expect(adapter.pull).toHaveBeenCalledOnce();
+  expect(adapter.push).not.toHaveBeenCalled();
+  expect(pullCleanup).toHaveBeenCalledOnce();
 });
 
 test("collection handler tolerates a change bus without unsubscribe return values", async () => {
@@ -394,24 +433,33 @@ test("global handler pushes local events and recovers its pull commit queue", as
   handler.stop();
 });
 
-test("global stop cancels a pending startup and local no-op events skip empty pushes", async () => {
+test("global stop aborts a pending outbox read and local no-op events skip empty pushes", async () => {
   let resolve!: (events: never[]) => void;
+  let notifyReadStarted!: () => void;
+  const readStarted = new Promise<void>((done) => {
+    notifyReadStarted = done;
+  });
   const store = createTestLocalChangeStore();
   vi.spyOn(store, "getPendingEvents").mockImplementationOnce(
     () =>
       new Promise((done) => {
         resolve = done;
+        notifyReadStarted();
       }),
   );
-  const adapter = { push: vi.fn(), pull: vi.fn() };
+  const pullCleanup = vi.fn();
+  const adapter = { push: vi.fn(), pull: vi.fn(() => pullCleanup) };
   const f = fixture(adapter, { localChangeStore: store });
   const handler = new GlobalSyncHandler(f.config as never);
   handler.start();
+  await readStarted;
   handler.stop();
   resolve([]);
   await tick();
   await tick();
-  expect(adapter.pull).not.toHaveBeenCalled();
+  expect(adapter.pull).toHaveBeenCalledOnce();
+  expect(adapter.push).not.toHaveBeenCalled();
+  expect(pullCleanup).toHaveBeenCalledOnce();
 
   const second = fixture({ push: vi.fn(), pull: vi.fn() });
   const active = new GlobalSyncHandler(second.config as never);

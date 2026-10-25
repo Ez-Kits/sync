@@ -49,8 +49,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
     save(checkpoints: any) {
       return this.saveCheckpointMap(checkpoints);
     }
-    push(key: string, fn: () => void | Promise<void>) {
-      return this.enqueuePush(key, fn);
+    push(key: string, fn: () => void | Promise<void>, signal?: AbortSignal) {
+      return this.enqueuePush(key, fn, signal);
     }
   }
   return { handler: new Harness(config as never), db, checkpointStorage, localChangeStore };
@@ -71,10 +71,15 @@ test("base handler applies deletes, upserts existing and absent rows, and insert
   expect(db.insert).toHaveBeenCalledTimes(2);
 });
 
-test("base handler falls back from getOptional to get, and inserts after a missing row", async () => {
+test("base handler propagates fallback reads and inserts only for an explicit absent result", async () => {
   const { handler, db } = fixture();
   db.getOptional = undefined as never;
-  db.get.mockRejectedValueOnce(new Error("not found"));
+  db.get.mockRejectedValueOnce(new Error("read failed"));
+  await expect(
+    handler.apply({ type: "update", collection: "todos", data: { id: 4 } }),
+  ).rejects.toThrow("read failed");
+  expect(db.insert).not.toHaveBeenCalled();
+  db.get.mockResolvedValueOnce(undefined);
   await handler.apply({ type: "update", collection: "todos", data: { id: 4 } });
   expect(db.insert).toHaveBeenCalledWith("todos", { id: 4 });
   await handler.apply({ type: "update", collection: "todos", data: { title: "no id" } });
@@ -196,7 +201,7 @@ test("conflict resolution ignores clean rows and supports local, remote, merged 
     state: "dirty",
     updatedAt: 2,
   });
-  await handler.resolve(update);
+  await expect(handler.resolve(update)).rejects.toThrow("read unavailable");
 });
 
 test("conflict resolution considers pending outbox writes and checkpoints only defined entries", async () => {
@@ -226,7 +231,7 @@ test("conflict resolution considers pending outbox writes and checkpoints only d
   expect(checkpointStorage.saveCheckpoint).toHaveBeenCalledTimes(1);
 });
 
-test("push queue serializes calls, retries transient failures, reports callbacks, and gives up after six attempts", async () => {
+test("push queue serializes calls, retries indefinitely with capped delays, and stops on abort", async () => {
   vi.useFakeTimers();
   try {
     const errors: unknown[] = [];
@@ -244,10 +249,12 @@ test("push queue serializes calls, retries transient failures, reports callbacks
     expect(errors).toHaveLength(1);
     expect(success).toHaveBeenCalledTimes(2);
     const fail = vi.fn().mockRejectedValue(new Error("permanent"));
-    const final = handler.push("fail", fail);
-    await vi.runAllTimersAsync();
-    await final;
+    const controller = new AbortController();
+    const final = handler.push("fail", fail, controller.signal);
+    await vi.advanceTimersByTimeAsync(8_000);
     expect(fail).toHaveBeenCalledTimes(6);
+    controller.abort();
+    await final;
   } finally {
     vi.useRealTimers();
   }
@@ -259,8 +266,14 @@ test("missing conflict resolver and recovered push queue both use their fallback
     const { handler } = fixture();
     const event = { type: "update", collection: "todos", data: { id: 1 } };
     expect(await handler.resolve(event)).toBe(event);
-    const first = handler.push("recover", () => Promise.reject(new Error("prior failure")));
-    await vi.runAllTimersAsync();
+    const controller = new AbortController();
+    const first = handler.push(
+      "recover",
+      () => Promise.reject(new Error("prior failure")),
+      controller.signal,
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    controller.abort();
     await first;
     const next = handler.push("recover", vi.fn());
     await vi.runAllTimersAsync();

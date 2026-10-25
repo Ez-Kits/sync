@@ -2,10 +2,12 @@ import { beforeEach, expect, test, vi } from "vite-plus/test";
 
 const sdk = vi.hoisted(() => ({
   firestoreCallbacks: [] as Array<(snapshot: any) => void>,
+  firestoreErrorCallbacks: [] as Array<(error: Error) => void>,
   firestoreUnsubscribes: [] as Array<ReturnType<typeof vi.fn>>,
   firestoreSets: [] as unknown[][],
   firestoreCommits: [] as Array<ReturnType<typeof vi.fn>>,
   rtdbCallbacks: {} as Record<string, Array<(snapshot: any) => void>>,
+  rtdbCancelCallbacks: {} as Record<string, Array<(error: Error) => void>>,
   rtdbOffs: [] as unknown[][],
   updates: [] as unknown[][],
   failCommit: false,
@@ -15,8 +17,14 @@ vi.mock("firebase/firestore", () => ({
   collection: (_db: unknown, path: string) => ({ path }),
   query: (ref: unknown, ...constraints: unknown[]) => ({ ref, constraints }),
   doc: (_db: unknown, path: string, id: string) => ({ path: `${path}/${id}`, id }),
-  onSnapshot: (_source: unknown, _options: unknown, callback: (snapshot: any) => void) => {
+  onSnapshot: (
+    _source: unknown,
+    _options: unknown,
+    callback: (snapshot: any) => void,
+    onError: (error: Error) => void,
+  ) => {
     sdk.firestoreCallbacks.push(callback);
+    sdk.firestoreErrorCallbacks.push(onError);
     const unsubscribe = vi.fn();
     sdk.firestoreUnsubscribes.push(unsubscribe);
     return unsubscribe;
@@ -38,16 +46,31 @@ vi.mock("firebase/firestore", () => ({
 vi.mock("firebase/database", () => ({
   ref: (_db: unknown, path?: string) => ({ path: path ?? "" }),
   query: (target: unknown, ...constraints: unknown[]) => ({ target, constraints }),
-  onChildAdded: (target: unknown, callback: (snapshot: any) => void) => {
+  onChildAdded: (
+    target: unknown,
+    callback: (snapshot: any) => void,
+    onError: (error: Error) => void,
+  ) => {
     (sdk.rtdbCallbacks.added ??= []).push(callback);
+    (sdk.rtdbCancelCallbacks.added ??= []).push(onError);
     return callback;
   },
-  onChildChanged: (target: unknown, callback: (snapshot: any) => void) => {
+  onChildChanged: (
+    target: unknown,
+    callback: (snapshot: any) => void,
+    onError: (error: Error) => void,
+  ) => {
     (sdk.rtdbCallbacks.changed ??= []).push(callback);
+    (sdk.rtdbCancelCallbacks.changed ??= []).push(onError);
     return callback;
   },
-  onChildRemoved: (target: unknown, callback: (snapshot: any) => void) => {
+  onChildRemoved: (
+    target: unknown,
+    callback: (snapshot: any) => void,
+    onError: (error: Error) => void,
+  ) => {
     (sdk.rtdbCallbacks.removed ??= []).push(callback);
+    (sdk.rtdbCancelCallbacks.removed ??= []).push(onError);
     return callback;
   },
   off: (...args: unknown[]) => {
@@ -78,13 +101,38 @@ const docSnapshot = (id: string, value: unknown) => ({
 
 beforeEach(() => {
   sdk.firestoreCallbacks.length = 0;
+  sdk.firestoreErrorCallbacks.length = 0;
   sdk.firestoreUnsubscribes.length = 0;
   sdk.firestoreSets.length = 0;
   sdk.firestoreCommits.length = 0;
   sdk.rtdbCallbacks = {};
+  sdk.rtdbCancelCallbacks = {};
   sdk.rtdbOffs.length = 0;
   sdk.updates.length = 0;
   sdk.failCommit = false;
+});
+
+test("Firebase pull adapters report listener failures to core", () => {
+  const firestoreError = vi.fn();
+  void createFirestoreSyncAdapter({
+    db: {} as never,
+    collections: [{ collectionName: "todos", collectionPath: "todos", createCheckpoint: () => 1 }],
+  } as never).pull({ commitChanges: vi.fn(), onError: firestoreError } as never);
+  const firestoreFailure = new Error("Firestore listener denied");
+  sdk.firestoreErrorCallbacks[0]!(firestoreFailure);
+  expect(firestoreError).toHaveBeenCalledWith(firestoreFailure);
+
+  const realtimeError = vi.fn();
+  void createRealtimeDBSyncAdapter({
+    db: {} as never,
+    collections: [{ collectionName: "todos", collectionPath: "todos", createCheckpoint: () => 1 }],
+  } as never).pull({ commitChanges: vi.fn(), onError: realtimeError } as never);
+  const realtimeFailure = new Error("RTDB listener cancelled");
+  sdk.rtdbCancelCallbacks.added![0]!(realtimeFailure);
+  sdk.rtdbCancelCallbacks.changed![0]!(realtimeFailure);
+  sdk.rtdbCancelCallbacks.removed![0]!(realtimeFailure);
+  expect(realtimeError).toHaveBeenCalledTimes(3);
+  expect(realtimeError).toHaveBeenCalledWith(realtimeFailure);
 });
 
 test("collection name helper handles nested slash paths and rejects empty paths", () => {

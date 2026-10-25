@@ -23,7 +23,7 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
     async getPendingEvents(collection) {
       const all = Array.from(events.values());
       const filtered = collection ? all.filter((event) => event.collection === collection) : all;
-      return filtered.sort((a, b) => a.createdAt - b.createdAt);
+      return filtered.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     },
     async deleteEvents(ids) {
       for (const id of ids) {

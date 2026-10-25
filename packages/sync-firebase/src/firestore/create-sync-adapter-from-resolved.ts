@@ -64,73 +64,70 @@ export function createFirestoreSyncAdapterFromResolved<
         const includeMetadataChanges =
           collectionConfig.includeMetadataChanges ?? common.includeMetadataChanges ?? false;
 
-        return onSnapshot(pullSource, { includeMetadataChanges }, (snapshot) => {
-          const changes = snapshot.docChanges().map((change) => {
-            if (change.type === "removed") {
-              const id = collectionConfig.deserializeDeleteId
-                ? collectionConfig.deserializeDeleteId({
-                    snapshot: change.doc,
-                  })
-                : (change.doc.id as C[N]["delete"]);
-              return {
-                type: "delete",
-                collection: collectionName,
-                id,
-              } as unknown as ChangeBusEvent<C, N>;
-            }
+        return onSnapshot(
+          pullSource,
+          { includeMetadataChanges },
+          (snapshot) => {
+            const changes = snapshot.docChanges().map((change) => {
+              if (change.type === "removed") {
+                const id = collectionConfig.deserializeDeleteId
+                  ? collectionConfig.deserializeDeleteId({ snapshot: change.doc })
+                  : (change.doc.id as C[N]["delete"]);
+                return {
+                  type: "delete",
+                  collection: collectionName,
+                  id,
+                } as unknown as ChangeBusEvent<C, N>;
+              }
 
-            const raw = getSnapshotData(change.doc);
-            if (isDeleted(raw, { snapshot: change.doc })) {
-              const id = collectionConfig.deserializeDeleteId
-                ? collectionConfig.deserializeDeleteId({
-                    snapshot: change.doc,
-                  })
-                : (change.doc.id as C[N]["delete"]);
-              return {
-                type: "delete",
-                collection: collectionName,
-                id,
-              } as unknown as ChangeBusEvent<C, N>;
-            }
+              const raw = getSnapshotData(change.doc);
+              if (isDeleted(raw, { snapshot: change.doc })) {
+                const id = collectionConfig.deserializeDeleteId
+                  ? collectionConfig.deserializeDeleteId({ snapshot: change.doc })
+                  : (change.doc.id as C[N]["delete"]);
+                return {
+                  type: "delete",
+                  collection: collectionName,
+                  id,
+                } as unknown as ChangeBusEvent<C, N>;
+              }
 
-            if (change.type === "added") {
-              const data = collectionConfig.deserializeCreate
-                ? collectionConfig.deserializeCreate(raw, {
-                    snapshot: change.doc,
-                  })
-                : (raw as C[N]["create"]);
+              if (change.type === "added") {
+                const data = collectionConfig.deserializeCreate
+                  ? collectionConfig.deserializeCreate(raw, { snapshot: change.doc })
+                  : (raw as C[N]["create"]);
+                return {
+                  type: "create",
+                  collection: collectionName,
+                  data,
+                } as unknown as ChangeBusEvent<C, N>;
+              }
+
+              const data = collectionConfig.deserializeUpdate
+                ? collectionConfig.deserializeUpdate(raw, { snapshot: change.doc })
+                : (raw as C[N]["update"]);
               return {
-                type: "create",
+                type: "update",
                 collection: collectionName,
                 data,
               } as unknown as ChangeBusEvent<C, N>;
-            }
-
-            const data = collectionConfig.deserializeUpdate
-              ? collectionConfig.deserializeUpdate(raw, {
-                  snapshot: change.doc,
-                })
-              : (raw as C[N]["update"]);
-            return {
-              type: "update",
-              collection: collectionName,
-              data,
-            } as unknown as ChangeBusEvent<C, N>;
-          });
-
-          if (changes.length > 0) {
-            const nextCheckpoint =
-              collectionConfig.createPullCheckpoint?.({
-                snapshot,
-                previousCheckpoint,
-              }) ?? collectionConfig.createCheckpoint();
-            previousCheckpoint = nextCheckpoint;
-            commitChanges({
-              changes,
-              checkpoint: checkpointMapForCollection(collectionName, nextCheckpoint),
             });
-          }
-        });
+
+            if (changes.length > 0) {
+              const nextCheckpoint =
+                collectionConfig.createPullCheckpoint?.({
+                  snapshot,
+                  previousCheckpoint,
+                }) ?? collectionConfig.createCheckpoint();
+              previousCheckpoint = nextCheckpoint;
+              commitChanges({
+                changes,
+                checkpoint: checkpointMapForCollection(collectionName, nextCheckpoint),
+              });
+            }
+          },
+          (error: Error) => pullOptions.onError?.(error),
+        );
       });
 
       return () => {

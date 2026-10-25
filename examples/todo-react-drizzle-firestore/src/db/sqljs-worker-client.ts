@@ -168,32 +168,38 @@ export class SqlJsWorkerClient {
   }
 }
 
-async function loadPersistedDb(): Promise<ArrayBuffer | null> {
+export async function loadPersistedDb(): Promise<ArrayBuffer | null> {
+  const db = await openIdb();
+  let fromIdb: ArrayBuffer | null;
   try {
-    const db = await openIdb();
-    const fromIdb = await new Promise<ArrayBuffer | null>((resolve, reject) => {
+    const persistedValue = await new Promise<unknown>((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readonly");
       const request = tx.objectStore(IDB_STORE).get(IDB_KEY);
       request.onsuccess = () => {
-        const value = request.result;
-        resolve(value instanceof ArrayBuffer ? value : null);
+        resolve(request.result);
       };
       request.onerror = () => reject(request.error ?? new Error("Failed to read IndexedDB"));
     });
+    if (persistedValue === undefined) {
+      fromIdb = null;
+    } else if (persistedValue instanceof ArrayBuffer) {
+      fromIdb = persistedValue;
+    } else {
+      throw new Error("The persisted local database snapshot has an unsupported format.");
+    }
+  } finally {
     db.close();
-    if (fromIdb) return fromIdb;
-
-    // One-time migration from the previous localStorage snapshot format.
-    const raw = localStorage.getItem(DB_STORAGE_KEY);
-    if (!raw) return null;
-    const binary = Uint8Array.from(atob(raw), (char) => char.charCodeAt(0));
-    const buffer = binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength);
-    await savePersistedDb(buffer);
-    localStorage.removeItem(DB_STORAGE_KEY);
-    return buffer;
-  } catch {
-    return null;
   }
+  if (fromIdb) return fromIdb;
+
+  // One-time migration from the previous localStorage snapshot format.
+  const raw = localStorage.getItem(DB_STORAGE_KEY);
+  if (!raw) return null;
+  const binary = Uint8Array.from(atob(raw), (char) => char.charCodeAt(0));
+  const buffer = binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength);
+  await savePersistedDb(buffer);
+  localStorage.removeItem(DB_STORAGE_KEY);
+  return buffer;
 }
 
 async function savePersistedDb(buffer: ArrayBuffer): Promise<void> {

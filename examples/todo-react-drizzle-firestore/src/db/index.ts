@@ -50,13 +50,13 @@ export async function migrateLocalSchema(): Promise<void> {
     "run",
   );
 
-  try {
+  const tableInfo = await sqlJsWorker.exec("PRAGMA table_info(todos)", [], "all");
+  const columns = tableInfo.rows as unknown[][];
+  if (!columns.some((column) => column[1] === "deleted")) {
     await sqlJsWorker.exec(
       `ALTER TABLE todos ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
       [],
       "run",
     );
-  } catch {
-    // Column already exists on fresh / previously migrated DBs.
   }
 }

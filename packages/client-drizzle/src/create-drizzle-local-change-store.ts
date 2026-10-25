@@ -93,8 +93,8 @@ export function createDrizzleLocalChangeStore<
       const rows = collection
         ? await query
             .where(eq(eventColumn("collection"), collection))
-            .orderBy(asc(eventColumn("createdAt")))
-        : await query.orderBy(asc(eventColumn("createdAt")));
+            .orderBy(asc(eventColumn("createdAt")), asc(eventColumn("id")))
+        : await query.orderBy(asc(eventColumn("createdAt")), asc(eventColumn("id")));
       return rows as StoredChangeBusEvent[];
     },
     async deleteEvents(ids: string[]) {

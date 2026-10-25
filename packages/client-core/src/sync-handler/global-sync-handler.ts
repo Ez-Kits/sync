@@ -23,6 +23,7 @@ export class GlobalSyncHandler<
 > extends BaseSyncHandler<C, DB, TCheckpoint> {
   private pullCleanup: (() => void) | undefined;
   private pushUnsubscribe: (() => void) | undefined;
+  private pushController: AbortController | undefined;
   private startToken: object | undefined;
   private pullCommitQueue: Promise<void> = Promise.resolve();
 
@@ -40,45 +41,56 @@ export class GlobalSyncHandler<
 
     void (async () => {
       try {
+        const pushController = new AbortController();
+        this.pushController = pushController;
         this.pushUnsubscribe = this.config.changeBus.subscribe(
           (_events) => {
-            void this.enqueuePush("global", () =>
-              this.collectAllPendingPushEvents().then((events) => {
-                if (events.length === 0) return;
-                return syncAdapter.push({
-                  events,
-                  commitChanges: ({ events: committedEvents }) => {
-                    void this.commitPushChanges(committedEvents);
-                  },
-                });
-              }),
+            void this.enqueuePush(
+              "global",
+              () =>
+                this.collectAllPendingPushEvents().then((events) => {
+                  if (events.length === 0) return;
+                  return syncAdapter.push({
+                    events,
+                    commitChanges: ({ events: committedEvents }) => {
+                      void this.commitPushChanges(committedEvents);
+                    },
+                  });
+                }),
+              pushController.signal,
             );
           },
           { stream: "local" },
         );
 
-        for (const collection of this.config.collections) {
-          const collectionName = collection.name as CollectionNames<C>;
-          await this.flushPendingPushEvents(
-            collectionName,
-            syncAdapter as SyncAdapter<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>,
-            (events) => this.commitPushChanges(events),
-            "global",
-          );
-        }
+        void this.enqueuePush(
+          "global",
+          () =>
+            this.collectAllPendingPushEvents().then((events) => {
+              if (events.length === 0) return;
+              return syncAdapter.push({
+                events,
+                commitChanges: ({ events: committedEvents }) => {
+                  void this.commitPushChanges(committedEvents);
+                },
+              });
+            }),
+          pushController.signal,
+        );
 
         if (this.startToken !== startToken) return;
 
-        const checkpointMap = await this.readCheckpointMap();
-        const cleanup = await syncAdapter.pull({
-          checkpoint: checkpointMap,
-          commitChanges: ({ changes, checkpoint }) => {
-            void this.commitPullChanges(changes, checkpoint);
-          },
+        this.pullCleanup = this.retryPull(async (onError, isActive) => {
+          const checkpointMap = await this.readCheckpointMap();
+          if (!isActive()) return;
+          return syncAdapter.pull({
+            checkpoint: checkpointMap,
+            commitChanges: ({ changes, checkpoint }) => {
+              void this.commitPullChanges(changes, checkpoint);
+            },
+            onError,
+          });
         });
-        if (typeof cleanup === "function") {
-          this.pullCleanup = cleanup;
-        }
       } catch (error) {
         this.config.onSyncError?.(error);
       } finally {
@@ -91,6 +103,8 @@ export class GlobalSyncHandler<
 
   stop(): void {
     this.startToken = undefined;
+    this.pushController?.abort();
+    this.pushController = undefined;
 
     this.pullCleanup?.();
     this.pullCleanup = undefined;

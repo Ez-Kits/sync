@@ -20,4 +20,11 @@ async function bootstrap() {
   );
 }
 
-void bootstrap();
+void bootstrap().catch((error: unknown) => {
+  console.error("Failed to initialize the local database", error);
+  const root = document.querySelector<HTMLDivElement>("#app");
+  if (root) {
+    root.textContent =
+      "Unable to open your local data. Your saved data was not replaced. Reload the app, and consult recovery instructions before clearing browser storage.";
+  }
+});

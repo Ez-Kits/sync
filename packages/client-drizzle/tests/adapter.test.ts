@@ -239,6 +239,9 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   await store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
 
   expect(queryCalls.map(([kind]) => kind)).toEqual(["where", "orderBy", "orderBy", "where"]);
+  expect(queryCalls.filter(([kind]) => kind === "orderBy").every((call) => call.length === 3)).toBe(
+    true,
+  );
   expect(deletes).toHaveLength(2);
   expect(deletes[0]?.[0]).toBe(events);
   expect(deletes[1]?.[0]).toBe(dirtyRecords);

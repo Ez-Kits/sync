@@ -223,10 +223,10 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
 
   expect(eventRepository.find).toHaveBeenNthCalledWith(1, {
     where: { collection: "todos" },
-    order: { createdAt: "ASC" },
+    order: { createdAt: "ASC", id: "ASC" },
   });
   expect(eventRepository.find).toHaveBeenNthCalledWith(2, {
-    order: { createdAt: "ASC" },
+    order: { createdAt: "ASC", id: "ASC" },
   });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(1, { id: "event" });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(2, { id: "other" });

@@ -9,6 +9,8 @@ import { createRealtimeDBSyncAdapter } from "@ez-kits/sync-firebase/sync-realtim
 
 Each provider config maps a local collection to a Firestore collection path or Realtime Database path. Configure stable ID resolution and serializers whenever remote document shapes differ from local rows. Pushes are acknowledged only after Firebase writes complete; retry safety depends on idempotent IDs and writes.
 
+Pull listener failures are reported to the core client and the listener is retried with capped backoff. Checkpoints advance only after incoming changes are committed locally.
+
 ## API naming migration
 
 The old sync-options API names are removed. Use `SyncAdapter`, set `syncAdapter` on a client or collection, and use the `createFirestoreSyncAdapter` / `createRealtimeDBSyncAdapter` factories. Per-collection builders are named `defineFirestoreCollectionSyncAdapterConfig` and `defineRealtimeDBCollectionSyncAdapterConfig`.

@@ -332,8 +332,76 @@ test("lease loss and errors update status; a late lease is released after sync s
   failedClient.dispose();
 });
 
+test("Web Locks keep one shared-database leader and hand leadership off on stop", async () => {
+  vi.stubGlobal("BroadcastChannel", undefined);
+  const pendingRequests: Array<{
+    name: string;
+    signal: AbortSignal;
+    callback: (lock: unknown) => Promise<void>;
+  }> = [];
+  const locks = {
+    request: vi.fn(
+      (
+        name: string,
+        options: { signal: AbortSignal },
+        callback: (lock: unknown) => Promise<void>,
+      ) => {
+        pendingRequests.push({ name, signal: options.signal, callback });
+        return new Promise<void>(() => {});
+      },
+    ),
+  };
+  vi.stubGlobal("navigator", { onLine: true, locks });
+  const db = dbFixture();
+  const firstClient = new SyncClientImpl(
+    config(db, atomicMemoryStore(), {
+      coordinateTabs: true,
+      coordinationKey: "shared-db",
+    }) as never,
+    new ChangeBus<any>() as never,
+  );
+  const secondClient = new SyncClientImpl(
+    config(db, atomicMemoryStore(), {
+      coordinateTabs: true,
+      coordinationKey: "shared-db",
+    }) as never,
+    new ChangeBus<any>() as never,
+  );
+  const firstStart = vi.spyOn((firstClient as any).syncHandler, "startAll");
+  const firstStop = vi.spyOn((firstClient as any).syncHandler, "stopAll");
+  const secondStart = vi.spyOn((secondClient as any).syncHandler, "startAll");
+
+  firstClient.startSync();
+  secondClient.startSync();
+  await tick();
+  expect(locks.request).toHaveBeenCalledTimes(2);
+  expect(pendingRequests.map(({ name }) => name)).toEqual([
+    "ez-sync:shared-db",
+    "ez-sync:shared-db",
+  ]);
+
+  const firstCallback = pendingRequests[0]!.callback({});
+  await tick();
+  expect(firstStart).toHaveBeenCalledOnce();
+  expect(secondStart).not.toHaveBeenCalled();
+
+  firstClient.stopSync();
+  await firstCallback;
+  expect(firstStop).toHaveBeenCalled();
+  expect(pendingRequests[0]!.signal.aborted).toBe(true);
+
+  const secondCallback = pendingRequests[1]!.callback({});
+  await tick();
+  expect(secondStart).toHaveBeenCalledOnce();
+  secondClient.stopSync();
+  await secondCallback;
+  firstClient.dispose();
+  secondClient.dispose();
+});
+
 test("lease release uses the default coordination key", async () => {
   vi.stubGlobal("BroadcastChannel", undefined);
+  vi.stubGlobal("navigator", { onLine: true });
   const db = dbFixture();
   const store = {
     ...atomicMemoryStore(),
