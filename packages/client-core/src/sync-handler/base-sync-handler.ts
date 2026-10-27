@@ -25,6 +25,10 @@ export interface BaseSyncHandlerConfig<
   onSyncError?: (error: unknown) => void;
   onSyncSuccess?: () => void;
   conflictResolver?: ConflictResolution<SyncHandlerDataMap<C>>;
+  /** Called after pulled changes are committed locally, e.g. to notify other tabs. */
+  onRemoteChangesCommitted?: (changes: ChangeBusEvent<SyncHandlerDataMap<C>>[]) => void;
+  /** Fencing check: when it returns false this handler lost leadership and must not write. */
+  canCommit?: () => boolean;
 }
 
 export abstract class BaseSyncHandler<
@@ -267,6 +271,7 @@ export abstract class BaseSyncHandler<
    * After a successful push, remove acked events from the local store and refresh dirty tracking.
    */
   protected async ackPushedEvents(events: ChangeBusEvent<SyncHandlerDataMap<C>>[]): Promise<void> {
+    if (!this.mayCommit()) return;
     const eventIds = events
       .map((event) => event.eventId)
       .filter((eventId): eventId is string => typeof eventId === "string");
@@ -311,6 +316,10 @@ export abstract class BaseSyncHandler<
     if (keysToRemove.length > 0) {
       await this.config.localChangeStore.removeDirtyRecords(keysToRemove);
     }
+  }
+
+  protected mayCommit(): boolean {
+    return this.config.canCommit?.() ?? true;
   }
 
   protected async readCheckpointMap(): Promise<Partial<Record<CollectionNames<C>, TCheckpoint>>> {

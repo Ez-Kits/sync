@@ -102,8 +102,11 @@ const collection = defineDrizzleCollection({
   },
 });
 
+// The no-op proxy below is a placeholder, so this demo runs as a single context.
 const storage = createDrizzleStorage({
-  db,
+  sharing: "shared",
+  coordinateTabs: false,
+  open: () => ({ database: db }),
   collections: [collection],
   schema,
   localChangeTables: { events: syncEvents, dirtyRecords },

@@ -9,7 +9,8 @@
     "check": "vp check",
     "preview": "vp preview",
     "postinstall": "node scripts/copy-sqljs-assets.mjs",
-    "test": "vp test"
+    "test": "vp test",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ez-kits/sync-client-core": "workspace:*",
@@ -25,6 +26,7 @@
     "sql.js": "^1.13.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/react": "catalog:",
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.9",

@@ -203,9 +203,7 @@ export function createFirestoreSyncAdapterFromResolved<
           continue;
         }
 
-        const id = collectionConfig.resolveDocumentId
-          ? collectionConfig.resolveDocumentId(event as ChangeBusEvent<C, N>)
-          : String((event.data as { id?: string | number }).id ?? crypto.randomUUID());
+        const id = collectionConfig.resolveDocumentId(event as ChangeBusEvent<C, N>);
 
         if (event.type === "create") {
           const payload = collectionConfig.serializeCreate

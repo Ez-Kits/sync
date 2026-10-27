@@ -42,7 +42,7 @@ export interface FirestoreSyncAdapterCollectionHandlers<
   }) => TCheckpoint;
   /** Forwarded to {@link onSnapshot} (useful with metadata-driven flows). */
   includeMetadataChanges?: boolean;
-  resolveDocumentId?: (event: ChangeBusEvent<C, N>) => string;
+  resolveDocumentId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (
     data: DocumentData,
     context: { snapshot: QueryDocumentSnapshot<DocumentData> },

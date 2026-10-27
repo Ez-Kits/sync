@@ -7,9 +7,10 @@ import type {
   PullOptions,
   PushOptions,
   SyncAdapter,
+  SyncHandler,
   SyncStatus,
 } from "../../src";
-import type { Checkpoint, Collections, TodoSelect } from "./fixtures";
+import type { Checkpoint, Collections, DB, TodoSelect } from "./fixtures";
 
 type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<Collections>;
 type Adapter = SyncAdapter<DataMap, "todos" | "users", Checkpoint>;
@@ -54,4 +55,14 @@ test("conflict resolution receives the typed local record", () => {
   // @ts-expect-error decisions are limited to local, remote, or replacement data
   const invalid: ConflictResolution<DataMap> = () => "merge";
   void invalid;
+});
+
+test("outbox notifications accept known collection names", () => {
+  type Notify = SyncHandler<Collections, DB, Checkpoint>["notifyOutboxChanged"];
+  expectTypeOf<Notify>().parameter(0).toEqualTypeOf<readonly ("todos" | "users")[] | undefined>();
+  const notify = {} as Notify;
+  notify();
+  notify(["todos"]);
+  // @ts-expect-error unknown collections are rejected
+  notify(["projects"]);
 });

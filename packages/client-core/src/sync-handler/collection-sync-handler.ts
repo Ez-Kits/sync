@@ -49,7 +49,7 @@ export class CollectionSyncHandler<
       try {
         const pushController = new AbortController();
         this.pushControllers.set(collectionName, pushController);
-        const unsubscribe = this.startPushLoop(collectionName, syncAdapter, pushController.signal);
+        const unsubscribe = this.startPushLoop(collectionName);
         if (unsubscribe) this.pushUnsubscribes.set(collectionName, unsubscribe);
 
         void this.flushPendingPushEvents(
@@ -85,6 +85,9 @@ export class CollectionSyncHandler<
     const pushUnsubscribe = this.pushUnsubscribes.get(collectionName);
     pushUnsubscribe?.();
     this.pushUnsubscribes.delete(collectionName);
+
+    this.pushControllers.get(collectionName)?.abort();
+    this.pushControllers.delete(collectionName);
   }
 
   startAll(): void {
@@ -96,6 +99,13 @@ export class CollectionSyncHandler<
   stopAll(): void {
     for (const collection of this.config.collections) {
       this.stop(collection.name as CollectionNames<C>);
+    }
+  }
+
+  /** Push outbox events written outside this context, such as by another tab. */
+  notifyOutboxChanged(collectionNames: readonly CollectionNames<C>[]): void {
+    for (const collectionName of new Set(collectionNames)) {
+      this.schedulePush(collectionName);
     }
   }
 
@@ -125,30 +135,34 @@ export class CollectionSyncHandler<
     );
   }
 
-  private startPushLoop<N extends CollectionNames<C>>(
-    collectionName: N,
-    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
-    signal: AbortSignal,
-  ): (() => void) | undefined {
+  private startPushLoop<N extends CollectionNames<C>>(collectionName: N): (() => void) | undefined {
     return this.config.changeBus.subscribe(
       collectionName,
-      (_events) => {
-        void this.enqueuePush(
-          String(collectionName),
-          () =>
-            this.collectPendingPushEvents(collectionName).then((events) => {
-              if (events.length === 0) return;
-              return syncAdapter.push({
-                events,
-                commitChanges: ({ events: committedEvents }) => {
-                  void this.commitPushChanges(collectionName, committedEvents);
-                },
-              });
-            }),
-          signal,
-        );
-      },
+      (_events) => this.schedulePush(collectionName),
       { stream: "local" },
+    );
+  }
+
+  private schedulePush<N extends CollectionNames<C>>(collectionName: N): void {
+    const syncAdapter = this.collectionMap.get(collectionName)?.syncAdapter as
+      | SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>
+      | undefined;
+    const pushController = this.pushControllers.get(collectionName);
+    if (!syncAdapter || !pushController) return;
+
+    void this.enqueuePush(
+      String(collectionName),
+      () =>
+        this.collectPendingPushEvents(collectionName).then((events) => {
+          if (events.length === 0) return;
+          return syncAdapter.push({
+            events,
+            commitChanges: ({ events: committedEvents }) => {
+              void this.commitPushChanges(collectionName, committedEvents);
+            },
+          });
+        }),
+      pushController.signal,
     );
   }
 
@@ -161,6 +175,7 @@ export class CollectionSyncHandler<
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        if (!this.mayCommit()) return;
         if (changes.length > 0) {
           await this.config.db.transaction(async (tx) => {
             for (const event of changes) {
@@ -174,6 +189,11 @@ export class CollectionSyncHandler<
         }
 
         this.config.changeBus.publishRemoteBatch(changes);
+        if (changes.length > 0) {
+          this.config.onRemoteChangesCommitted?.(
+            changes as ChangeBusEvent<SyncHandlerDataMap<C>>[],
+          );
+        }
         await this.saveCheckpointMap(checkpoint);
         this.config.onSyncSuccess?.();
       });

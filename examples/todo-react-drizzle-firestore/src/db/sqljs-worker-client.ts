@@ -15,7 +15,8 @@ type WorkerResponse = {
   id: number;
   ready?: boolean;
   results?: Array<{ columns: string[]; values: unknown[][] }>;
-  buffer?: ArrayBuffer;
+  /** sql.js `db.export()` returns a Uint8Array view, not a bare ArrayBuffer. */
+  buffer?: Uint8Array;
   error?: string;
 };
 
@@ -168,6 +169,15 @@ export class SqlJsWorkerClient {
     }
   }
 
+  /** Stop the worker; pending requests are rejected. Committed state is already persisted. */
+  close(): void {
+    this.worker.terminate();
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error("The local database was closed."));
+    }
+    this.pending.clear();
+  }
+
   async persist(): Promise<void> {
     if (this.transactionDepth > 0) return;
     await this.ready;
@@ -176,7 +186,7 @@ export class SqlJsWorkerClient {
       action: "export",
     });
     if (response.buffer) {
-      await savePersistedDb(response.buffer);
+      await savePersistedDb(toArrayBuffer(response.buffer));
     }
   }
 }
@@ -197,6 +207,9 @@ export async function loadPersistedDb(): Promise<ArrayBuffer | null> {
       fromIdb = null;
     } else if (persistedValue instanceof ArrayBuffer) {
       fromIdb = persistedValue;
+    } else if (ArrayBuffer.isView(persistedValue)) {
+      // Snapshots written before export buffers were normalized were stored as Uint8Array.
+      fromIdb = toArrayBuffer(persistedValue);
     } else {
       throw new Error("The persisted local database snapshot has an unsupported format.");
     }
@@ -213,6 +226,10 @@ export async function loadPersistedDb(): Promise<ArrayBuffer | null> {
   await savePersistedDb(buffer);
   localStorage.removeItem(DB_STORAGE_KEY);
   return buffer;
+}
+
+function toArrayBuffer(view: ArrayBufferView): ArrayBuffer {
+  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice().buffer;
 }
 
 async function savePersistedDb(buffer: ArrayBuffer): Promise<void> {

@@ -5,6 +5,7 @@ import { buildSchemaFromCollections, defineDrizzleCollection } from "../src/coll
 import { createDrizzleDBAdapter } from "../src/create-drizzle-db-adapter";
 import { createDrizzleLocalChangeStore } from "../src/create-drizzle-local-change-store";
 import { createDrizzleStorage } from "../src/create-drizzle-storage";
+import { executeSqliteProxyRequest, forwardSqliteProxy } from "../src/sqlite-proxy";
 
 const todos = sqliteTable("todos", { id: integer("id").primaryKey(), title: text("title") });
 const collection = defineDrizzleCollection({ name: "todos", table: todos });
@@ -171,13 +172,42 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   expect(transactionInsert).toHaveBeenCalledTimes(2);
   expect(rootInsert).not.toHaveBeenCalled();
 
+  const database = { insert: rootInsert } as never;
   const storage = createDrizzleStorage({
-    db: { insert: rootInsert } as never,
+    sharing: "shared",
+    coordinateTabs: false,
+    open: () => ({ database }),
     collections: [collection],
     localChangeTables: { events, dirtyRecords },
   });
-  expect(storage.localChangeStore.atomicLocalMutationCapability).toBe("atomic");
-  expect(typeof storage.dbAdapter.commitLocalMutation).toBe("function");
+  await expect(storage.ready).resolves.toBeUndefined();
+  expect(storage.role).toBe("owner");
+  await storage.dispose();
+});
+
+test("sqlite-proxy helpers forward follower statements and run them on the owner", async () => {
+  const send = vi.fn(async (request: unknown) => request);
+  const forwarded = forwardSqliteProxy(send);
+  await forwarded.all("select 1", [1], "object");
+  await forwarded.get("select 2", [2]);
+  await forwarded.run("delete", [3]);
+  expect(send.mock.calls.map(([request]) => request)).toEqual([
+    { method: "all", sql: "select 1", params: [1], rowMode: "object" },
+    { method: "get", sql: "select 2", params: [2], rowMode: undefined },
+    { method: "run", sql: "delete", params: [3] },
+  ]);
+
+  const owner = {
+    all: vi.fn(async () => [[1]]),
+    get: vi.fn(async () => [2]),
+    run: vi.fn(async () => "ran"),
+  };
+  for (const [request] of send.mock.calls) {
+    await executeSqliteProxyRequest(owner as never, request as never);
+  }
+  expect(owner.all).toHaveBeenCalledWith("select 1", [1], "object");
+  expect(owner.get).toHaveBeenCalledWith("select 2", [2], undefined);
+  expect(owner.run).toHaveBeenCalledWith("delete", [3]);
 });
 
 test("Drizzle local-change store queries and deletes events and dirty records", async () => {

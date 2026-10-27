@@ -94,9 +94,17 @@ describe("typeorm adapter", () => {
     createTypeOrmDBAdapter({ db: {}, collections });
   });
 
-  test("createTypeOrmStorage produces a pair accepted by createSyncClient", () => {
+  test("createTypeOrmStorage produces shared storage accepted by createSyncClient", () => {
+    createTypeOrmStorage({
+      open: () => ({ database: db }),
+      // @ts-expect-error TypeORM storage is always shared; there is no follower connector
+      connect: () => db,
+      collections,
+      eventEntity: OutboxEvent,
+      dirtyRecordEntity: DirtyRecordEntity,
+    });
     const storage = createTypeOrmStorage({
-      db,
+      open: () => ({ database: db }),
       collections,
       eventEntity: OutboxEvent,
       dirtyRecordEntity: DirtyRecordEntity,
@@ -142,7 +150,7 @@ describe("typeorm adapter", () => {
     }
     // @ts-expect-error event data must accept all local event payloads
     createTypeOrmStorage({
-      db,
+      open: () => ({ database: db }),
       collections,
       eventEntity: TextPayloadEvent,
       dirtyRecordEntity: DirtyRecordEntity,

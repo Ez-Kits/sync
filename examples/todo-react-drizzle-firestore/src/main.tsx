@@ -1,11 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
-import { migrateLocalSchema } from "./db/index.ts";
+import { storage } from "./sync.ts";
 import "./style.css";
 
 async function bootstrap() {
-  await migrateLocalSchema();
+  // Resolves once this tab owns the database or has reached the tab that does.
+  await storage.ready;
   // await seedTodosOnce();
 
   const root = document.querySelector<HTMLDivElement>("#app");

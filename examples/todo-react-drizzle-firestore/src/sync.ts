@@ -17,7 +17,7 @@ import {
   Timestamp,
   type QuerySnapshot,
 } from "firebase/firestore";
-import { db } from "./db/index.ts";
+import { connectLocalDatabase, openLocalDatabase } from "./db/index.ts";
 import { dirtyRecords, schema, syncEvents, todos, type Todo } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
 
@@ -114,15 +114,23 @@ function createTodoFirestoreSyncAdapter() {
   });
 }
 
+/**
+ * One tab owns the sql.js database (elected with Web Locks); other tabs proxy their
+ * queries and writes to it, and only the owner syncs with Firestore.
+ */
+export const storage = createDrizzleStorage({
+  coordinationKey: "ez-sync-todo",
+  collections: [todosCollection],
+  schema,
+  localChangeTables: { events: syncEvents, dirtyRecords },
+  open: openLocalDatabase,
+  connect: connectLocalDatabase,
+});
+
 export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
-    storage: createDrizzleStorage({
-      db,
-      collections: [todosCollection],
-      schema,
-      localChangeTables: { events: syncEvents, dirtyRecords },
-    }),
+    storage,
     checkpointStorage: createLocalStorageCheckpointStorage<string, TodoCheckpoint>({
       key: "ez-sync-todo-checkpoint",
       serializer: (checkpoint) =>

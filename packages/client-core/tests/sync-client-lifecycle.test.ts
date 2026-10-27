@@ -1,158 +1,98 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
+import {
+  createCoordinatedStorage,
+  CoordinationUnavailableError,
+  FollowerWriteError,
+} from "../src/storage-coordination";
 import { createSyncClient } from "../src/sync-client/create-sync-client";
 import { SyncClientImpl } from "../src/sync-client/sync-client";
-import { createAtomicLocalMutationStorage } from "../src/sync-client/storage-pair";
-import { createTestLocalChangeStore } from "./helpers/local-change-store";
-
-const collection = { name: "todos", adapterConfig: {}, primaryField: "id" };
-function dbFixture() {
-  const db: any = {
-    queryBuilder: {},
-    querySchema: { todos: {} },
-    insert: vi.fn(async () => {}),
-    update: vi.fn(async () => {}),
-    delete: vi.fn(async () => {}),
-    get: vi.fn(async () => undefined),
-    getMany: vi.fn(async () => []),
-    transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
-  };
-  db.commitLocalMutation = vi.fn(
-    async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
-      const context = { operations: db, native: db };
-      await mutate(context);
-      await persistOutboxEvent(context);
-      await persistDirtyRecord(context);
-    },
-  );
-  return db;
-}
-function atomicMemoryStore() {
-  return {
-    ...createTestLocalChangeStore(),
-    atomicLocalMutationCapability: "atomic" as const,
-  };
-}
-function config(db: any, store: any = atomicMemoryStore(), extra: Record<string, unknown> = {}) {
-  return {
-    collections: [collection],
-    checkpointStorage: {
-      getCheckpoint: vi.fn(async () => undefined),
-      saveCheckpoint: vi.fn(async () => {}),
-    },
-    storage: createAtomicLocalMutationStorage(
-      db,
-      (database) => database,
-      () => store,
-    ),
-    coordinateTabs: false,
-    ...extra,
-  } as any;
-}
-const tick = async () => {
-  await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-};
+import {
+  atomicMemoryStore,
+  clientConfig,
+  collection,
+  createEngine,
+  makeDb,
+  settle,
+  standaloneStorage,
+  tick,
+} from "./helpers/storage";
+import { FakeBroadcastChannel, installTabs } from "./helpers/tabs";
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-test("client rejects missing paired storage instead of using a default outbox", () => {
-  const db = dbFixture();
-  const settings = { ...config(db) } as any;
-  delete settings.storage;
-  expect(() => new SyncClientImpl(settings, new ChangeBus<any>() as never)).toThrow(
-    "Sync clients require a paired database adapter and local-change store",
-  );
-});
+type ProxyRequest = { op: "get"; id: string } | { op: "getMany" } | { op: "fail" };
 
-test("client rejects a storage pair reassembled at runtime", () => {
-  const db = dbFixture();
-  const pair = createAtomicLocalMutationStorage(
-    db,
-    (database) => database,
-    () => atomicMemoryStore(),
-  );
-  // oxlint-disable-next-line typescript/no-misused-spread -- verifies runtime detection of a reassembled pair
-  const reassembled = { ...pair, localChangeStore: atomicMemoryStore() };
-
-  expect(
-    () =>
-      new SyncClientImpl(
-        {
-          collections: [collection],
-          storage: reassembled,
-          checkpointStorage: {
-            getCheckpoint: vi.fn(async () => undefined),
-            saveCheckpoint: vi.fn(async () => {}),
-          },
-        } as never,
-        new ChangeBus<any>(),
-      ),
-  ).toThrow("paired database adapter and local-change store");
-});
-
-test("storage API rejects unpaired adapters and non-atomic stores at type level", () => {
-  const db = dbFixture();
+/** One persisted engine (rows + outbox) that only the current owner opens. */
+function exclusiveFixture() {
+  const engine = createEngine();
   const store = atomicMemoryStore();
-  const checkpointStorage = {
-    getCheckpoint: vi.fn(async () => undefined),
-    saveCheckpoint: vi.fn(async () => {}),
-  };
-  const pairedStorage = createAtomicLocalMutationStorage(
-    db,
-    (database) => database,
-    () => store,
-  );
-  const reassembledStorage = {
-    // oxlint-disable-next-line typescript/no-misused-spread -- verifies that spreading loses the opaque pair type
-    ...pairedStorage,
-    localChangeStore: atomicMemoryStore(),
-  };
-  const invalidCalls = () => {
-    createSyncClient({
-      collections: [collection],
-      // @ts-expect-error clients require one branded database/store pair
-      dbAdapter: () => db,
-      localChangeStore: atomicMemoryStore(),
-      checkpointStorage,
+  const execute = vi.fn(async (request: ProxyRequest) => {
+    if (request.op === "fail") throw new Error("query failed");
+    if (request.op === "get") return engine.get(request.id);
+    return [...engine.values()];
+  });
+  const open = vi.fn(async () => ({ database: makeDb(engine), execute }));
+  const storage = () =>
+    createCoordinatedStorage({
+      open,
+      connect: (send: (request: ProxyRequest) => Promise<unknown>) => ({
+        ...makeDb(createEngine()),
+        queryBuilder: { send },
+        get: (_n: string, id: string) => send({ op: "get", id }),
+        getMany: () => send({ op: "getMany" }),
+      }),
+      createDBAdapter: (database: any) => database,
+      createLocalChangeStore: () => store,
     });
-    createAtomicLocalMutationStorage(
-      db,
-      (database) => database,
-      // @ts-expect-error memory stores cannot satisfy the atomic store contract
-      () => createTestLocalChangeStore(),
-    );
-    createSyncClient({
-      collections: [collection],
-      // @ts-expect-error a pair cannot be reassembled with another local-change store
-      storage: reassembledStorage,
-      checkpointStorage,
-    });
-  };
+  return { engine, store, open, execute, storage };
+}
 
-  expect(invalidCalls).toBeTypeOf("function");
-});
+function sharedStorage(engine = createEngine(), store: any = atomicMemoryStore()) {
+  return createCoordinatedStorage({
+    sharing: "shared",
+    open: () => ({ database: makeDb(engine) }),
+    createDBAdapter: (database: any) => database,
+    createLocalChangeStore: () => store,
+  });
+}
+
+function recordingAdapter() {
+  let commitPull: ((options: any) => void) | undefined;
+  const adapter = {
+    push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
+    pull: vi.fn((options: any) => {
+      commitPull = options.commitChanges;
+      return () => {};
+    }),
+    commitPull: (options: any) => commitPull!(options),
+  };
+  return adapter;
+}
+
+function client(storage: unknown, extra: Record<string, unknown> = {}) {
+  return new SyncClientImpl(clientConfig(storage, extra), new ChangeBus<any>() as never);
+}
 
 test("factory creates a client, subscribe overloads filter streams, and live queries rerun on changes", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const db = dbFixture();
-  const client = createSyncClient(config(db) as never);
+  const db = makeDb();
+  const syncClient = createSyncClient(clientConfig(standaloneStorage(db)) as never);
   const all = vi.fn();
   const remote = vi.fn();
   const single = vi.fn();
   const several = vi.fn();
-  const stopAll = client.subscribe(all);
-  client.subscribe(remote, { stream: "remote" });
-  client.subscribe("todos" as never, single as never);
-  client.subscribe(["todos"] as never, several as never, { stream: "local" });
+  const stopAll = syncClient.subscribe(all);
+  syncClient.subscribe(remote, { stream: "remote" });
+  syncClient.subscribe("todos" as never, single as never);
+  syncClient.subscribe(["todos"] as never, several as never, { stream: "local" });
   const data = vi.fn();
   const query = vi.fn(async () => ["todos"]);
-  client.liveQuery({ query, onData: data } as never);
+  syncClient.liveQuery({ query, onData: data } as never);
   await tick();
-  await client.collections.todos.insert({ id: "1" } as never);
+  await syncClient.collections.todos.insert({ id: "1" } as never);
   await tick();
   expect(data).toHaveBeenCalledTimes(2);
   expect(query).toHaveBeenCalledWith(db.queryBuilder, db.querySchema);
@@ -160,401 +100,286 @@ test("factory creates a client, subscribe overloads filter streams, and live que
   expect(single).toHaveBeenCalledTimes(1);
   expect(several).toHaveBeenCalledTimes(1);
   expect(remote).not.toHaveBeenCalled();
-  (client as any).changeBus.publishRemote({ type: "delete", collection: "todos", id: "1" });
+  (syncClient as any).changeBus.publishRemote({ type: "delete", collection: "todos", id: "1" });
   await tick();
   expect(remote).toHaveBeenCalledOnce();
   stopAll();
-  client.dispose();
+  await syncClient.dispose();
 });
 
-test("status callbacks are isolated, listeners receive initial state, and missing network host is treated online", () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const priorNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+test("status and role observers are isolated and receive the current state", async () => {
   vi.stubGlobal("navigator", undefined);
   vi.stubGlobal("addEventListener", undefined);
   vi.stubGlobal("removeEventListener", undefined);
-  const db = dbFixture();
   const good = vi.fn();
   const statuses = vi.fn(() => {
     throw new Error("observer failed");
   });
-  const client = new SyncClientImpl(
-    config(db, atomicMemoryStore(), {
-      coordinateTabs: true,
-      onSyncStatus: statuses,
-    }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const badListener = vi.fn(() => {
+  const syncClient = client(standaloneStorage(), { onSyncStatus: statuses });
+  const unsubscribe = syncClient.subscribeStatus(() => {
     throw new Error("listener failed");
   });
-  const unsubscribe = client.subscribeStatus(badListener);
-  client.subscribeStatus(good);
-  client.startSync();
+  syncClient.subscribeStatus(good);
+  const roles = vi.fn();
+  syncClient.subscribeStorageRole(() => {
+    throw new Error("role listener failed");
+  });
+  const unsubscribeRole = syncClient.subscribeStorageRole(roles);
+  syncClient.startSync();
+  await tick();
+  syncClient.startSync();
   expect(statuses).toHaveBeenCalled();
   expect(good.mock.calls.map(([event]) => event.status)).toContain("syncing");
+  expect(roles.mock.calls.map(([role]) => role)).toEqual(["follower", "owner"]);
   unsubscribe();
-  client.dispose();
-  if (priorNavigator) Object.defineProperty(globalThis, "navigator", priorNavigator);
-});
-
-test("browser coordination renews and releases leases, responds to network events, and broadcasts local events", async () => {
-  class FakeBroadcastChannel {
-    static instance: FakeBroadcastChannel;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    messages: unknown[] = [];
-    closed = false;
-    constructor(public name: string) {
-      FakeBroadcastChannel.instance = this;
-    }
-    postMessage(data: unknown) {
-      this.messages.push(data);
-    }
-    close() {
-      this.closed = true;
-    }
-  }
-  const events: Record<string, () => void> = {};
-  const removed: string[] = [];
-  const navigatorFake = { onLine: true };
-  vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
-  vi.stubGlobal("navigator", navigatorFake);
-  vi.stubGlobal("addEventListener", (type: string, listener: () => void) => {
-    events[type] = listener;
-  });
-  vi.stubGlobal("removeEventListener", (type: string) => {
-    removed.push(type);
-  });
-  const db = dbFixture();
-  const store = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(async (): Promise<number | undefined> => 7),
-    releaseLease: vi.fn(async () => {}),
-  };
-  const client = new SyncClientImpl(
-    config(db, store, { coordinateTabs: true, coordinationKey: "key" }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const statuses: string[] = [];
-  client.subscribeStatus((e) => statuses.push(e.status));
-  client.startSync();
-  client.startSync();
-  await tick();
-  expect(FakeBroadcastChannel.instance.name).toBe("ez-sync:key");
-  expect(store.acquireLease).toHaveBeenCalled();
-  expect(statuses).toContain("syncing");
-  store.acquireLease.mockImplementationOnce(async () => undefined);
-  await (client as any).renewLeadership();
-  expect(statuses.at(-1)).toBe("idle");
-  await (client as any).renewLeadership();
-  expect(statuses.at(-1)).toBe("syncing");
-  await client.collections.todos.insert({ id: "1" } as never);
-  await tick();
-  expect(FakeBroadcastChannel.instance.messages).toHaveLength(1);
-  const remote = vi.fn();
-  client.subscribe(remote, { stream: "remote" });
-  FakeBroadcastChannel.instance.onmessage!({
-    data: { type: "local-change", events: [{ type: "delete", collection: "todos", id: "1" }] },
-  } as MessageEvent);
-  FakeBroadcastChannel.instance.onmessage!({ data: null } as MessageEvent);
-  FakeBroadcastChannel.instance.onmessage!({ data: { type: "other", events: [] } } as MessageEvent);
-  FakeBroadcastChannel.instance.onmessage!({
-    data: { type: "local-change", events: {} },
-  } as MessageEvent);
-  await tick();
-  expect(remote).toHaveBeenCalledOnce();
-  events.offline!();
-  expect(statuses.at(-1)).toBe("offline");
-  navigatorFake.onLine = true;
-  events.online!();
-  await tick();
-  expect(statuses.at(-1)).toBe("syncing");
-  client.stopSync();
-  await tick();
-  expect(store.releaseLease).toHaveBeenCalledWith("key", expect.any(String), 7);
-  expect(removed).toEqual(["online", "offline"]);
-  events.online!();
-  client.dispose();
-  expect(FakeBroadcastChannel.instance.closed).toBe(true);
-});
-
-test("lease loss and errors update status; a late lease is released after sync stops", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  vi.stubGlobal("navigator", { onLine: true });
-  const db = dbFixture();
-  let resolveLease!: (value: number | undefined) => void;
-  const late = new Promise<number | undefined>((resolve) => {
-    resolveLease = resolve;
-  });
-  const store = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(() => late),
-    releaseLease: vi.fn(async () => {}),
-  };
-  const client = new SyncClientImpl(
-    config(db, store, { coordinateTabs: true }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const statuses: string[] = [];
-  client.subscribeStatus((e) => statuses.push(e.status));
-  (client as any).wantsSync = true;
-  const renewal = (client as any).renewLeadership();
-  (client as any).wantsSync = false;
-  resolveLease(3);
-  await renewal;
-  expect(store.releaseLease).toHaveBeenCalledWith("default", expect.any(String), 3);
-  (client as any).wantsSync = true;
-  (client as any).leaseToken = 4;
-  store.acquireLease.mockResolvedValueOnce(undefined);
-  await (client as any).renewLeadership();
-  expect(statuses.at(-1)).toBe("idle");
-  await (client as any).renewLeadership();
-  client.dispose();
-
-  const failing = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(async () => {
-      throw new Error("lease failed");
-    }),
-  };
-  const failedClient = new SyncClientImpl(
-    config(db, failing, { coordinateTabs: true }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const failedStatuses: string[] = [];
-  failedClient.subscribeStatus((e) => failedStatuses.push(e.status));
-  failedClient.startSync();
-  await tick();
-  expect(failedStatuses).toContain("error");
-  failedClient.dispose();
-});
-
-test("Web Locks keep one shared-database leader and hand leadership off on stop", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const pendingRequests: Array<{
-    name: string;
-    signal: AbortSignal;
-    callback: (lock: unknown) => Promise<void>;
-  }> = [];
-  const locks = {
-    request: vi.fn(
-      (
-        name: string,
-        options: { signal: AbortSignal },
-        callback: (lock: unknown) => Promise<void>,
-      ) => {
-        pendingRequests.push({ name, signal: options.signal, callback });
-        return new Promise<void>(() => {});
-      },
-    ),
-  };
-  vi.stubGlobal("navigator", { onLine: true, locks });
-  const db = dbFixture();
-  const firstClient = new SyncClientImpl(
-    config(db, atomicMemoryStore(), {
-      coordinateTabs: true,
-      coordinationKey: "shared-db",
-    }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const secondClient = new SyncClientImpl(
-    config(db, atomicMemoryStore(), {
-      coordinateTabs: true,
-      coordinationKey: "shared-db",
-    }) as never,
-    new ChangeBus<any>() as never,
-  );
-  const firstStart = vi.spyOn((firstClient as any).syncHandler, "startAll");
-  const firstStop = vi.spyOn((firstClient as any).syncHandler, "stopAll");
-  const secondStart = vi.spyOn((secondClient as any).syncHandler, "startAll");
-
-  firstClient.startSync();
-  secondClient.startSync();
-  await tick();
-  expect(locks.request).toHaveBeenCalledTimes(2);
-  expect(pendingRequests.map(({ name }) => name)).toEqual([
-    "ez-sync:shared-db",
-    "ez-sync:shared-db",
-  ]);
-
-  const firstCallback = pendingRequests[0]!.callback({});
-  await tick();
-  expect(firstStart).toHaveBeenCalledOnce();
-  expect(secondStart).not.toHaveBeenCalled();
-
-  firstClient.stopSync();
-  await firstCallback;
-  expect(firstStop).toHaveBeenCalled();
-  expect(pendingRequests[0]!.signal.aborted).toBe(true);
-
-  const secondCallback = pendingRequests[1]!.callback({});
-  await tick();
-  expect(secondStart).toHaveBeenCalledOnce();
-  secondClient.stopSync();
-  await secondCallback;
-  firstClient.dispose();
-  secondClient.dispose();
-});
-
-test("lease release uses the default coordination key", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  vi.stubGlobal("navigator", { onLine: true });
-  const db = dbFixture();
-  const store = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(async () => 1),
-    releaseLease: vi.fn(async () => {}),
-  };
-  const client = new SyncClientImpl(
-    config(db, store, { coordinateTabs: true }) as never,
-    new ChangeBus<any>() as never,
-  );
-  vi.useFakeTimers();
-  client.startSync();
-  await vi.advanceTimersByTimeAsync(5_000);
-  expect(store.acquireLease.mock.calls.length).toBeGreaterThan(1);
-  client.stopSync();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(store.releaseLease).toHaveBeenCalledWith("default", expect.any(String), 1);
-  client.dispose();
-  vi.useRealTimers();
-});
-
-test("undefined lease leaves an unowned client idle", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  vi.stubGlobal("navigator", { onLine: true });
-  const db = dbFixture();
-  const store = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(async () => undefined),
-  };
-  const client = new SyncClientImpl(
-    config(db, store, { coordinateTabs: true }) as never,
-    new ChangeBus<any>() as never,
-  );
-  client.startSync();
-  await tick();
-  client.stopSync();
-  client.dispose();
-});
-
-test("lease renewal skips offline or disabled clients and releases a late empty lease safely", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const db = dbFixture();
-  let resolveLease!: (value: number | undefined) => void;
-  const pending = new Promise<number | undefined>((resolve) => {
-    resolveLease = resolve;
-  });
-  const store = {
-    ...atomicMemoryStore(),
-    supportsCrossContextLeases: true,
-    acquireLease: vi.fn(() => pending),
-    releaseLease: vi.fn(async () => {}),
-  };
-  const client = new SyncClientImpl(
-    config(db, store, { coordinateTabs: true }) as never,
-    new ChangeBus<any>() as never,
-  );
-  await (client as any).renewLeadership();
-  (client as any).wantsSync = true;
-  const renewal = (client as any).renewLeadership();
-  (client as any).wantsSync = false;
-  resolveLease(undefined);
-  await renewal;
-  (client as any).wantsSync = false;
-  await (client as any).renewLeadership();
-  client.dispose();
+  unsubscribeRole();
+  await syncClient.dispose();
 });
 
 test("sync client maps handler success and failures into public status callbacks", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const db = dbFixture();
-  let collectionCommit: ((args: any) => void) | undefined;
-  let globalCommit: ((args: any) => void) | undefined;
-  const adapter = {
-    push: vi.fn(async () => {}),
-    pull: vi.fn((options: any) => {
-      if (collectionCommit) globalCommit = options.commitChanges;
-      else collectionCommit = options.commitChanges;
-      return () => {};
-    }),
-  };
-  const client = new SyncClientImpl(
-    config(db, atomicMemoryStore(), {
-      coordinateTabs: false,
-      collections: [{ ...collection, syncAdapter: adapter }],
-      syncAdapter: adapter,
-    }) as never,
-    new ChangeBus<any>() as never,
-  );
+  const db = makeDb();
+  const adapter = recordingAdapter();
+  const syncClient = client(standaloneStorage(db), {
+    collections: [{ ...collection, syncAdapter: adapter }],
+  });
   const statuses: string[] = [];
-  client.subscribeStatus((event) => statuses.push(event.status));
-  client.startSync();
-  await tick();
-  await tick();
-  (collectionCommit ?? globalCommit)?.({ changes: [], checkpoint: {} });
+  syncClient.subscribeStatus((event) => statuses.push(event.status));
+  syncClient.startSync();
+  await settle();
+  adapter.commitPull({ changes: [], checkpoint: {} });
   await tick();
   expect(statuses).toContain("syncing");
   db.transaction.mockRejectedValueOnce(new Error("commit failed"));
-  (collectionCommit ?? globalCommit)?.({
+  adapter.commitPull({
     changes: [{ type: "create", collection: "todos", data: { id: 1 } }],
     checkpoint: {},
   });
-  await tick();
-  await tick();
+  await settle();
   expect(statuses).toContain("error");
-  client.dispose();
+  await syncClient.dispose();
 });
 
-test("Web Locks ignore duplicate starts and empty grants and report request failures", async () => {
-  vi.stubGlobal("BroadcastChannel", undefined);
-  const requests: Array<{
-    name: string;
-    callback: (lock: unknown) => Promise<void>;
-    reject: (error: unknown) => void;
-  }> = [];
-  const locks = {
-    request: vi.fn(
-      (name: string, _options: unknown, callback: (lock: unknown) => Promise<void>) =>
-        new Promise<void>((_resolve, reject) => {
-          requests.push({ name, callback, reject });
-        }),
-    ),
-  };
-  vi.stubGlobal("navigator", { onLine: true, locks });
-  const statuses: Array<{ status: string; error?: unknown }> = [];
-  const client = new SyncClientImpl(
-    config(dbFixture(), atomicMemoryStore(), {
-      coordinateTabs: true,
-      onSyncStatus: (event: { status: string; error?: unknown }) => statuses.push(event),
-    }) as never,
-    new ChangeBus<any>() as never,
+test("going offline pauses sync without releasing storage ownership", async () => {
+  const { locks } = installTabs();
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal("addEventListener", (type: string, listener: () => void) =>
+    listeners.set(type, listener),
   );
-  const startAll = vi.spyOn((client as any).syncHandler, "startAll");
+  vi.stubGlobal("removeEventListener", (type: string) => listeners.delete(type));
+  const adapter = recordingAdapter();
+  const owner = client(sharedStorage(), { syncAdapter: adapter });
+  const statuses: string[] = [];
+  owner.subscribeStatus((event) => statuses.push(event.status));
+  owner.startSync();
+  await settle();
+  expect(statuses.at(-1)).toBe("syncing");
 
-  client.startSync();
-  client.startSync();
+  listeners.get("offline")!();
+  expect(statuses.at(-1)).toBe("offline");
+  listeners.get("online")!();
+  expect(statuses.at(-1)).toBe("syncing");
   expect(locks.request).toHaveBeenCalledOnce();
-  expect(requests[0]!.name).toBe("ez-sync:default");
+  expect(owner.storageRole).toBe("owner");
 
-  await requests[0]!.callback(null);
-  expect(startAll).not.toHaveBeenCalled();
+  owner.stopSync();
+  listeners.get("online")?.();
+  expect(statuses.at(-1)).toBe("stopped");
+  await owner.dispose();
+});
 
-  const failure = new Error("lock request failed");
-  requests[0]!.reject(failure);
+test("shared storage: one lock holder syncs; follower writes reach its push and pulls reach followers", async () => {
+  installTabs();
+  const engine = createEngine();
+  const store = atomicMemoryStore();
+  const ownerAdapter = recordingAdapter();
+  const followerAdapter = recordingAdapter();
+  const owner = client(sharedStorage(engine, store), { syncAdapter: ownerAdapter });
+  const follower = client(sharedStorage(engine, store), { syncAdapter: followerAdapter });
+  const followerStatuses: string[] = [];
+  follower.subscribeStatus((event) => followerStatuses.push(event.status));
+  owner.startSync();
+  follower.startSync();
+  await settle();
+  expect(owner.storageRole).toBe("owner");
+  expect(follower.storageRole).toBe("follower");
+  expect(followerStatuses.at(-1)).toBe("idle");
+  expect(followerAdapter.pull).not.toHaveBeenCalled();
+
+  const ownerRemote = vi.fn();
+  owner.subscribe(ownerRemote, { stream: "remote" });
+  await follower.collections.todos.insert({ id: "f1" } as never);
+  await settle();
+  expect(ownerRemote).toHaveBeenCalledOnce();
+  expect(ownerAdapter.push).toHaveBeenCalledOnce();
+  expect(followerAdapter.push).not.toHaveBeenCalled();
+  expect(await store.getPendingEvents()).toEqual([]);
+
+  const followerData = vi.fn();
+  follower.liveQuery({ collections: ["todos"], query: async () => "rows", onData: followerData });
   await tick();
-  expect(statuses.at(-1)).toMatchObject({ status: "error", error: failure });
+  followerData.mockClear();
+  ownerAdapter.commitPull({
+    changes: [{ type: "create", collection: "todos", data: { id: "remote" } }],
+    checkpoint: {},
+  });
+  await settle();
+  expect(followerData).toHaveBeenCalled();
+  expect(FakeBroadcastChannel.messages("changes").map((m) => m.source)).toEqual(["local", "pull"]);
 
-  client.startSync();
-  expect(locks.request).toHaveBeenCalledTimes(2);
-  client.stopSync();
-  requests[1]!.reject(new Error("aborted"));
+  await owner.dispose();
+  await settle();
+  expect(follower.storageRole).toBe("owner");
+  expect(followerAdapter.pull).toHaveBeenCalled();
+  await follower.dispose();
+});
+
+test("exclusive storage: only the owner opens the database; followers proxy reads and writes", async () => {
+  installTabs();
+  const fixture = exclusiveFixture();
+  const ownerAdapter = recordingAdapter();
+  const owner = client(fixture.storage(), { syncAdapter: ownerAdapter });
+  await settle();
+  const follower = client(fixture.storage(), { syncAdapter: recordingAdapter() });
+  const third = client(fixture.storage());
+  await settle();
+  expect(fixture.open).toHaveBeenCalledOnce();
+  expect([owner.storageRole, follower.storageRole, third.storageRole]).toEqual([
+    "owner",
+    "follower",
+    "follower",
+  ]);
+  owner.startSync();
+  follower.startSync();
+  await settle();
+
+  const followerLocal = vi.fn();
+  const ownerRemote = vi.fn();
+  const thirdRemote = vi.fn();
+  follower.subscribe(followerLocal, { stream: "local" });
+  owner.subscribe(ownerRemote, { stream: "remote" });
+  third.subscribe(thirdRemote, { stream: "remote" });
+  const thirdData = vi.fn();
+  third.liveQuery({
+    collections: ["todos"],
+    query: (queryBuilder: any) => queryBuilder.send({ op: "getMany" }),
+    onData: thirdData,
+  });
+
+  await follower.collections.todos.insert({ id: "f1", title: "from follower" } as never);
+  await settle();
+  expect(fixture.engine.get("f1")).toMatchObject({ title: "from follower" });
+  expect(followerLocal).toHaveBeenCalledOnce();
+  expect(ownerRemote).toHaveBeenCalledOnce();
+  expect(thirdRemote).toHaveBeenCalledOnce();
+  expect(ownerAdapter.push).toHaveBeenCalledOnce();
+  expect(await fixture.store.getPendingEvents()).toEqual([]);
+  // The owner announced the write once; nobody echoed it.
+  expect(FakeBroadcastChannel.messages("changes")).toHaveLength(1);
+  expect(thirdData.mock.calls.at(-1)?.[0]).toEqual([{ id: "f1", title: "from follower" }]);
+
+  expect(await follower.collections.todos.get("f1" as never)).toMatchObject({ id: "f1" });
+  await owner.collections.todos.update({ id: "f1", title: "owner" } as never);
+  await settle();
+  expect(FakeBroadcastChannel.messages("changes")).toHaveLength(2);
+  expect(thirdRemote).toHaveBeenCalledTimes(2);
+
+  await expect(
+    (follower as any).coordinator.view.dbAdapter.transaction(async () => {}),
+  ).rejects.toBeInstanceOf(FollowerWriteError);
+  await expect(
+    (follower as any).coordinator.view.dbAdapter.queryBuilder.send({ op: "fail" }),
+  ).rejects.toThrow("query failed");
+
+  await Promise.all([owner.dispose(), follower.dispose(), third.dispose()]);
+});
+
+test("exclusive storage hands ownership to a follower, which reopens and resumes sync", async () => {
+  installTabs();
+  const fixture = exclusiveFixture();
+  const owner = client(fixture.storage());
+  await settle();
+  const followerAdapter = recordingAdapter();
+  const follower = client(fixture.storage(), { syncAdapter: followerAdapter });
+  follower.startSync();
+  await settle();
+  expect(followerAdapter.pull).not.toHaveBeenCalled();
+  await follower.collections.todos.insert({ id: "before" } as never);
+  const data = vi.fn();
+  follower.liveQuery({
+    query: (queryBuilder: any) => queryBuilder.rows?.size ?? "proxy",
+    onData: data,
+  });
   await tick();
-  expect(statuses.at(-1)).toMatchObject({ status: "stopped" });
-  client.dispose();
+  expect(data).toHaveBeenLastCalledWith("proxy");
+
+  await owner.dispose();
+  await settle();
+  expect(fixture.open).toHaveBeenCalledTimes(2);
+  expect(follower.storageRole).toBe("owner");
+  expect(followerAdapter.pull).toHaveBeenCalled();
+  // The outbox survived the handoff and the new owner pushed it.
+  expect(followerAdapter.push).toHaveBeenCalledOnce();
+  expect(data).toHaveBeenLastCalledWith(1);
+  await follower.collections.todos.insert({ id: "after" } as never);
+  expect(fixture.engine.has("after")).toBe(true);
+  await follower.dispose();
+});
+
+test("exclusive storage reports unavailable coordination without Web Locks", async () => {
+  installTabs({ locks: false });
+  const statuses: Array<{ status: string; error?: unknown }> = [];
+  const fixture = exclusiveFixture();
+  const storage = fixture.storage();
+  const syncClient = client(storage, { onSyncStatus: (event: any) => statuses.push(event) });
+  await expect(storage.ready).rejects.toBeInstanceOf(CoordinationUnavailableError);
+  await tick();
+  expect(statuses.at(-1)?.error).toBeInstanceOf(CoordinationUnavailableError);
+  expect(fixture.open).not.toHaveBeenCalled();
+  await syncClient.dispose();
+});
+
+test("shared storage without Web Locks elects through outbox leases with fencing", async () => {
+  installTabs({ locks: false });
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    const engine = createEngine();
+    const store = { ...atomicMemoryStore(), supportsCrossContextLeases: true };
+    const releaseLease = vi.spyOn(store, "releaseLease");
+    const first = client(sharedStorage(engine, store), { syncAdapter: recordingAdapter() });
+    const second = client(sharedStorage(engine, store), { syncAdapter: recordingAdapter() });
+    await settle();
+    expect(first.storageRole).toBe("owner");
+    expect(second.storageRole).toBe("follower");
+    const firstCoordinator = (first as any).coordinator;
+    expect(firstCoordinator.canCommit(firstCoordinator.view)).toBe(true);
+    vi.setSystemTime(Date.now() + 16_000);
+    expect(firstCoordinator.canCommit(firstCoordinator.view)).toBe(false);
+    expect(firstCoordinator.canCommit({ role: "owner" })).toBe(false);
+
+    await first.dispose();
+    expect(releaseLease).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(5_000);
+    await settle();
+    expect(second.storageRole).toBe("owner");
+
+    vi.spyOn(store, "acquireLease").mockRejectedValueOnce(new Error("lease failed"));
+    const statuses: string[] = [];
+    second.subscribeStatus((event) => statuses.push(event.status));
+    vi.advanceTimersByTime(5_000);
+    await settle();
+    expect(second.storageRole).toBe("follower");
+    expect(statuses).toContain("error");
+    await second.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("shared storage without any election lets every context sync", async () => {
+  installTabs({ locks: false, channels: false });
+  const syncClient = client(sharedStorage());
+  await settle();
+  expect(syncClient.storageRole).toBe("owner");
+  await syncClient.collections.todos.insert({ id: "1" } as never);
+  await syncClient.dispose();
 });

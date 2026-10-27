@@ -3,5 +3,6 @@ export * from "./checkpoint-storage";
 export * from "./collection";
 export * from "./db-adapter";
 export * from "./local-change-store";
+export * from "./storage-coordination";
 export * from "./sync-client";
 export * from "./sync-handler";

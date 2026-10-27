@@ -1,12 +1,15 @@
 import {
   createSyncClient,
+  type AtomicLocalChangeStore,
   type CollectionNames,
+  type CoordinatedStorage,
   type InferCollectionInsertModel,
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { InferInsertModel } from "drizzle-orm";
+import type { SqliteProxyExecutors } from "drizzle-orm/sqlite-proxy";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
@@ -15,7 +18,9 @@ import {
   createDrizzleLocalChangeStore,
   createDrizzleStorage,
   defineDrizzleCollection,
+  forwardSqliteProxy,
   type DrizzleDBAdapter,
+  type SqliteProxyRequest,
 } from "../../src";
 
 const todos = sqliteTable("todos", {
@@ -102,11 +107,43 @@ describe("drizzle adapter", () => {
     void adapter.get("users", 1);
   });
 
-  test("createDrizzleStorage produces a pair accepted by createSyncClient", () => {
+  test("createDrizzleStorage produces storage accepted by createSyncClient", () => {
     const storage = createDrizzleStorage({
-      db,
       collections,
       localChangeTables: { events, dirtyRecords },
+      open: () => ({
+        database: db,
+        execute: async (request: SqliteProxyRequest) => {
+          expectTypeOf(request.sql).toEqualTypeOf<string>();
+          return [];
+        },
+      }),
+      connect: (send: (request: SqliteProxyRequest) => Promise<unknown>) => {
+        expectTypeOf(forwardSqliteProxy(send)).toEqualTypeOf<SqliteProxyExecutors>();
+        return db;
+      },
+    });
+    expectTypeOf(storage).toEqualTypeOf<
+      CoordinatedStorage<
+        DrizzleDBAdapter<
+          typeof collections,
+          DrizzleDb,
+          { todos: typeof todos; users: typeof users }
+        >,
+        AtomicLocalChangeStore
+      >
+    >();
+    // @ts-expect-error exclusive storage needs a follower connector
+    createDrizzleStorage({
+      collections,
+      localChangeTables: { events, dirtyRecords },
+      open: () => ({ database: db, execute: async () => [] }),
+    });
+    createDrizzleStorage({
+      sharing: "shared",
+      collections,
+      localChangeTables: { events, dirtyRecords },
+      open: () => ({ database: db }),
     });
     const client = createSyncClient({
       collections,
@@ -150,7 +187,8 @@ describe("drizzle adapter", () => {
     });
     // @ts-expect-error arbitrary event payloads require a compatible JSON data column
     createDrizzleStorage({
-      db,
+      sharing: "shared",
+      open: () => ({ database: db }),
       collections,
       localChangeTables: { events: textDataEvents, dirtyRecords },
     });

@@ -5,7 +5,7 @@ import type {
   ChangeBusSubscribeOptions,
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
-import type { AtomicLocalMutationStorage } from "./storage-pair";
+import type { CoordinatedStorage, StorageRole } from "../storage-coordination";
 import type { AtomicLocalChangeStore } from "../local-change-store";
 import type {
   CollectionConfigMap,
@@ -23,7 +23,8 @@ export interface SyncClientConfig<
   Store extends AtomicLocalChangeStore,
 > {
   collections: C;
-  storage: AtomicLocalMutationStorage<DB, Store>;
+  /** Built with `createCoordinatedStorage` (or an adapter helper such as `createDrizzleStorage`). */
+  storage: CoordinatedStorage<DB, Store>;
   syncAdapter?: SyncAdapter<
     ChangeBusEventDataMapFromCollectionConfigMap<C>,
     CollectionNames<C>,
@@ -34,10 +35,6 @@ export interface SyncClientConfig<
   onSyncStatus?: (event: SyncStatusEvent) => void;
   /** Resolves a remote change when the same record has unpushed local writes. */
   resolveConflict?: ConflictResolution<ChangeBusEventDataMapFromCollectionConfigMap<C>>;
-  /** Browser clients sharing a local store should use the same coordination key. */
-  coordinationKey?: string;
-  /** Disable browser tab leadership for applications that manage it externally. */
-  coordinateTabs?: boolean;
 }
 
 export interface SyncClient<
@@ -50,8 +47,12 @@ export interface SyncClient<
   liveQuery: LiveQueryFn<C, DB>;
   startSync: () => void;
   stopSync: () => void;
-  /** Stop sync and release browser listeners/resources permanently. */
-  dispose: () => void;
+  /** Stop sync, release the storage and browser listeners permanently. */
+  dispose: () => Promise<void>;
+  /** Whether this context owns the storage (and is the only one that syncs). */
+  readonly storageRole: StorageRole;
+  /** Subscribe to storage role changes; the current role is emitted immediately. */
+  subscribeStorageRole: (listener: (role: StorageRole) => void) => () => void;
   /** Subscribe to lifecycle notifications; the current status is emitted immediately. */
   subscribeStatus: (listener: (event: SyncStatusEvent) => void) => () => void;
   getCheckpoint: <N extends CollectionNames<C>>(collection: N) => Promise<TCheckpoint | undefined>;

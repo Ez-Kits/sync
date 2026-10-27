@@ -1,6 +1,6 @@
 import type {
   AtomicLocalChangeStore,
-  AtomicLocalMutationStorage,
+  CoordinatedStorage,
   BaseDBAdapter,
   CollectionConfig,
   ICheckpointStorage,
@@ -27,7 +27,7 @@ interface QueryBuilder {
 type DB = BaseDBAdapter<Collections, QueryBuilder, { todos: "todos-table"; tags: "tags-table" }>;
 
 declare const collections: Collections;
-declare const storage: AtomicLocalMutationStorage<DB, AtomicLocalChangeStore>;
+declare const storage: CoordinatedStorage<DB, AtomicLocalChangeStore>;
 declare const checkpointStorage: ICheckpointStorage<"todos" | "tags", Checkpoint>;
 
 const react = createSyncClientReact({ collections, storage, checkpointStorage });

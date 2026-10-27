@@ -624,3 +624,129 @@ test("global handler does not pull when stopped while reading checkpoints", asyn
   await tick();
   expect(adapter.pull).not.toHaveBeenCalled();
 });
+
+test("outbox notifications push only through started handlers and selected collections", async () => {
+  const pendingEvent = {
+    id: "other-tab",
+    type: "create" as const,
+    collection: "todos",
+    recordId: "1",
+    data: { id: 1 },
+    createdAt: 1,
+  };
+  const adapter = {
+    push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
+    pull: vi.fn(() => () => {}),
+  };
+  const f = fixture(adapter, { syncAdapter: undefined });
+  const handler = new SyncHandler(f.config as never);
+
+  await f.localChangeStore.appendEvents([pendingEvent]);
+  handler.notifyOutboxChanged();
+  await tick();
+  expect(adapter.push).not.toHaveBeenCalled();
+
+  handler.startAll();
+  await tick();
+  await tick();
+  expect(adapter.push).toHaveBeenCalledOnce();
+
+  await f.localChangeStore.appendEvents([{ ...pendingEvent, id: "unselected" }]);
+  handler.notifyOutboxChanged(["users"] as never);
+  await tick();
+  expect(adapter.push).toHaveBeenCalledOnce();
+
+  handler.notifyOutboxChanged(["todos", "todos"] as never);
+  await tick();
+  await tick();
+  expect(adapter.push).toHaveBeenCalledTimes(2);
+
+  await f.localChangeStore.appendEvents([{ ...pendingEvent, id: "after-stop" }]);
+  handler.stopAll();
+  handler.notifyOutboxChanged();
+  await tick();
+  expect(adapter.push).toHaveBeenCalledTimes(2);
+});
+
+test("stopping a collection aborts push retries", async () => {
+  const adapter = {
+    push: vi.fn(async () => {
+      throw new Error("offline");
+    }),
+    pull: vi.fn(() => () => {}),
+  };
+  const f = fixture(adapter);
+  await f.localChangeStore.appendEvents([
+    { id: "1", type: "create", collection: "todos", recordId: "1", data: { id: 1 }, createdAt: 1 },
+  ]);
+  const handler = new CollectionSyncHandler(f.config as never);
+  vi.useFakeTimers();
+  handler.start("todos" as never);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(adapter.push).toHaveBeenCalledOnce();
+  handler.stop("todos" as never);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(adapter.push).toHaveBeenCalledOnce();
+  vi.useRealTimers();
+});
+
+for (const scope of ["global", "collection"] as const) {
+  test(`a ${scope} handler that lost leadership neither applies pulls nor acks pushes`, async () => {
+    let pullOptions: any;
+    const adapter = {
+      push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
+      pull: vi.fn((options: any) => {
+        pullOptions = options;
+        return () => {};
+      }),
+    };
+    let leader = true;
+    const onRemoteChangesCommitted = vi.fn();
+    const f = fixture(scope === "global" ? adapter : undefined, {
+      canCommit: () => leader,
+      onRemoteChangesCommitted,
+      ...(scope === "collection" ? { collections: [collection(adapter)] } : {}),
+    });
+    const handler: any =
+      scope === "global"
+        ? new GlobalSyncHandler(f.config as never)
+        : new CollectionSyncHandler(f.config as never);
+    if (scope === "global") handler.start();
+    else handler.startAll();
+    await tick();
+    await tick();
+
+    pullOptions.commitChanges({
+      changes: [{ type: "create", collection: "todos", data: { id: 1 } }],
+      checkpoint: { todos: "c1" },
+    });
+    await tick();
+    await tick();
+    expect(onRemoteChangesCommitted).toHaveBeenCalledOnce();
+
+    leader = false;
+    pullOptions.commitChanges({
+      changes: [{ type: "create", collection: "todos", data: { id: 2 } }],
+      checkpoint: { todos: "c2" },
+    });
+    await f.localChangeStore.appendEvents([
+      {
+        id: "e",
+        type: "create",
+        collection: "todos",
+        recordId: "3",
+        data: { id: 3 },
+        createdAt: 1,
+      },
+    ]);
+    f.changeBus.publishLocal({ type: "create", collection: "todos", data: { id: 3 } } as never);
+    await tick();
+    await tick();
+    expect(f.db.insert).toHaveBeenCalledOnce();
+    expect(f.checkpointStorage.saveCheckpoint).toHaveBeenCalledOnce();
+    expect(adapter.push).toHaveBeenCalled();
+    expect(await f.localChangeStore.getPendingEvents()).toHaveLength(1);
+    if (scope === "global") handler.stop();
+    else handler.stopAll();
+  });
+}

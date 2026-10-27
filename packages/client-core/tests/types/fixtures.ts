@@ -1,8 +1,8 @@
 import type {
   AtomicLocalChangeStore,
-  AtomicLocalMutationStorage,
   BaseDBAdapter,
   CollectionConfig,
+  CoordinatedStorage,
   ICheckpointStorage,
 } from "../../src";
 
@@ -73,5 +73,5 @@ export declare const userConfig: UserConfig;
 export declare const collections: Collections;
 export declare const db: DB;
 export declare const store: AtomicLocalChangeStore;
-export declare const storage: AtomicLocalMutationStorage<DB, AtomicLocalChangeStore>;
+export declare const storage: CoordinatedStorage<DB, AtomicLocalChangeStore>;
 export declare const checkpointStorage: ICheckpointStorage<"todos" | "users", Checkpoint>;

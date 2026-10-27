@@ -235,9 +235,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
           continue;
         }
 
-        const recordId = collectionConfig.resolveRecordId
-          ? collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>)
-          : String((event.data as { id?: string | number }).id ?? crypto.randomUUID());
+        const recordId = collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>);
         const path = recordPath(collectionPath, recordId);
 
         if (event.type === "create") {

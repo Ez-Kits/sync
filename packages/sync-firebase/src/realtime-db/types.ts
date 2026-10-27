@@ -38,7 +38,7 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
     snapshot: DataSnapshot;
     previousCheckpoint?: TCheckpoint;
   }) => TCheckpoint;
-  resolveRecordId?: (event: ChangeBusEvent<C, N>) => string;
+  resolveRecordId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["create"];
   deserializeUpdate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["update"];
   deserializeDeleteId?: (context: { snapshot: DataSnapshot }) => C[N]["delete"];

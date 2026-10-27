@@ -43,40 +43,11 @@ export class GlobalSyncHandler<
       try {
         const pushController = new AbortController();
         this.pushController = pushController;
-        this.pushUnsubscribe = this.config.changeBus.subscribe(
-          (_events) => {
-            void this.enqueuePush(
-              "global",
-              () =>
-                this.collectAllPendingPushEvents().then((events) => {
-                  if (events.length === 0) return;
-                  return syncAdapter.push({
-                    events,
-                    commitChanges: ({ events: committedEvents }) => {
-                      void this.commitPushChanges(committedEvents);
-                    },
-                  });
-                }),
-              pushController.signal,
-            );
-          },
-          { stream: "local" },
-        );
+        this.pushUnsubscribe = this.config.changeBus.subscribe((_events) => this.schedulePush(), {
+          stream: "local",
+        });
 
-        void this.enqueuePush(
-          "global",
-          () =>
-            this.collectAllPendingPushEvents().then((events) => {
-              if (events.length === 0) return;
-              return syncAdapter.push({
-                events,
-                commitChanges: ({ events: committedEvents }) => {
-                  void this.commitPushChanges(committedEvents);
-                },
-              });
-            }),
-          pushController.signal,
-        );
+        this.schedulePush();
 
         if (this.startToken !== startToken) return;
 
@@ -113,6 +84,32 @@ export class GlobalSyncHandler<
     this.pushUnsubscribe = undefined;
   }
 
+  /** Push outbox events written outside this context, such as by another tab. */
+  notifyOutboxChanged(): void {
+    this.schedulePush();
+  }
+
+  private schedulePush(): void {
+    const syncAdapter = this.config.syncAdapter;
+    const pushController = this.pushController;
+    if (!syncAdapter || !pushController) return;
+
+    void this.enqueuePush(
+      "global",
+      () =>
+        this.collectAllPendingPushEvents().then((events) => {
+          if (events.length === 0) return;
+          return syncAdapter.push({
+            events,
+            commitChanges: ({ events: committedEvents }) => {
+              void this.commitPushChanges(committedEvents);
+            },
+          });
+        }),
+      pushController.signal,
+    );
+  }
+
   private async commitPullChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
     checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
@@ -120,6 +117,7 @@ export class GlobalSyncHandler<
     const next = this.pullCommitQueue
       .catch(() => undefined)
       .then(async () => {
+        if (!this.mayCommit()) return;
         if (changes.length > 0) {
           await this.config.db.transaction(async (tx) => {
             for (const event of changes) {
@@ -131,6 +129,7 @@ export class GlobalSyncHandler<
         }
 
         this.config.changeBus.publishRemoteBatch(changes);
+        if (changes.length > 0) this.config.onRemoteChangesCommitted?.(changes);
         await this.saveCheckpointMap(checkpoint);
         this.config.onSyncSuccess?.();
       });

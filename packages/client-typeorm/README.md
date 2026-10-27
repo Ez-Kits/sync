@@ -2,13 +2,13 @@
 
 `@ez-kits/sync-client-typeorm-adapter` connects the sync client to a TypeORM `DataSource`. It implements the core `DBAdapter` operations and runs transactional callbacks through a TypeORM `EntityManager`.
 
-Use `createTypeOrmStorage` to construct the database adapter and local-change store as a typed pair from the same `DataSource`. Event and dirty-record entity classes must expose the fields persisted by the sync client; invalid entity shapes fail type checking.
+Use `createTypeOrmStorage` to build coordinated storage whose database adapter and local-change store share one `DataSource`. TypeORM has no cross-tab query proxy, so this storage is always `sharing: "shared"`: every tab opens its own `DataSource`. Use it with an engine that is shared across tabs, or pass `coordinateTabs: false` for a single context, such as a per-tab `sqljs` data source. Event and dirty-record entity classes must expose the fields persisted by the sync client; invalid entity shapes fail type checking.
 
 ```ts
 import { createTypeOrmStorage } from "@ez-kits/sync-client-typeorm-adapter";
 
 const storage = createTypeOrmStorage({
-  db: dataSource,
+  open: () => ({ database: dataSource }),
   collections,
   eventEntity: SyncEventEntity,
   dirtyRecordEntity: DirtyRecordEntity,

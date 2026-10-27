@@ -25,7 +25,7 @@ export class SyncHandler<
   private readonly collectionSyncHandler: CollectionSyncHandler<C, DB, TCheckpoint>;
   private isAllSyncStarted = false;
 
-  constructor(config: SyncHandlerConfig<C, DB, TCheckpoint>) {
+  constructor(private readonly config: SyncHandlerConfig<C, DB, TCheckpoint>) {
     this.globalSyncHandler = new GlobalSyncHandler(config);
     this.collectionSyncHandler = new CollectionSyncHandler(config);
   }
@@ -50,5 +50,16 @@ export class SyncHandler<
     this.isAllSyncStarted = false;
     this.globalSyncHandler.stop();
     this.collectionSyncHandler.stopAll();
+  }
+
+  /**
+   * Push outbox events written outside this context, such as by another tab.
+   * Only handlers that are currently started schedule a push.
+   */
+  notifyOutboxChanged(collections?: readonly CollectionNames<C>[]): void {
+    this.globalSyncHandler.notifyOutboxChanged();
+    this.collectionSyncHandler.notifyOutboxChanged(
+      collections ?? this.config.collections.map(({ name }) => name as CollectionNames<C>),
+    );
   }
 }

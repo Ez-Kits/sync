@@ -1,6 +1,5 @@
 import { and, desc, eq, like, sql } from "drizzle-orm";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
-import { db } from "./db/index.ts";
 import { todos, type Todo } from "./db/schema.ts";
 import { isFirebaseConfigured } from "./firebase.ts";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
@@ -17,7 +16,7 @@ function TodoApp() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<TodoFilter>("all");
   const [syncEnabled, setSyncEnabled] = useState(false);
-  const [todoCount, setTodoCount] = useState<number | null>(null);
+  const [storageRole, setStorageRole] = useState(client.storageRole);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
@@ -61,20 +60,16 @@ function TodoApp() {
     };
   }, [client]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void db
-      .select({ count: sql<number>`count(*)` })
-      .from(todos)
-      .then((rows) => {
-        if (!cancelled) {
-          setTodoCount(Number(rows[0]?.count ?? 0));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [data]);
+  const { data: countRows } = useLiveQuery({
+    collections: TODO_COLLECTIONS,
+    query: useCallback(
+      (queryDb) => queryDb.select({ count: sql<number>`count(*)` }).from(todos),
+      [],
+    ),
+  });
+  const todoCount = countRows ? Number(countRows[0]?.count ?? 0) : null;
+
+  useEffect(() => client.subscribeStorageRole(setStorageRole), [client]);
 
   const addTodo = useCallback(
     async (event: SyntheticEvent) => {
@@ -124,6 +119,11 @@ function TodoApp() {
             : isOnline
               ? "Firestore sync connected"
               : "Offline — sync paused until you're back online"}
+        </p>
+        <p className="lede" data-testid="storage-role">
+          {storageRole === "owner"
+            ? "This tab holds the local database"
+            : "Using the local database held by another tab"}
         </p>
         {todoCount != null && (
           <p className="lede">

@@ -1,10 +1,9 @@
 import { expectTypeOf, test } from "vite-plus/test";
 import {
-  createAtomicLocalMutationStorage,
   createSyncClient,
   type ChangeBusEvent,
   type ChangeBusEventDataMapFromCollectionConfigMap,
-  type ILocalChangeStore,
+  type StorageRole,
   type SyncClient,
   type SyncStatusEvent,
 } from "../../src";
@@ -78,24 +77,21 @@ test("liveQuery passes the adapter query builder and infers results", () => {
   });
 });
 
-test("storage pairs are branded and cannot be forged", () => {
-  const paired = createAtomicLocalMutationStorage(
-    { handle: true },
-    () => db,
-    () => store,
-  );
-  expectTypeOf(paired.dbAdapter).toEqualTypeOf<DB>();
-
+test("clients require coordinated storage and expose the storage role", () => {
   createSyncClient({
     collections,
-    // @ts-expect-error clients require one branded database/store pair
+    // @ts-expect-error clients require storage built by createCoordinatedStorage
     storage: { dbAdapter: db, localChangeStore: store },
     checkpointStorage,
   });
-  createAtomicLocalMutationStorage(
-    { handle: true },
-    () => db,
-    // @ts-expect-error non-atomic stores cannot satisfy the atomic store contract
-    (): ILocalChangeStore => store,
-  );
+  createSyncClient({
+    collections,
+    storage,
+    checkpointStorage,
+    // @ts-expect-error tab coordination is configured on the storage
+    coordinationKey: "todos",
+  });
+  expectTypeOf(client.storageRole).toEqualTypeOf<StorageRole>();
+  expectTypeOf(client.subscribeStorageRole).parameter(0).parameter(0).toEqualTypeOf<StorageRole>();
+  expectTypeOf(client.dispose).returns.toEqualTypeOf<Promise<void>>();
 });

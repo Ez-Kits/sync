@@ -10,23 +10,16 @@ import {
   type TCollectionRuntimeRecord,
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter";
-import type { ILocalChangeStore } from "../local-change-store";
 import type { AtomicLocalChangeStore } from "../local-change-store";
+import type { StorageRole } from "../storage-coordination";
+import { getStorageCoordinator } from "../storage-coordination/coordinated-storage";
+import type { StorageCoordinator, StorageView } from "../storage-coordination/coordinator";
 import { SyncHandler } from "../sync-handler";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 import type { SyncStatusEvent } from "../sync-handler";
-import { assertAtomicLocalMutationStorage } from "./storage-pair";
-
-type BrowserLockManager = {
-  request<T>(
-    name: string,
-    options: { mode: "exclusive"; signal?: AbortSignal },
-    callback: (lock: unknown) => T | PromiseLike<T>,
-  ): Promise<T>;
-};
 
 type NetworkHost = {
-  navigator?: { onLine?: boolean; locks?: BrowserLockManager };
+  navigator?: { onLine?: boolean };
   addEventListener?: (type: string, listener: () => void) => void;
   removeEventListener?: (type: string, listener: () => void) => void;
 };
@@ -48,63 +41,62 @@ export class SyncClientImpl<
   Store extends AtomicLocalChangeStore,
 > implements SyncClient<C, DB, TCheckpoint> {
   readonly collections: TCollectionRuntimeRecord<C>;
-  private readonly db: DB;
-  private syncHandler: SyncHandler<C, DB, TCheckpoint>;
+  private readonly coordinator: StorageCoordinator<unknown, DB, Store>;
+  private view: StorageView<DB> | undefined;
+  private syncHandler: SyncHandler<C, DB, TCheckpoint> | undefined;
   private wantsSync = false;
   private networkCleanup: (() => void) | undefined;
   private status: SyncStatusEvent = { status: "stopped", changedAt: Date.now() };
   private statusListeners = new Set<(event: SyncStatusEvent) => void>();
-  private readonly localChangeStore: ILocalChangeStore;
-  private readonly leaseOwner = `sync-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-  private leaseToken: number | undefined;
-  private leaseTimer: ReturnType<typeof setInterval> | undefined;
-  private broadcastChannel: BroadcastChannel | undefined;
-  private broadcastCleanup: (() => void) | undefined;
-  private webLockController: AbortController | undefined;
+  private roleListeners = new Set<(role: StorageRole) => void>();
+  private liveQueries = new Set<() => void>();
+  private cleanups: Array<() => void> = [];
 
   constructor(
     private config: SyncClientConfig<C, DB, TCheckpoint, Store>,
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
-    assertAtomicLocalMutationStorage(config.storage);
-    const localChangeStore = config.storage.localChangeStore;
-    const db = config.storage.dbAdapter;
-    this.db = db;
-    this.localChangeStore = localChangeStore;
-
-    this.syncHandler = new SyncHandler<C, DB, TCheckpoint>({
-      collections: config.collections,
-      db: this.db,
-      changeBus: this.changeBus,
-      checkpointStorage: config.checkpointStorage,
-      localChangeStore,
-      syncAdapter: config.syncAdapter,
-      onSyncError: (error) => this.setStatus("error", error),
-      onSyncSuccess: () => this.setStatus("syncing"),
-      conflictResolver: config.resolveConflict,
-    });
+    this.coordinator = getStorageCoordinator(config.storage);
 
     this.collections = Object.fromEntries(
       config.collections.map((col) => [
         col.name,
-        new CollectionRuntime(col, this.db, this.changeBus, localChangeStore),
+        new CollectionRuntime(col, this.coordinator, this.changeBus),
       ]),
     ) as unknown as TCollectionRuntimeRecord<C>;
 
-    if (typeof BroadcastChannel !== "undefined") {
-      const key = config.coordinationKey ?? "default";
-      this.broadcastChannel = new BroadcastChannel(`ez-sync:${key}`);
-      this.broadcastChannel.onmessage = (message: MessageEvent) => {
-        const payload = message.data as { type?: string; events?: ChangeBusEvent<any>[] };
-        if (payload?.type === "local-change" && Array.isArray(payload.events)) {
-          this.changeBus.publishRemoteBatch(payload.events);
-        }
-      };
-      this.broadcastCleanup = this.changeBus.subscribe(
-        (events) => this.broadcastChannel?.postMessage({ type: "local-change", events }),
+    this.cleanups.push(
+      this.coordinator.subscribe({
+        view: (view) => this.applyView(view),
+        changes: ({ events, source }) => {
+          this.changeBus.publishRemoteBatch(events);
+          // Another context committed these to the outbox this owner pushes from.
+          if (source === "local") {
+            this.syncHandler?.notifyOutboxChanged(
+              events.map((event) => event.collection as CollectionNames<C>),
+            );
+          }
+        },
+        invalidate: () => {
+          for (const rerun of this.liveQueries) rerun();
+        },
+        error: (error) => this.setStatus("error", error),
+      }),
+      this.changeBus.subscribe(
+        (events) => {
+          if (this.view?.commitsLocally) this.coordinator.broadcastChanges(events, "local");
+        },
         { stream: "local" },
-      );
-    }
+      ),
+    );
+    void this.coordinator.resolve().then(
+      (view) => this.applyView(view),
+      (error: unknown) => this.setStatus("error", error),
+    );
+  }
+
+  get storageRole(): StorageRole {
+    return this.coordinator.role;
   }
 
   subscribe: SubscribeFn<C> = (...args: unknown[]) => {
@@ -148,21 +140,25 @@ export class SyncClientImpl<
 
   liveQuery: LiveQueryFn<C, DB> = (options) => {
     const { collections, query, onData } = options;
-    const queryBuilder = this.db.queryBuilder;
-    const querySchema = this.db.querySchema;
 
+    // Resolve the adapter per run: a follower's proxy is replaced on promotion.
     const triggerQuery = async () => {
-      const queryResult = await query(queryBuilder, querySchema);
+      const { dbAdapter } = await this.coordinator.resolve();
+      const queryResult = await query(dbAdapter.queryBuilder, dbAdapter.querySchema);
       onData(queryResult);
     };
+    const rerun = () => void triggerQuery();
 
-    void triggerQuery();
+    rerun();
+    this.liveQueries.add(rerun);
 
-    if (collections) {
-      return this.changeBus.subscribe(collections, triggerQuery);
-    }
-
-    return this.changeBus.subscribe(triggerQuery);
+    const unsubscribe = collections
+      ? this.changeBus.subscribe(collections, rerun)
+      : this.changeBus.subscribe(rerun);
+    return () => {
+      this.liveQueries.delete(rerun);
+      unsubscribe();
+    };
   };
 
   getCheckpoint = async <N extends CollectionNames<C>>(collection: N) => {
@@ -178,7 +174,7 @@ export class SyncClientImpl<
     this.attachNetworkListeners();
     if (isBrowserNetworkAvailable()) {
       this.setStatus("starting");
-      this.startLeadership();
+      this.reconcileSync();
     } else {
       this.setStatus("offline");
     }
@@ -187,17 +183,18 @@ export class SyncClientImpl<
   stopSync = () => {
     this.wantsSync = false;
     this.detachNetworkListeners();
-    this.stopLeadership();
+    this.syncHandler?.stopAll();
     this.setStatus("stopped");
   };
 
-  dispose = () => {
+  dispose = async () => {
     this.stopSync();
-    this.broadcastCleanup?.();
-    this.broadcastCleanup = undefined;
-    this.broadcastChannel?.close();
-    this.broadcastChannel = undefined;
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+    this.liveQueries.clear();
     this.statusListeners.clear();
+    this.roleListeners.clear();
+    await this.coordinator.dispose();
   };
 
   subscribeStatus = (listener: (event: SyncStatusEvent) => void) => {
@@ -208,6 +205,16 @@ export class SyncClientImpl<
       // A status observer cannot interrupt client construction or subscription.
     }
     return () => this.statusListeners.delete(listener);
+  };
+
+  subscribeStorageRole = (listener: (role: StorageRole) => void) => {
+    this.roleListeners.add(listener);
+    try {
+      listener(this.storageRole);
+    } catch {
+      // A role observer cannot interrupt subscription.
+    }
+    return () => this.roleListeners.delete(listener);
   };
 
   private setStatus(status: SyncStatusEvent["status"], error?: unknown): void {
@@ -226,107 +233,58 @@ export class SyncClientImpl<
     }
   }
 
-  private startLeadership(): void {
-    const browserClient = Boolean(getNetworkHost().navigator);
-    const locks = getNetworkHost().navigator?.locks;
-    if (this.config.coordinateTabs !== false && browserClient && locks) {
-      this.startWebLockLeadership(locks);
-      return;
-    }
-    if (
-      this.config.coordinateTabs === false ||
-      !browserClient ||
-      !this.localChangeStore.acquireLease ||
-      !this.localChangeStore.supportsCrossContextLeases
-    ) {
-      this.syncHandler.startAll();
-      this.setStatus("syncing");
-      return;
-    }
+  /** Track the storage view; only an owner view gets a sync handler. */
+  private applyView(view: StorageView<DB>): void {
+    if (this.view === view) return;
+    const previousView = this.view;
+    const previousRole = previousView?.role ?? "follower";
+    const adapterChanged = this.view?.dbAdapter !== view.dbAdapter;
+    this.view = view;
 
-    if (!this.leaseTimer) {
-      void this.renewLeadership();
-      this.leaseTimer = setInterval(() => void this.renewLeadership(), 5_000);
+    if (view.role !== "owner" || adapterChanged || !this.syncHandler) {
+      this.syncHandler?.stopAll();
+      this.syncHandler = view.role === "owner" ? this.createSyncHandler(view) : undefined;
     }
-  }
-
-  private startWebLockLeadership(locks: BrowserLockManager): void {
-    if (this.webLockController || !this.wantsSync) return;
-    const controller = new AbortController();
-    this.webLockController = controller;
-    this.setStatus("idle");
-    void locks
-      .request(
-        `ez-sync:${this.config.coordinationKey ?? "default"}`,
-        { mode: "exclusive", signal: controller.signal },
-        async (lock) => {
-          if (!lock || controller.signal.aborted || !this.wantsSync) return;
-          this.syncHandler.startAll();
-          this.setStatus("syncing");
-          await new Promise<void>((resolve) => {
-            controller.signal.addEventListener("abort", () => resolve(), { once: true });
-          });
-          this.syncHandler.stopAll();
-        },
-      )
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) this.setStatus("error", error);
-      })
-      .finally(() => {
-        if (this.webLockController === controller) this.webLockController = undefined;
-      });
-  }
-
-  private async renewLeadership(): Promise<void> {
-    if (!this.wantsSync || !isBrowserNetworkAvailable()) return;
-    try {
-      const token = await this.localChangeStore.acquireLease!(
-        this.config.coordinationKey ?? "default",
-        this.leaseOwner,
-        Date.now(),
-        15_000,
-      );
-      if (!this.wantsSync || !isBrowserNetworkAvailable()) {
-        if (token !== undefined) {
-          await this.localChangeStore.releaseLease?.(
-            this.config.coordinationKey ?? "default",
-            this.leaseOwner,
-            token,
-          );
+    // Queries already ran against the first view; rerun only when the adapter is replaced.
+    if (adapterChanged && previousView) {
+      for (const rerun of this.liveQueries) rerun();
+    }
+    if (previousRole !== view.role) {
+      for (const listener of this.roleListeners) {
+        try {
+          listener(view.role);
+        } catch {
+          // One observer must not block delivery to other observers.
         }
-        return;
       }
-      if (token === undefined) {
-        if (this.leaseToken !== undefined) this.syncHandler.stopAll();
-        this.leaseToken = undefined;
-        this.setStatus("idle");
-        return;
-      }
-      this.leaseToken = token;
-      this.syncHandler.startAll();
-      this.setStatus("syncing");
-    } catch (error) {
-      this.syncHandler.stopAll();
-      this.leaseToken = undefined;
-      this.setStatus("error", error);
     }
+    if (this.wantsSync && isBrowserNetworkAvailable()) this.reconcileSync();
   }
 
-  private stopLeadership(): void {
-    this.webLockController?.abort();
-    this.webLockController = undefined;
-    if (this.leaseTimer) clearInterval(this.leaseTimer);
-    this.leaseTimer = undefined;
-    this.syncHandler.stopAll();
-    const token = this.leaseToken;
-    this.leaseToken = undefined;
-    if (token !== undefined) {
-      void this.localChangeStore.releaseLease?.(
-        this.config.coordinationKey ?? "default",
-        this.leaseOwner,
-        token,
-      );
+  private createSyncHandler(view: StorageView<DB>): SyncHandler<C, DB, TCheckpoint> {
+    return new SyncHandler<C, DB, TCheckpoint>({
+      collections: this.config.collections,
+      db: view.dbAdapter,
+      changeBus: this.changeBus,
+      checkpointStorage: this.config.checkpointStorage,
+      localChangeStore: view.localChangeStore!,
+      syncAdapter: this.config.syncAdapter,
+      onSyncError: (error) => this.setStatus("error", error),
+      onSyncSuccess: () => this.setStatus("syncing"),
+      conflictResolver: this.config.resolveConflict,
+      onRemoteChangesCommitted: (changes) => this.coordinator.broadcastChanges(changes, "pull"),
+      canCommit: () => this.coordinator.canCommit(view),
+    });
+  }
+
+  private reconcileSync(): void {
+    if (!this.view) return;
+    if (!this.syncHandler) {
+      this.setStatus("idle");
+      return;
     }
+    this.syncHandler.startAll();
+    this.setStatus("syncing");
   }
 
   private attachNetworkListeners(): void {
@@ -335,13 +293,14 @@ export class SyncClientImpl<
       return;
     }
 
+    // Listeners exist only while sync is wanted (attached in startSync, removed in stopSync).
     const onOnline = () => {
-      if (!this.wantsSync) return;
       this.setStatus("starting");
-      this.startLeadership();
+      this.reconcileSync();
     };
+    // Going offline pauses sync but keeps storage ownership.
     const onOffline = () => {
-      this.stopLeadership();
+      this.syncHandler?.stopAll();
       this.setStatus("offline");
     };
 

@@ -167,13 +167,15 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   expect(rootUpsert).not.toHaveBeenCalled();
 
   const storage = createTypeOrmStorage({
-    db: db as never,
+    coordinateTabs: false,
+    open: () => ({ database: db as never }),
     collections: [collection],
     eventEntity: OutboxEvent,
     dirtyRecordEntity: DirtyRecordEntity,
   });
-  expect(storage.localChangeStore.atomicLocalMutationCapability).toBe("atomic");
-  expect(typeof storage.dbAdapter.commitLocalMutation).toBe("function");
+  await expect(storage.ready).resolves.toBeUndefined();
+  expect(storage.role).toBe("owner");
+  await storage.dispose();
 });
 
 test("TypeORM local-change store queries, deletes, and upserts records", async () => {

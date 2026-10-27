@@ -91,7 +91,9 @@ const collection = defineDrizzleCollection({
 const { useLiveQuery } = createSyncClientReact({
   collections: [collection],
   storage: createDrizzleStorage({
-    db,
+    sharing: "shared",
+    coordinateTabs: false,
+    open: () => ({ database: db }),
     collections: [collection],
     schema,
     localChangeTables: { events: syncEvents, dirtyRecords },

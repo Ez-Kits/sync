@@ -33,7 +33,10 @@ const collection = defineTypeormCollection({
 const syncClient = createSyncClient({
   collections: [collection],
   storage: createTypeOrmStorage({
-    db: dataSource,
+    // sql.js keeps a separate in-memory database per tab; TypeORM cannot proxy queries
+    // to another tab, so this demo runs as a single context.
+    coordinateTabs: false,
+    open: () => ({ database: dataSource }),
     collections: [collection],
     schema,
     eventEntity: SyncEvent,
