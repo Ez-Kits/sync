@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/package",
+  "name": "@ez-kits/sync-storage-pglite",
+  "version": "0.0.0",
+  "description": "PGlite DB storage for EzSync: Postgres (PGlite) in a leader worker",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./worker": "./dist/worker.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "test:types": "vp test run --typecheck.only",
+    "test:coverage": "vp test run --coverage",
+    "check": "vp check",
+    "prepublishOnly": "vp run build"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "catalog:",
+    "@ez-kits/sync-client-core": "workspace:*",
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "@electric-sql/pglite": "catalog:",
+    "@ez-kits/sync-client-core": "workspace:*"
+  }
+}

@@ -4,7 +4,13 @@ import type {
   AtomicLocalChangeStore,
   StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
-import type { DataSource, EntityManager, EntityTarget, ObjectLiteral } from "typeorm";
+import {
+  Table,
+  type DataSource,
+  type EntityManager,
+  type EntityTarget,
+  type ObjectLiteral,
+} from "typeorm";
 import type { EntityClass } from "./collection";
 
 export interface TypeOrmLocalChangeStoreConfig<
@@ -48,7 +54,19 @@ export function createTypeOrmLocalChangeStore<
 
   return {
     atomicLocalMutationCapability: "atomic",
-    supportsCrossContextLeases: false,
+    // Create the two entity tables (with their indices and unique keys) when missing.
+    async initialize() {
+      const queryRunner = db.createQueryRunner();
+      try {
+        for (const target of [eventTarget, dirtyRecordTarget]) {
+          const metadata = db.getMetadata(target);
+          if (await queryRunner.hasTable(metadata.tablePath)) continue;
+          await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
+        }
+      } finally {
+        await queryRunner.release();
+      }
+    },
     async appendEvents(events: StoredChangeBusEvent[], transactionContext) {
       if (events.length === 0) return;
       await managerFor(transactionContext).getRepository(eventTarget).save(events);

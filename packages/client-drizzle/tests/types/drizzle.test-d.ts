@@ -1,27 +1,27 @@
 import {
   createSyncClient,
-  type AtomicLocalChangeStore,
   type CollectionNames,
-  type CoordinatedStorage,
+  type DBStorage,
   type InferCollectionInsertModel,
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
-import type { InferInsertModel } from "drizzle-orm";
-import type { SqliteProxyExecutors } from "drizzle-orm/sqlite-proxy";
+import { defineRelations, type InferInsertModel } from "drizzle-orm";
+import type { PgRemoteDatabase } from "drizzle-orm/pg-proxy";
+import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
+  buildRelationsFromCollections,
   buildSchemaFromCollections,
-  createDrizzleDBAdapter,
   createDrizzleLocalChangeStore,
-  createDrizzleStorage,
   defineDrizzleCollection,
-  forwardSqliteProxy,
+  type BuildRelationsFromCollections,
   type DrizzleDBAdapter,
-  type SqliteProxyRequest,
 } from "../../src";
+import { createDrizzlePgDBAdapter } from "../../src/pg";
+import { createDrizzleSqliteDBAdapter } from "../../src/sqlite";
 
 const todos = sqliteTable("todos", {
   id: integer("id").primaryKey(),
@@ -47,10 +47,9 @@ const dirtyRecords = sqliteTable("dirty_records", {
   updatedAt: integer("updated_at"),
 });
 
-interface DrizzleDb {
-  readonly kind: "drizzle-db";
-}
-declare const db: DrizzleDb;
+declare const db: unknown;
+declare const dbStorage: DBStorage;
+declare const initialize: () => Promise<void>;
 
 const todoCollection = defineDrizzleCollection({ name: "todos", table: todos });
 const userCollection = defineDrizzleCollection({ name: "users", table: users });
@@ -95,59 +94,62 @@ describe("drizzle adapter", () => {
     }>();
   });
 
-  test("createDrizzleDBAdapter exposes the drizzle db and schema", () => {
-    const adapter = createDrizzleDBAdapter({ db, collections });
-    expectTypeOf(adapter).toEqualTypeOf<
-      DrizzleDBAdapter<typeof collections, DrizzleDb, { todos: typeof todos; users: typeof users }>
-    >();
-    expectTypeOf(adapter.queryBuilder).toEqualTypeOf<DrizzleDb>();
-    expectTypeOf(adapter.querySchema.users).toEqualTypeOf<typeof users>();
-    expectTypeOf(adapter.get("todos", 1)).resolves.toHaveProperty("title").toEqualTypeOf<string>();
-    // @ts-expect-error users are keyed by string uid
-    void adapter.get("users", 1);
+  test("buildRelationsFromCollections registers every collection table", () => {
+    const relations = buildRelationsFromCollections(collections);
+    expectTypeOf(relations).toEqualTypeOf<BuildRelationsFromCollections<typeof collections>>();
+    expectTypeOf(relations.todos.table).toEqualTypeOf<typeof todos>();
   });
 
-  test("createDrizzleStorage produces storage accepted by createSyncClient", () => {
-    const storage = createDrizzleStorage({
-      collections,
-      localChangeTables: { events, dirtyRecords },
-      open: () => ({
-        database: db,
-        execute: async (request: SqliteProxyRequest) => {
-          expectTypeOf(request.sql).toEqualTypeOf<string>();
-          return [];
-        },
-      }),
-      connect: (send: (request: SqliteProxyRequest) => Promise<unknown>) => {
-        expectTypeOf(forwardSqliteProxy(send)).toEqualTypeOf<SqliteProxyExecutors>();
-        return db;
-      },
-    });
-    expectTypeOf(storage).toEqualTypeOf<
-      CoordinatedStorage<
-        DrizzleDBAdapter<
-          typeof collections,
-          DrizzleDb,
-          { todos: typeof todos; users: typeof users }
-        >,
-        AtomicLocalChangeStore
+  test("each entry point builds a type-safe Drizzle proxy database", () => {
+    type DefaultRelations = BuildRelationsFromCollections<typeof collections>;
+    const adapter = createDrizzleSqliteDBAdapter({ dbStorage, collections });
+    expectTypeOf(adapter).toEqualTypeOf<
+      DrizzleDBAdapter<
+        typeof collections,
+        SqliteRemoteDatabase<unknown, DefaultRelations>,
+        { todos: typeof todos; users: typeof users }
       >
     >();
-    // @ts-expect-error exclusive storage needs a follower connector
-    createDrizzleStorage({
+    expectTypeOf(adapter.querySchema.users).toEqualTypeOf<typeof users>();
+    expectTypeOf(adapter.get("todos", 1)).resolves.toHaveProperty("title").toEqualTypeOf<string>();
+    expectTypeOf(adapter.queryBuilder.query.users.findFirst()).resolves.toEqualTypeOf<
+      { uid: string; email: string } | undefined
+    >();
+    // @ts-expect-error users are keyed by string uid
+    void adapter.get("users", 1);
+
+    const pg = createDrizzlePgDBAdapter({ dbStorage, collections });
+    expectTypeOf(pg.queryBuilder).toEqualTypeOf<PgRemoteDatabase<DefaultRelations>>();
+    // @ts-expect-error the dialect is chosen by the entry point
+    createDrizzleSqliteDBAdapter({ dbStorage, dialect: "sqlite", collections });
+    createDrizzleSqliteDBAdapter({
+      dbStorage,
       collections,
-      localChangeTables: { events, dirtyRecords },
-      open: () => ({ database: db, execute: async () => [] }),
+      // @ts-expect-error relations are configured through `relations`
+      drizzleConfig: { relations: {} },
     });
-    createDrizzleStorage({
-      sharing: "shared",
+  });
+
+  test("custom relations type the relational query API", () => {
+    const relations = defineRelations({ todos, users }, (r) => ({
+      users: { todos: r.many.todos() },
+      todos: { owner: r.one.users({ from: r.todos.title, to: r.users.uid }) },
+    }));
+    const dbAdapter = createDrizzleSqliteDBAdapter({
+      dbStorage,
       collections,
-      localChangeTables: { events, dirtyRecords },
-      open: () => ({ database: db }),
+      relations,
+      drizzleConfig: { logger: true },
     });
+    expectTypeOf(dbAdapter.queryBuilder).toEqualTypeOf<
+      SqliteRemoteDatabase<unknown, typeof relations>
+    >();
+    expectTypeOf(dbAdapter.dbStorage).toEqualTypeOf<DBStorage>();
+    // @ts-expect-error the storage is required
+    createDrizzleSqliteDBAdapter({ collections });
     const client = createSyncClient({
       collections,
-      storage,
+      dbAdapter,
       checkpointStorage: {
         getCheckpoint: async () => undefined,
         saveCheckpoint: async () => {},
@@ -160,22 +162,28 @@ describe("drizzle adapter", () => {
     }>();
     client.liveQuery({
       query: (qb, schema) => {
-        expectTypeOf(qb).toEqualTypeOf<DrizzleDb>();
         expectTypeOf(schema.todos).toEqualTypeOf<typeof todos>();
+        return qb.query.users.findMany({ with: { todos: true } });
       },
-      onData: () => {},
+      onData: (rows) => {
+        expectTypeOf(rows[0]!.todos[0]!.title).toEqualTypeOf<string>();
+      },
     });
   });
 
   test("local-change tables must persist every stored field", () => {
-    createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords } });
+    createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords }, initialize });
 
     const invalidEvents = sqliteTable("invalid_events", {
       id: text("id").primaryKey(),
       collection: text("collection"),
     });
-    // @ts-expect-error event table omits persisted event columns
-    createDrizzleLocalChangeStore({ db, tables: { events: invalidEvents, dirtyRecords } });
+    createDrizzleLocalChangeStore({
+      db,
+      // @ts-expect-error event table omits persisted event columns
+      tables: { events: invalidEvents, dirtyRecords },
+      initialize,
+    });
 
     const textDataEvents = sqliteTable("text_data_events", {
       id: text("id").primaryKey(),
@@ -186,11 +194,10 @@ describe("drizzle adapter", () => {
       createdAt: integer("created_at"),
     });
     // @ts-expect-error arbitrary event payloads require a compatible JSON data column
-    createDrizzleStorage({
-      sharing: "shared",
-      open: () => ({ database: db }),
-      collections,
-      localChangeTables: { events: textDataEvents, dirtyRecords },
+    createDrizzleLocalChangeStore({
+      db,
+      tables: { events: textDataEvents, dirtyRecords },
+      initialize,
     });
   });
 });

@@ -46,6 +46,8 @@ export interface DrizzleLocalChangeStoreConfig<
 > {
   db: TDb;
   tables: DrizzleLocalChangeStoreTables<TEvents, TDirtyRecords>;
+  /** Create `tables` when missing; must be idempotent (see `ILocalChangeStore.initialize`). */
+  initialize: () => Promise<void>;
 }
 
 export type DrizzleSchemaTypeCheck<
@@ -71,7 +73,7 @@ export function createDrizzleLocalChangeStore<
   ...typeCheck: DrizzleSchemaTypeCheck<TEvents, TDirtyRecords>
 ): AtomicLocalChangeStore {
   void typeCheck;
-  const { db, tables } = config;
+  const { db, tables, initialize } = config;
   const events = tables.events;
   const dirty = tables.dirtyRecords;
   const eventColumns = getColumns(events);
@@ -83,7 +85,7 @@ export function createDrizzleLocalChangeStore<
 
   return {
     atomicLocalMutationCapability: "atomic",
-    supportsCrossContextLeases: false,
+    initialize,
     async appendEvents(items: StoredChangeBusEvent[], transactionContext) {
       if (items.length === 0) return;
       await dbFor(transactionContext).insert(events).values(items);

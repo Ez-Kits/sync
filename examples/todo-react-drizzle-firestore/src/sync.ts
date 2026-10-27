@@ -1,8 +1,6 @@
 import { createLocalStorageCheckpointStorage } from "@ez-kits/sync-client-core";
-import {
-  createDrizzleStorage,
-  defineDrizzleCollection,
-} from "@ez-kits/sync-client-drizzle-adapter";
+import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
+import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
 import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
 import {
@@ -17,8 +15,8 @@ import {
   Timestamp,
   type QuerySnapshot,
 } from "firebase/firestore";
-import { connectLocalDatabase, openLocalDatabase } from "./db/index.ts";
-import { dirtyRecords, schema, syncEvents, todos, type Todo } from "./db/schema.ts";
+import { dbStorage } from "./db/index.ts";
+import { todos, type Todo } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
 
 export interface TodoCheckpoint {
@@ -114,23 +112,21 @@ function createTodoFirestoreSyncAdapter() {
   });
 }
 
+export { dbStorage };
+
 /**
- * One tab owns the sql.js database (elected with Web Locks); other tabs proxy their
- * queries and writes to it, and only the owner syncs with Firestore.
+ * Drizzle over the shared sql.js storage. Every tab reads and writes through it; the
+ * storage leader's tab is the only one that syncs with Firestore.
  */
-export const storage = createDrizzleStorage({
-  coordinationKey: "ez-sync-todo",
+const dbAdapter = createDrizzleSqliteDBAdapter({
+  dbStorage,
   collections: [todosCollection],
-  schema,
-  localChangeTables: { events: syncEvents, dirtyRecords },
-  open: openLocalDatabase,
-  connect: connectLocalDatabase,
 });
 
 export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
-    storage,
+    dbAdapter,
     checkpointStorage: createLocalStorageCheckpointStorage<string, TodoCheckpoint>({
       key: "ez-sync-todo-checkpoint",
       serializer: (checkpoint) =>

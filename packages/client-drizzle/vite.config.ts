@@ -11,6 +11,11 @@ export default defineConfig({
     dts: {
       generator: "tsgo",
     },
+    entry: {
+      index: "src/index.ts",
+      sqlite: "src/sqlite/index.ts",
+      pg: "src/pg/index.ts",
+    },
     exports: true,
   },
   lint: {

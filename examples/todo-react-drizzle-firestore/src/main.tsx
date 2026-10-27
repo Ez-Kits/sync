@@ -1,12 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
-import { storage } from "./sync.ts";
+import { dbStorage } from "./sync.ts";
 import "./style.css";
 
 async function bootstrap() {
-  // Resolves once this tab owns the database or has reached the tab that does.
-  await storage.ready;
+  // Resolves once this tab leads the database or has reached the tab that does.
+  await dbStorage.ready;
   // await seedTodosOnce();
 
   const root = document.querySelector<HTMLDivElement>("#app");

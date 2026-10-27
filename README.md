@@ -8,6 +8,7 @@ EzSync is a modular, local-first sync library for TypeScript applications. The c
 - `@ez-kits/sync-client-drizzle-adapter`: local database adapter for Drizzle ORM.
 - `@ez-kits/sync-client-typeorm-adapter`: local database adapter for TypeORM.
 - `@ez-kits/sync-client-react`: React bindings.
+- `@ez-kits/sync-storage-sqljs`, `@ez-kits/sync-storage-sqlite-wasm`, `@ez-kits/sync-storage-pglite`: `DBStorage` engines that run the database in a leader worker shared by every tab.
 - `@ez-kits/sync-firebase`: Firestore and Realtime Database remote adapters.
 - `@ez-kits/sync-conflict-resolution`: provider-neutral built-in conflict policies.
 

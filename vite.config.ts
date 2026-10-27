@@ -9,6 +9,9 @@ export default defineConfig({
       "./packages/client-typeorm",
       "./packages/sync-firebase",
       "./packages/sync-conflict-resolution",
+      "./packages/storage-sqljs",
+      "./packages/storage-pglite",
+      "./packages/storage-sqlite-wasm",
     ],
     coverage: {
       include: ["packages/*/src/**/*.{ts,tsx}"],

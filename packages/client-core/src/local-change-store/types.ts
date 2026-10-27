@@ -24,8 +24,12 @@ export interface DirtyRecordKey {
 }
 
 export interface ILocalChangeStore<TTransactionContext = unknown> {
-  /** Whether lease transactions coordinate separate browser contexts. */
-  readonly supportsCrossContextLeases?: boolean;
+  /**
+   * Create the outbox and dirty-record storage when it is missing. The sync client calls it
+   * once the DB storage is ready and before any read, write or sync, in every context, so it
+   * must be idempotent. Applications never run these migrations themselves.
+   */
+  initialize(): Promise<void>;
   appendEvents(
     events: StoredChangeBusEvent[],
     transactionContext?: TTransactionContext,
@@ -38,14 +42,6 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
     transactionContext?: TTransactionContext,
   ): Promise<void>;
   getDirtyRecords(collection?: string): Promise<DirtyRecord[]>;
-  /** Acquire or renew an exclusive lease. The token changes on ownership takeover. */
-  acquireLease?(
-    key: string,
-    owner: string,
-    now: number,
-    ttlMs: number,
-  ): Promise<number | undefined>;
-  releaseLease?(key: string, owner: string, fencingToken: number): Promise<void>;
 }
 
 export interface AtomicLocalChangeStore<

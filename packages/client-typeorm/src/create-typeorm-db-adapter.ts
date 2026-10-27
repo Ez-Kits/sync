@@ -1,5 +1,7 @@
 import type {
   CollectionConfigMap,
+  DirtyRecord,
+  StoredChangeBusEvent,
   CollectionNames,
   ConfigForName,
   DBAdapterOperations,
@@ -9,7 +11,16 @@ import type {
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { DataSource, EntityManager, EntityTarget, ObjectLiteral } from "typeorm";
-import { buildSchemaFromCollections, type BuildSchemaFromCollections } from "./collection";
+import {
+  buildSchemaFromCollections,
+  type BuildSchemaFromCollections,
+  type EntityClass,
+} from "./collection";
+import { createTypeOrmDBStorage } from "./create-typeorm-db-storage";
+import {
+  createTypeOrmLocalChangeStore,
+  type TypeOrmSchemaTypeCheck,
+} from "./create-typeorm-local-change-store";
 import type { TypeOrmDBAdapter, TypeOrmDBAdapterConfig } from "./types";
 
 function primaryWhere(primaryField: PropertyKey, id: unknown): ObjectLiteral {
@@ -91,14 +102,21 @@ function createOperations<
   };
 }
 
+/**
+ * A TypeORM adapter with its outbox in the same data source. TypeORM runs in this
+ * context only, so multi-tab apps need a data source whose engine is shared across tabs.
+ */
 export function createTypeOrmDBAdapter<
   C extends CollectionConfigMap,
   TDataSource extends DataSource = DataSource,
   TSchema extends Record<CollectionNames<C>, unknown> = BuildSchemaFromCollections<C>,
+  TEventEntity extends EntityClass<StoredChangeBusEvent> = EntityClass<StoredChangeBusEvent>,
+  TDirtyEntity extends EntityClass<DirtyRecord> = EntityClass<DirtyRecord>,
 >(
-  adapter: TypeOrmDBAdapterConfig<C, TDataSource, TSchema>,
+  adapter: TypeOrmDBAdapterConfig<C, TDataSource, TSchema, TEventEntity, TDirtyEntity>,
+  ...typeCheck: TypeOrmSchemaTypeCheck<TEventEntity, TDirtyEntity>
 ): TypeOrmDBAdapter<C, TDataSource, TSchema> {
-  const { db, collections } = adapter;
+  const { db, collections, eventEntity, dirtyRecordEntity } = adapter;
   let schema: TSchema | undefined = adapter.schema;
 
   if (!schema) {
@@ -113,6 +131,11 @@ export function createTypeOrmDBAdapter<
     schema: resolvedSchema,
     queryBuilder: db,
     querySchema: resolvedSchema,
+    dbStorage: adapter.dbStorage ?? createTypeOrmDBStorage(db),
+    localChangeStore: createTypeOrmLocalChangeStore(
+      { db, eventEntity, dirtyRecordEntity },
+      ...typeCheck,
+    ),
     ...operations,
     async transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
       return db.transaction((manager) =>

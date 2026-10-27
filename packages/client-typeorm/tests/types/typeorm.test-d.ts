@@ -1,5 +1,6 @@
 import {
   createSyncClient,
+  type DBRole,
   type DirtyRecord,
   type InferCollectionInsertModel,
   type InferCollectionPrimaryFieldType,
@@ -13,7 +14,7 @@ import {
   buildSchemaFromCollections,
   createTypeOrmDBAdapter,
   createTypeOrmLocalChangeStore,
-  createTypeOrmStorage,
+  createTypeOrmDBStorage,
   defineTypeormCollection,
   type TypeOrmDBAdapter,
 } from "../../src";
@@ -42,6 +43,7 @@ class DirtyRecordEntity implements DirtyRecord {
 }
 
 declare const db: DataSource;
+const entities = { eventEntity: OutboxEvent, dirtyRecordEntity: DirtyRecordEntity };
 
 const todoCollection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
 const userCollection = defineTypeormCollection({
@@ -82,7 +84,7 @@ describe("typeorm adapter", () => {
   });
 
   test("createTypeOrmDBAdapter exposes the data source and schema", () => {
-    const adapter = createTypeOrmDBAdapter({ db, collections });
+    const adapter = createTypeOrmDBAdapter({ db, collections, ...entities });
     expectTypeOf(adapter).toEqualTypeOf<
       TypeOrmDBAdapter<typeof collections, DataSource, { todos: typeof Todo; users: typeof User }>
     >();
@@ -91,27 +93,16 @@ describe("typeorm adapter", () => {
     // @ts-expect-error todos are keyed by numeric id
     void adapter.get("todos", "1");
     // @ts-expect-error a data source is required
-    createTypeOrmDBAdapter({ db: {}, collections });
+    createTypeOrmDBAdapter({ db: {}, collections, ...entities });
   });
 
-  test("createTypeOrmStorage produces shared storage accepted by createSyncClient", () => {
-    createTypeOrmStorage({
-      open: () => ({ database: db }),
-      // @ts-expect-error TypeORM storage is always shared; there is no follower connector
-      connect: () => db,
-      collections,
-      eventEntity: OutboxEvent,
-      dirtyRecordEntity: DirtyRecordEntity,
-    });
-    const storage = createTypeOrmStorage({
-      open: () => ({ database: db }),
-      collections,
-      eventEntity: OutboxEvent,
-      dirtyRecordEntity: DirtyRecordEntity,
-    });
+  test("the adapter is accepted by createSyncClient", () => {
+    expectTypeOf(createTypeOrmDBStorage(db).role).toEqualTypeOf<DBRole>();
+    // @ts-expect-error the outbox entities are required
+    createTypeOrmDBAdapter({ db, collections });
     const client = createSyncClient({
       collections,
-      storage,
+      dbAdapter: createTypeOrmDBAdapter({ db, collections, ...entities }),
       checkpointStorage: {
         getCheckpoint: async () => undefined,
         saveCheckpoint: async () => {},
@@ -149,8 +140,8 @@ describe("typeorm adapter", () => {
       createdAt!: number;
     }
     // @ts-expect-error event data must accept all local event payloads
-    createTypeOrmStorage({
-      open: () => ({ database: db }),
+    createTypeOrmDBAdapter({
+      db,
       collections,
       eventEntity: TextPayloadEvent,
       dirtyRecordEntity: DirtyRecordEntity,

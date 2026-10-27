@@ -1,4 +1,5 @@
 import type {
+  ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
   CollectionConfig,
   SyncAdapter,
@@ -38,18 +39,25 @@ type TodoConfig = CollectionConfig<
 >;
 type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<[TodoConfig]>;
 type ClientSyncAdapter = NonNullable<
-  SyncClientConfig<[TodoConfig], any, Checkpoint, any>["syncAdapter"]
+  SyncClientConfig<[TodoConfig], any, Checkpoint>["syncAdapter"]
 >;
 
 declare const todoConfig: TodoConfig;
 declare const firestore: Firestore;
 declare const database: Database;
+/** Remote ids are derived from the local event: the record id, or the deleted id. */
+const eventId = (event: ChangeBusEvent<DataMap, "todos">) =>
+  event.type === "delete" ? event.id : "generated";
 
 describe("firestore", () => {
   const config = defineFirestoreCollectionSyncAdapterConfig({
     collectionConfig: todoConfig,
     collectionPath: "todos",
     createCheckpoint: () => ({ updatedAt: 0 }),
+    resolveDocumentId: (event) => {
+      expectTypeOf(event).toEqualTypeOf<ChangeBusEvent<DataMap, "todos">>();
+      return eventId(event);
+    },
     serializeCreate: (data) => {
       expectTypeOf(data).toEqualTypeOf<Omit<Todo, "id">>();
       return data as DocumentData;
@@ -69,8 +77,15 @@ describe("firestore", () => {
     defineFirestoreCollectionSyncAdapterConfig({
       collectionConfig: todoConfig,
       collectionPath: "todos",
+      resolveDocumentId: eventId,
       // @ts-expect-error checkpoints must match the collection checkpoint type
       createCheckpoint: () => ({ cursor: "x" }),
+    });
+    // @ts-expect-error every collection must say how local events map to document ids
+    defineFirestoreCollectionSyncAdapterConfig({
+      collectionConfig: todoConfig,
+      collectionPath: "todos",
+      createCheckpoint: () => ({ updatedAt: 0 }),
     });
   });
 
@@ -83,6 +98,7 @@ describe("firestore", () => {
       db: firestore,
       collectionPath: "todos",
       createCheckpoint: () => ({ updatedAt: 0 }),
+      resolveDocumentId: eventId,
     });
     expectTypeOf(single).toEqualTypeOf<SyncAdapter<DataMap, "todos", Checkpoint>>();
   });
@@ -93,6 +109,10 @@ describe("realtime database", () => {
     collectionConfig: todoConfig,
     collectionPath: "todos",
     createCheckpoint: () => ({ updatedAt: 0 }),
+    resolveRecordId: (event) => {
+      expectTypeOf(event).toEqualTypeOf<ChangeBusEvent<DataMap, "todos">>();
+      return eventId(event);
+    },
     serializeUpdate: (data) => {
       expectTypeOf(data).toEqualTypeOf<Partial<Todo>>();
       return data;
@@ -114,6 +134,7 @@ describe("realtime database", () => {
       db: database,
       collectionPath: "todos",
       createCheckpoint: () => ({ updatedAt: 0 }),
+      resolveRecordId: eventId,
     });
     expectTypeOf(single).toEqualTypeOf<SyncAdapter<DataMap, "todos", Checkpoint>>();
     // @ts-expect-error a realtime database adapter requires a Database, not a Firestore

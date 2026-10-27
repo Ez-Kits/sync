@@ -351,12 +351,14 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
   ).rejects.toThrow("commit failed");
 });
 
-test("Firestore default push mappings create generated IDs and soft-delete documents", async () => {
+test("Firestore default push mappings write resolved document IDs and soft-delete documents", async () => {
+  const resolveDocumentId = vi.fn((event: any) => event.data.id ?? "resolved-two");
   const adapter = createFirestoreCollectionSyncAdapter({
     db: {} as never,
     collectionName: "todos",
     collectionPath: "todos",
     createCheckpoint: () => 1,
+    resolveDocumentId,
   } as never);
   const commit = vi.fn();
   await adapter.push({
@@ -367,10 +369,12 @@ test("Firestore default push mappings create generated IDs and soft-delete docum
     ],
     commitChanges: commit,
   } as never);
+  expect(sdk.firestoreSets[0]?.[0]).toEqual({ path: "todos/one", id: "one" });
   expect(sdk.firestoreSets[0]?.[1]).toEqual({ id: "one" });
-  const generatedRecord = sdk.firestoreSets[1]?.[0] as any;
-  expect(generatedRecord).toBeDefined();
-  expect(generatedRecord.id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(sdk.firestoreSets[1]?.[0]).toEqual({ path: "todos/resolved-two", id: "resolved-two" });
+  expect(sdk.firestoreSets[1]?.[1]).toEqual({ title: "two" });
+  // Deletes are addressed by the event id; only writes go through the resolver.
+  expect(resolveDocumentId.mock.calls.map(([event]) => event.type)).toEqual(["create", "update"]);
   expect(sdk.firestoreSets[2]?.[0]).toEqual({ path: "todos/three", id: "three" });
   expect(sdk.firestoreSets[2]?.[1]).toMatchObject({ deleted: true, deletedAt: expect.any(Number) });
 });
@@ -500,10 +504,20 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
   ).rejects.toThrow("update failed");
 });
 
-test("Realtime Database default push handles no-op batches, generated IDs, tombstones, and array replacement", async () => {
+test("Realtime Database default push handles no-op batches, resolved IDs, tombstones, and array replacement", async () => {
+  const resolveRecordId = vi.fn((event: any) =>
+    Array.isArray(event.data) ? "resolved-list" : event.data.id,
+  );
   const adapter = createRealtimeDBSyncAdapter({
     db: {} as never,
-    collections: [{ collectionName: "todos", collectionPath: "todos", createCheckpoint: () => 1 }],
+    collections: [
+      {
+        collectionName: "todos",
+        collectionPath: "todos",
+        createCheckpoint: () => 1,
+        resolveRecordId,
+      },
+    ],
   } as never);
   const commit = vi.fn();
   await adapter.push({
@@ -522,11 +536,9 @@ test("Realtime Database default push handles no-op batches, generated IDs, tombs
   } as never);
   const updates = sdk.updates[0]?.[1] as Record<string, unknown>;
   expect(updates["todos/one"]).toEqual({ id: "one" });
-  expect(
-    Object.entries(updates).some(
-      ([path, value]) => path.startsWith("todos/") && JSON.stringify(value) === "[1,2]",
-    ),
-  ).toBe(true);
+  // Arrays replace the record instead of merging field by field.
+  expect(updates["todos/resolved-list"]).toEqual([1, 2]);
+  expect(resolveRecordId.mock.calls.map(([event]) => event.type)).toEqual(["create", "update"]);
   expect(updates["todos/gone/deleted"]).toBe(true);
   expect(updates["todos/gone/deletedAt"]).toEqual(expect.any(Number));
   expect(commit).toHaveBeenCalledOnce();

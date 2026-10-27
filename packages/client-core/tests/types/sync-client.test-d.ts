@@ -3,7 +3,7 @@ import {
   createSyncClient,
   type ChangeBusEvent,
   type ChangeBusEventDataMapFromCollectionConfigMap,
-  type StorageRole,
+  type DBRole,
   type SyncClient,
   type SyncStatusEvent,
 } from "../../src";
@@ -11,8 +11,6 @@ import {
   checkpointStorage,
   collections,
   db,
-  storage,
-  store,
   type Checkpoint,
   type Collections,
   type DB,
@@ -24,7 +22,7 @@ import {
 
 type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<Collections>;
 
-const client = createSyncClient({ collections, storage, checkpointStorage });
+const client = createSyncClient({ collections, dbAdapter: db, checkpointStorage });
 
 test("createSyncClient infers collections, adapter and checkpoint", () => {
   expectTypeOf(client).toEqualTypeOf<SyncClient<Collections, DB, Checkpoint>>();
@@ -77,21 +75,21 @@ test("liveQuery passes the adapter query builder and infers results", () => {
   });
 });
 
-test("clients require coordinated storage and expose the storage role", () => {
+test("clients take a DB adapter and expose the storage role", () => {
   createSyncClient({
     collections,
-    // @ts-expect-error clients require storage built by createCoordinatedStorage
-    storage: { dbAdapter: db, localChangeStore: store },
+    // @ts-expect-error clients take the adapter, not the raw storage
+    dbAdapter: { queryBuilder: 1 },
     checkpointStorage,
   });
   createSyncClient({
     collections,
-    storage,
+    dbAdapter: db,
     checkpointStorage,
-    // @ts-expect-error tab coordination is configured on the storage
+    // @ts-expect-error tab coordination is configured on the DB storage
     coordinationKey: "todos",
   });
-  expectTypeOf(client.storageRole).toEqualTypeOf<StorageRole>();
-  expectTypeOf(client.subscribeStorageRole).parameter(0).parameter(0).toEqualTypeOf<StorageRole>();
+  expectTypeOf(client.role).toEqualTypeOf<DBRole>();
+  expectTypeOf(client.subscribeRole).parameter(0).parameter(0).toEqualTypeOf<DBRole>();
   expectTypeOf(client.dispose).returns.toEqualTypeOf<Promise<void>>();
 });

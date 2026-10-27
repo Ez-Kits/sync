@@ -2,13 +2,25 @@ import { expect, test, vi } from "vite-plus/test";
 import { getColumns } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { buildSchemaFromCollections, defineDrizzleCollection } from "../src/collection";
-import { createDrizzleDBAdapter } from "../src/create-drizzle-db-adapter";
+import { createDrizzleProxyDBAdapter } from "../src/create-drizzle-proxy-db-adapter";
 import { createDrizzleLocalChangeStore } from "../src/create-drizzle-local-change-store";
-import { createDrizzleStorage } from "../src/create-drizzle-storage";
-import { executeSqliteProxyRequest, forwardSqliteProxy } from "../src/sqlite-proxy";
 
 const todos = sqliteTable("todos", { id: integer("id").primaryKey(), title: text("title") });
 const collection = defineDrizzleCollection({ name: "todos", table: todos });
+const initialize = async () => {};
+/** The storage of the last `adapterFor` call. */
+let dbStorage: any;
+
+/** A storage whose transactions run in place; the driver hands back the mock database. */
+function adapterFor(db: unknown) {
+  dbStorage = { dialect: "sqlite", exec: vi.fn() };
+  dbStorage.transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(dbStorage));
+  return createDrizzleProxyDBAdapter({ dbStorage, collections: [collection] } as never, {
+    dialect: "sqlite",
+    createDatabase: () => db,
+    createLocalChangeStore: () => ({ atomicLocalMutationCapability: "atomic" }) as never,
+  });
+}
 
 function makeDb(rows: unknown[] = []) {
   const calls: unknown[][] = [];
@@ -75,7 +87,7 @@ test("Drizzle collection infers its primary column and builds the named schema",
 
 test("Drizzle adapter executes CRUD, optional reads, schema fallback, and transactions", async () => {
   const { db, calls } = makeDb([{ id: 1, title: "one" }]);
-  const adapter = createDrizzleDBAdapter({ db, collections: [collection] } as never);
+  const adapter = adapterFor(db);
   expect(adapter.schema.todos).toBe(todos);
   expect(adapter.queryBuilder).toBe(db);
   expect(adapter.querySchema.todos).toBe(todos);
@@ -88,18 +100,13 @@ test("Drizzle adapter executes CRUD, optional reads, schema fallback, and transa
   expect(await adapter.getMany("todos" as never)).toHaveLength(1);
   await adapter.transaction(async (tx) => tx.insert("todos" as never, { id: 2 } as never));
   expect(calls.map((call) => call[0])).toContain("insert");
-  expect(db.transaction).toHaveBeenCalledOnce();
-  const explicit = createDrizzleDBAdapter({
-    db,
-    collections: [collection],
-    schema: { todos },
-  } as never);
-  expect(explicit.schema.todos).toBe(todos);
+  expect(dbStorage.transaction).toHaveBeenCalledOnce();
+  expect(adapter.localChangeStore.atomicLocalMutationCapability).toBe("atomic");
 });
 
 test("Drizzle commitLocalMutation uses transaction-bound operations", async () => {
   const { db, calls } = makeDb();
-  const adapter = createDrizzleDBAdapter({ db, collections: [collection] } as never);
+  const adapter = adapterFor(db);
   const callbackOrder: string[] = [];
   let transactionContext: any;
 
@@ -120,7 +127,7 @@ test("Drizzle commitLocalMutation uses transaction-bound operations", async () =
     },
   });
 
-  expect(db.transaction).toHaveBeenCalledOnce();
+  expect(dbStorage.transaction).toHaveBeenCalledOnce();
   expect(transactionContext.native).toBe(db);
   expect(callbackOrder).toEqual(["mutate", "outbox", "dirty"]);
   expect(calls).toContainEqual(["insert", todos, { id: 9, title: "transactional" }]);
@@ -148,6 +155,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
     tables: { events, dirtyRecords },
+    initialize,
   });
   const nativeTransaction = { insert: transactionInsert };
   await store.appendEvents(
@@ -169,45 +177,9 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   );
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
+  expect(store).toMatchObject({ initialize });
   expect(transactionInsert).toHaveBeenCalledTimes(2);
   expect(rootInsert).not.toHaveBeenCalled();
-
-  const database = { insert: rootInsert } as never;
-  const storage = createDrizzleStorage({
-    sharing: "shared",
-    coordinateTabs: false,
-    open: () => ({ database }),
-    collections: [collection],
-    localChangeTables: { events, dirtyRecords },
-  });
-  await expect(storage.ready).resolves.toBeUndefined();
-  expect(storage.role).toBe("owner");
-  await storage.dispose();
-});
-
-test("sqlite-proxy helpers forward follower statements and run them on the owner", async () => {
-  const send = vi.fn(async (request: unknown) => request);
-  const forwarded = forwardSqliteProxy(send);
-  await forwarded.all("select 1", [1], "object");
-  await forwarded.get("select 2", [2]);
-  await forwarded.run("delete", [3]);
-  expect(send.mock.calls.map(([request]) => request)).toEqual([
-    { method: "all", sql: "select 1", params: [1], rowMode: "object" },
-    { method: "get", sql: "select 2", params: [2], rowMode: undefined },
-    { method: "run", sql: "delete", params: [3] },
-  ]);
-
-  const owner = {
-    all: vi.fn(async () => [[1]]),
-    get: vi.fn(async () => [2]),
-    run: vi.fn(async () => "ran"),
-  };
-  for (const [request] of send.mock.calls) {
-    await executeSqliteProxyRequest(owner as never, request as never);
-  }
-  expect(owner.all).toHaveBeenCalledWith("select 1", [1], "object");
-  expect(owner.get).toHaveBeenCalledWith("select 2", [2], undefined);
-  expect(owner.run).toHaveBeenCalledWith("delete", [3]);
 });
 
 test("Drizzle local-change store queries and deletes events and dirty records", async () => {
@@ -256,7 +228,7 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
       }),
     })),
   };
-  const store = createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords } });
+  const store = createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords }, initialize });
 
   await store.appendEvents([]);
   await store.deleteEvents([]);
@@ -300,6 +272,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
       }),
     },
     tables: { events, dirtyRecords },
+    initialize,
   });
   const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
   await duplicateStore.upsertDirtyRecord(record);
@@ -310,6 +283,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
   const unsupportedStore = createDrizzleLocalChangeStore({
     db: { insert: () => ({ values: () => ({}) }) },
     tables: { events, dirtyRecords },
+    initialize,
   });
   await expect(unsupportedStore.upsertDirtyRecord(record)).rejects.toThrow(
     "does not support dirty-record upserts",
@@ -329,8 +303,12 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
     updatedAt: integer("updated_at"),
   });
 
-  // @ts-expect-error event table omits persisted event columns
-  createDrizzleLocalChangeStore({ db, tables: { events: invalidEvents, dirtyRecords } });
+  createDrizzleLocalChangeStore({
+    db,
+    // @ts-expect-error event table omits persisted event columns
+    tables: { events: invalidEvents, dirtyRecords },
+    initialize,
+  });
 
   const textDataEvents = sqliteTable("text_data_events", {
     id: text("id").primaryKey(),
@@ -341,12 +319,16 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
     createdAt: integer("created_at"),
   });
   // @ts-expect-error arbitrary event payloads require a compatible JSON data column
-  createDrizzleLocalChangeStore({ db, tables: { events: textDataEvents, dirtyRecords } });
+  createDrizzleLocalChangeStore({
+    db,
+    tables: { events: textDataEvents, dirtyRecords },
+    initialize,
+  });
 });
 
 test("Drizzle adapter rejects missing rows, update keys, bad composite fields, and database errors", async () => {
   const { db } = makeDb([]);
-  const adapter = createDrizzleDBAdapter({ db, collections: [collection] } as never);
+  const adapter = adapterFor(db);
   await expect(adapter.get("todos" as never, 1 as never)).rejects.toThrow(
     'Row not found in "todos"',
   );
@@ -367,10 +349,7 @@ test("Drizzle adapter rejects missing rows, update keys, bad composite fields, a
     }),
   })) as never;
   await expect(
-    createDrizzleDBAdapter({ db: rejecting.db, collections: [collection] } as never).insert(
-      "todos" as never,
-      { id: 2 } as never,
-    ),
+    adapterFor(rejecting.db).insert("todos" as never, { id: 2 } as never),
   ).rejects.toThrow("write failed");
   await expect(adapter.get("other" as never, 1 as never)).rejects.toThrow(
     "Unknown collection: other",

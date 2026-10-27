@@ -1,6 +1,6 @@
 import { createLocalStorageCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import {
-  createTypeOrmStorage,
+  createTypeOrmDBAdapter,
   defineTypeormCollection,
 } from "@ez-kits/sync-client-typeorm-adapter";
 import "reflect-metadata";
@@ -32,11 +32,10 @@ const collection = defineTypeormCollection({
 
 const syncClient = createSyncClient({
   collections: [collection],
-  storage: createTypeOrmStorage({
-    // sql.js keeps a separate in-memory database per tab; TypeORM cannot proxy queries
-    // to another tab, so this demo runs as a single context.
-    coordinateTabs: false,
-    open: () => ({ database: dataSource }),
+  // sql.js keeps a separate in-memory database per tab; TypeORM cannot forward queries
+  // to another tab, so this demo runs as a single context.
+  dbAdapter: createTypeOrmDBAdapter({
+    db: dataSource,
     collections: [collection],
     schema,
     eventEntity: SyncEvent,

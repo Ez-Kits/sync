@@ -57,7 +57,8 @@ test("an owner crash keeps every acknowledged write", async ({ context }) => {
 
   // Kill the owner's renderer: no pagehide, no cleanup, the lock is simply freed.
   const session = await context.newCDPSession(owner);
-  await session.send("Page.crash").catch(() => undefined);
+  // The crashed target never answers, so do not wait for the command.
+  void session.send("Page.crash").catch(() => undefined);
 
   await expect(follower.getByTestId("storage-role")).toHaveText(OWNER);
   await expect(follower.getByText("acked before crash")).toBeVisible();

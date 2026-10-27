@@ -5,8 +5,7 @@ import type {
   ChangeBusSubscribeOptions,
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
-import type { CoordinatedStorage, StorageRole } from "../storage-coordination";
-import type { AtomicLocalChangeStore } from "../local-change-store";
+import type { DBRole } from "../db-storage";
 import type {
   CollectionConfigMap,
   CollectionNames,
@@ -20,11 +19,10 @@ export interface SyncClientConfig<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
-  Store extends AtomicLocalChangeStore,
 > {
   collections: C;
-  /** Built with `createCoordinatedStorage` (or an adapter helper such as `createDrizzleStorage`). */
-  storage: CoordinatedStorage<DB, Store>;
+  /** The adapter (and through it, the `DBStorage`) this client reads from and writes to. */
+  dbAdapter: DB;
   syncAdapter?: SyncAdapter<
     ChangeBusEventDataMapFromCollectionConfigMap<C>,
     CollectionNames<C>,
@@ -45,14 +43,15 @@ export interface SyncClient<
   collections: TCollectionRuntimeRecord<C>;
   subscribe: SubscribeFn<C>;
   liveQuery: LiveQueryFn<C, DB>;
+  /** Start syncing; on a follower, also asks the leader to sync. */
   startSync: () => void;
   stopSync: () => void;
   /** Stop sync, release the storage and browser listeners permanently. */
   dispose: () => Promise<void>;
-  /** Whether this context owns the storage (and is the only one that syncs). */
-  readonly storageRole: StorageRole;
-  /** Subscribe to storage role changes; the current role is emitted immediately. */
-  subscribeStorageRole: (listener: (role: StorageRole) => void) => () => void;
+  /** Whether this context leads the storage (and is the only one that syncs). */
+  readonly role: DBRole;
+  /** Subscribe to role changes; the current role is emitted immediately. */
+  subscribeRole: (listener: (role: DBRole) => void) => () => void;
   /** Subscribe to lifecycle notifications; the current status is emitted immediately. */
   subscribeStatus: (listener: (event: SyncStatusEvent) => void) => () => void;
   getCheckpoint: <N extends CollectionNames<C>>(collection: N) => Promise<TCheckpoint | undefined>;

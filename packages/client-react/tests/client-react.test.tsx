@@ -2,11 +2,25 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { createSyncClientReact } from "../src/index";
-import { createCoordinatedStorage } from "@ez-kits/sync-client-core";
+import { createLocalDBStorage } from "@ez-kits/sync-client-core";
 
 const todoCollection = { name: "todos", adapterConfig: {}, primaryField: "id" };
 function setup() {
   const db = {
+    dbStorage: createLocalDBStorage({
+      dialect: "sqlite",
+      open: () => ({ exec: async () => ({ rows: [] }), close: async () => {} }),
+    }),
+    localChangeStore: {
+      atomicLocalMutationCapability: "atomic" as const,
+      initialize: vi.fn(async () => {}),
+      appendEvents: vi.fn(async () => {}),
+      getPendingEvents: vi.fn(async () => []),
+      deleteEvents: vi.fn(async () => {}),
+      upsertDirtyRecord: vi.fn(async () => {}),
+      removeDirtyRecords: vi.fn(async () => {}),
+      getDirtyRecords: vi.fn(async () => []),
+    },
     queryBuilder: {},
     querySchema: { todos: {} },
     insert: vi.fn(async () => {}),
@@ -24,22 +38,7 @@ function setup() {
   };
   const client = createSyncClientReact({
     collections: [todoCollection],
-    storage: createCoordinatedStorage({
-      sharing: "shared",
-      coordinateTabs: false,
-      open: () => ({ database: db }),
-      createDBAdapter: (database) => database as never,
-      createLocalChangeStore: () => ({
-        atomicLocalMutationCapability: "atomic" as const,
-        supportsCrossContextLeases: false,
-        appendEvents: vi.fn(async () => {}),
-        getPendingEvents: vi.fn(async () => []),
-        deleteEvents: vi.fn(async () => {}),
-        upsertDirtyRecord: vi.fn(async () => {}),
-        removeDirtyRecords: vi.fn(async () => {}),
-        getDirtyRecords: vi.fn(async () => []),
-      }),
-    }),
+    dbAdapter: db,
     checkpointStorage: {
       getCheckpoint: vi.fn(async () => undefined),
       saveCheckpoint: vi.fn(async () => {}),

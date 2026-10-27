@@ -7,22 +7,30 @@ import {
   CollectionRuntime,
   type CollectionConfigMap,
   type CollectionNames,
+  type CollectionRuntimeStorage,
   type TCollectionRuntimeRecord,
 } from "../collection";
+import {
+  executeLocalMutation,
+  isLocalMutationCommitted,
+  type LocalMutation,
+  type MutationSink,
+} from "../collection/local-mutation";
 import type { BaseDBAdapter } from "../db-adapter";
-import type { AtomicLocalChangeStore } from "../local-change-store";
-import type { StorageRole } from "../storage-coordination";
-import { getStorageCoordinator } from "../storage-coordination/coordinated-storage";
-import type { StorageCoordinator, StorageView } from "../storage-coordination/coordinator";
+import { isRetriableError, type DBRole, type DBStorage } from "../db-storage";
 import { SyncHandler } from "../sync-handler";
-import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 import type { SyncStatusEvent } from "../sync-handler";
+import { SyncTabChannel } from "./tab-channel";
+import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 
 type NetworkHost = {
   navigator?: { onLine?: boolean };
   addEventListener?: (type: string, listener: () => void) => void;
   removeEventListener?: (type: string, listener: () => void) => void;
 };
+
+/** Attempts per local mutation when the leader changes mid-commit. */
+const MAX_COMMIT_ATTEMPTS = 3;
 
 function getNetworkHost(): NetworkHost {
   return globalThis as NetworkHost;
@@ -34,69 +42,106 @@ function isBrowserNetworkAvailable(): boolean {
   return networkNavigator.onLine !== false;
 }
 
+function assertDBAdapter(dbAdapter: BaseDBAdapter<any, any, any> | undefined): void {
+  if (
+    typeof dbAdapter?.commitLocalMutation !== "function" ||
+    typeof dbAdapter.dbStorage?.transaction !== "function" ||
+    dbAdapter.localChangeStore?.atomicLocalMutationCapability !== "atomic" ||
+    typeof dbAdapter.localChangeStore.initialize !== "function"
+  ) {
+    throw new Error(
+      "Sync clients require a database adapter with a DB storage and an atomic local-change store.",
+    );
+  }
+}
+
 export class SyncClientImpl<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
-  Store extends AtomicLocalChangeStore,
 > implements SyncClient<C, DB, TCheckpoint> {
   readonly collections: TCollectionRuntimeRecord<C>;
-  private readonly coordinator: StorageCoordinator<unknown, DB, Store>;
-  private view: StorageView<DB> | undefined;
+  private readonly dbAdapter: DB;
+  private readonly dbStorage: DBStorage;
+  private readonly tabs: SyncTabChannel;
+  private appliedRole: DBRole | undefined;
+  /** Storage ready and local-change store initialized; nothing touches the database before. */
+  private readonly initialized: Promise<void>;
+  private isInitialized = false;
   private syncHandler: SyncHandler<C, DB, TCheckpoint> | undefined;
   private wantsSync = false;
   private networkCleanup: (() => void) | undefined;
   private status: SyncStatusEvent = { status: "stopped", changedAt: Date.now() };
   private statusListeners = new Set<(event: SyncStatusEvent) => void>();
-  private roleListeners = new Set<(role: StorageRole) => void>();
+  private roleListeners = new Set<(role: DBRole) => void>();
   private liveQueries = new Set<() => void>();
   private cleanups: Array<() => void> = [];
 
   constructor(
-    private config: SyncClientConfig<C, DB, TCheckpoint, Store>,
+    private config: SyncClientConfig<C, DB, TCheckpoint>,
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
-    this.coordinator = getStorageCoordinator(config.storage);
+    assertDBAdapter(config.dbAdapter);
+    this.dbAdapter = config.dbAdapter;
+    this.dbStorage = config.dbAdapter.dbStorage;
+    this.tabs = new SyncTabChannel(this.dbStorage.key);
 
+    const mutations: MutationSink = { commit: (mutation) => this.commitMutation(mutation) };
+    const storage: CollectionRuntimeStorage = {
+      resolve: async () => {
+        await this.initialized;
+        return { dbAdapter: this.dbAdapter, mutations };
+      },
+    };
     this.collections = Object.fromEntries(
-      config.collections.map((col) => [
-        col.name,
-        new CollectionRuntime(col, this.coordinator, this.changeBus),
-      ]),
+      config.collections.map((col) => [col.name, new CollectionRuntime(col, storage, changeBus)]),
     ) as unknown as TCollectionRuntimeRecord<C>;
 
     this.cleanups.push(
-      this.coordinator.subscribe({
-        view: (view) => this.applyView(view),
+      // Before initialization, the current role is applied once it completes.
+      this.dbStorage.onRoleChange((role) => {
+        if (this.isInitialized) this.applyRole(role);
+      }),
+      this.dbStorage.onInvalidate(() => {
+        this.tabs.reset();
+        this.rerunLiveQueries();
+        // A new leader does not know this context wants sync.
+        if (this.wantsSync && this.appliedRole === "follower") this.tabs.requestSync();
+      }),
+      this.dbStorage.onError((error) => this.setStatus("error", error)),
+      this.tabs.subscribe({
         changes: ({ events, source }) => {
           this.changeBus.publishRemoteBatch(events);
-          // Another context committed these to the outbox this owner pushes from.
+          // Another context committed these to the outbox the leader pushes from.
           if (source === "local") {
             this.syncHandler?.notifyOutboxChanged(
               events.map((event) => event.collection as CollectionNames<C>),
             );
           }
         },
-        invalidate: () => {
-          for (const rerun of this.liveQueries) rerun();
+        invalidate: () => this.rerunLiveQueries(),
+        syncRequest: () => {
+          if (this.appliedRole === "leader" && !this.wantsSync) this.startSync();
         },
-        error: (error) => this.setStatus("error", error),
       }),
-      this.changeBus.subscribe(
-        (events) => {
-          if (this.view?.commitsLocally) this.coordinator.broadcastChanges(events, "local");
-        },
-        { stream: "local" },
-      ),
+      this.changeBus.subscribe((events) => this.tabs.broadcastChanges(events, "local"), {
+        stream: "local",
+      }),
     );
-    void this.coordinator.resolve().then(
-      (view) => this.applyView(view),
+    this.initialized = this.dbStorage.ready.then(() =>
+      this.dbAdapter.localChangeStore.initialize(),
+    );
+    void this.initialized.then(
+      () => {
+        this.isInitialized = true;
+        this.applyRole(this.dbStorage.role);
+      },
       (error: unknown) => this.setStatus("error", error),
     );
   }
 
-  get storageRole(): StorageRole {
-    return this.coordinator.role;
+  get role(): DBRole {
+    return this.appliedRole ?? "follower";
   }
 
   subscribe: SubscribeFn<C> = (...args: unknown[]) => {
@@ -141,10 +186,9 @@ export class SyncClientImpl<
   liveQuery: LiveQueryFn<C, DB> = (options) => {
     const { collections, query, onData } = options;
 
-    // Resolve the adapter per run: a follower's proxy is replaced on promotion.
     const triggerQuery = async () => {
-      const { dbAdapter } = await this.coordinator.resolve();
-      const queryResult = await query(dbAdapter.queryBuilder, dbAdapter.querySchema);
+      await this.initialized;
+      const queryResult = await query(this.dbAdapter.queryBuilder, this.dbAdapter.querySchema);
       onData(queryResult);
     };
     const rerun = () => void triggerQuery();
@@ -172,6 +216,7 @@ export class SyncClientImpl<
   startSync = () => {
     this.wantsSync = true;
     this.attachNetworkListeners();
+    if (this.appliedRole === "follower") this.tabs.requestSync();
     if (isBrowserNetworkAvailable()) {
       this.setStatus("starting");
       this.reconcileSync();
@@ -191,10 +236,11 @@ export class SyncClientImpl<
     this.stopSync();
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
+    this.tabs.close();
     this.liveQueries.clear();
     this.statusListeners.clear();
     this.roleListeners.clear();
-    await this.coordinator.dispose();
+    await this.dbStorage.close();
   };
 
   subscribeStatus = (listener: (event: SyncStatusEvent) => void) => {
@@ -207,15 +253,41 @@ export class SyncClientImpl<
     return () => this.statusListeners.delete(listener);
   };
 
-  subscribeStorageRole = (listener: (role: StorageRole) => void) => {
+  subscribeRole = (listener: (role: DBRole) => void) => {
     this.roleListeners.add(listener);
     try {
-      listener(this.storageRole);
+      listener(this.role);
     } catch {
       // A role observer cannot interrupt subscription.
     }
     return () => this.roleListeners.delete(listener);
   };
+
+  /**
+   * Commit through the adapter. A leader change aborts the transaction; retry it on the
+   * next leader unless the first attempt already reached the database.
+   */
+  private async commitMutation(mutation: LocalMutation): Promise<void> {
+    const { localChangeStore } = this.dbAdapter;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        if (
+          attempt > 1 &&
+          (await isLocalMutationCommitted(this.dbAdapter, localChangeStore, mutation))
+        ) {
+          return;
+        }
+        await executeLocalMutation(this.dbAdapter, localChangeStore, mutation);
+        return;
+      } catch (error) {
+        if (!isRetriableError(error) || attempt >= MAX_COMMIT_ATTEMPTS) throw error;
+      }
+    }
+  }
+
+  private rerunLiveQueries(): void {
+    for (const rerun of this.liveQueries) rerun();
+  }
 
   private setStatus(status: SyncStatusEvent["status"], error?: unknown): void {
     this.status = { status, error, changedAt: Date.now() };
@@ -233,52 +305,45 @@ export class SyncClientImpl<
     }
   }
 
-  /** Track the storage view; only an owner view gets a sync handler. */
-  private applyView(view: StorageView<DB>): void {
-    if (this.view === view) return;
-    const previousView = this.view;
-    const previousRole = previousView?.role ?? "follower";
-    const adapterChanged = this.view?.dbAdapter !== view.dbAdapter;
-    this.view = view;
-
-    if (view.role !== "owner" || adapterChanged || !this.syncHandler) {
-      this.syncHandler?.stopAll();
-      this.syncHandler = view.role === "owner" ? this.createSyncHandler(view) : undefined;
-    }
-    // Queries already ran against the first view; rerun only when the adapter is replaced.
-    if (adapterChanged && previousView) {
-      for (const rerun of this.liveQueries) rerun();
-    }
-    if (previousRole !== view.role) {
+  /** Only the leader gets a sync handler. */
+  private applyRole(role: DBRole): void {
+    if (this.appliedRole === role) return;
+    const previousRole = this.role;
+    this.appliedRole = role;
+    this.syncHandler?.stopAll();
+    this.syncHandler = role === "leader" ? this.createSyncHandler() : undefined;
+    if (previousRole !== role) {
       for (const listener of this.roleListeners) {
         try {
-          listener(view.role);
+          listener(role);
         } catch {
           // One observer must not block delivery to other observers.
         }
       }
     }
+    if (this.wantsSync && role === "follower") this.tabs.requestSync();
     if (this.wantsSync && isBrowserNetworkAvailable()) this.reconcileSync();
   }
 
-  private createSyncHandler(view: StorageView<DB>): SyncHandler<C, DB, TCheckpoint> {
-    return new SyncHandler<C, DB, TCheckpoint>({
+  private createSyncHandler(): SyncHandler<C, DB, TCheckpoint> {
+    const handler: SyncHandler<C, DB, TCheckpoint> = new SyncHandler<C, DB, TCheckpoint>({
       collections: this.config.collections,
-      db: view.dbAdapter,
+      db: this.dbAdapter,
       changeBus: this.changeBus,
       checkpointStorage: this.config.checkpointStorage,
-      localChangeStore: view.localChangeStore!,
+      localChangeStore: this.dbAdapter.localChangeStore,
       syncAdapter: this.config.syncAdapter,
       onSyncError: (error) => this.setStatus("error", error),
       onSyncSuccess: () => this.setStatus("syncing"),
       conflictResolver: this.config.resolveConflict,
-      onRemoteChangesCommitted: (changes) => this.coordinator.broadcastChanges(changes, "pull"),
-      canCommit: () => this.coordinator.canCommit(view),
+      onRemoteChangesCommitted: (changes) => this.tabs.broadcastChanges(changes, "pull"),
+      canCommit: () => this.syncHandler === handler && this.dbStorage.role === "leader",
     });
+    return handler;
   }
 
   private reconcileSync(): void {
-    if (!this.view) return;
+    if (!this.appliedRole) return;
     if (!this.syncHandler) {
       this.setStatus("idle");
       return;
@@ -298,7 +363,7 @@ export class SyncClientImpl<
       this.setStatus("starting");
       this.reconcileSync();
     };
-    // Going offline pauses sync but keeps storage ownership.
+    // Going offline pauses sync but keeps leadership.
     const onOffline = () => {
       this.syncHandler?.stopAll();
       this.setStatus("offline");

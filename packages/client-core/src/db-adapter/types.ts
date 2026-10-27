@@ -7,6 +7,8 @@ import type {
   InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "../collection";
+import type { DBStorage } from "../db-storage";
+import type { AtomicLocalChangeStore } from "../local-change-store";
 
 /**
  * CRUD operations available both on the adapter and inside {@link BaseDBAdapter.transaction}.
@@ -50,8 +52,12 @@ export interface BaseDBAdapter<
 > extends DBAdapterOperations<C> {
   queryBuilder: TQueryBuilder;
   querySchema: TQuerySchema;
+  /** The storage every statement of this adapter runs on. */
+  readonly dbStorage: DBStorage;
+  /** Outbox and dirty records, kept in the same storage so local mutations commit atomically. */
+  readonly localChangeStore: AtomicLocalChangeStore;
   /**
-   * Run adapter operations in a single database transaction.
+   * Run adapter operations in a single database transaction (`dbStorage.transaction`).
    * All writes succeed together or none are applied.
    */
   transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T>;

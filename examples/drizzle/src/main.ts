@@ -1,11 +1,12 @@
-import { createLocalStorageCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import {
-  createDrizzleStorage,
-  defineDrizzleCollection,
-} from "@ez-kits/sync-client-drizzle-adapter";
+  createLocalDBStorage,
+  createLocalStorageCheckpointStorage,
+  createSyncClient,
+} from "@ez-kits/sync-client-core";
+import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
+import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
 import { defineRelations } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import { drizzle } from "drizzle-orm/sqlite-proxy";
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 const users = sqliteTable(
   "users",
@@ -28,32 +29,10 @@ const usersPosts = sqliteTable("users_posts", {
   postId: integer().references(() => posts.id),
 });
 
-const syncEvents = sqliteTable("ez_sync_events", {
-  id: text().primaryKey(),
-  type: text().notNull(),
-  collection: text().notNull(),
-  data: text({ mode: "json" }),
-  recordId: text().notNull(),
-  createdAt: integer().notNull(),
-});
-
-const dirtyRecords = sqliteTable(
-  "ez_sync_dirty_records",
-  {
-    collection: text().notNull(),
-    recordId: text().notNull(),
-    state: text().notNull(),
-    updatedAt: integer().notNull(),
-  },
-  (table) => [uniqueIndex("ez_sync_dirty_record_key").on(table.collection, table.recordId)],
-);
-
 const schema = {
   users,
   posts,
   usersPosts,
-  syncEvents,
-  dirtyRecords,
 };
 
 const relations = defineRelations(schema, (relation) => {
@@ -73,16 +52,12 @@ const relations = defineRelations(schema, (relation) => {
   };
 });
 
-// This query-only proxy is a placeholder; replace it with durable transactional
-// storage before using local collection mutations.
-export const db = drizzle(
-  {
-    all: () => Promise.resolve([]),
-    get: () => Promise.resolve(undefined),
-    run: () => Promise.resolve(undefined),
-  },
-  { relations },
-);
+// This in-memory engine answers every query with no rows. It is a placeholder: use a real
+// storage such as `createSqlJsStorage` before relying on local collection mutations.
+const dbStorage = createLocalDBStorage({
+  dialect: "sqlite",
+  open: () => ({ exec: async () => ({ rows: [] }), close: async () => {} }),
+});
 
 const collection = defineDrizzleCollection({
   name: "users",
@@ -102,19 +77,15 @@ const collection = defineDrizzleCollection({
   },
 });
 
-// The no-op proxy below is a placeholder, so this demo runs as a single context.
-const storage = createDrizzleStorage({
-  sharing: "shared",
-  coordinateTabs: false,
-  open: () => ({ database: db }),
+const dbAdapter = createDrizzleSqliteDBAdapter({
+  dbStorage,
   collections: [collection],
-  schema,
-  localChangeTables: { events: syncEvents, dirtyRecords },
+  relations,
 });
 
 const syncClient = createSyncClient({
   collections: [collection],
-  storage,
+  dbAdapter,
   checkpointStorage: createLocalStorageCheckpointStorage({
     key: "checkpoint",
     serializer: (checkpoint: string) => JSON.stringify(checkpoint),

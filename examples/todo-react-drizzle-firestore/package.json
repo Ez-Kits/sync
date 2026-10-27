@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
-    "build": "node scripts/copy-sqljs-assets.mjs && tsc && vp build",
+    "build": "tsc && vp build",
     "check": "vp check",
     "preview": "vp preview",
-    "postinstall": "node scripts/copy-sqljs-assets.mjs",
     "test": "vp test",
     "test:e2e": "playwright test"
   },
@@ -18,6 +17,7 @@
     "@ez-kits/sync-client-react": "workspace:*",
     "@ez-kits/sync-conflict-resolution": "workspace:*",
     "@ez-kits/sync-firebase": "workspace:*",
+    "@ez-kits/sync-storage-sqljs": "workspace:*",
     "@faker-js/faker": "^10.5.0",
     "drizzle-orm": "catalog:",
     "firebase": "catalog:",

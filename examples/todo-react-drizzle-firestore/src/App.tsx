@@ -1,4 +1,4 @@
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import { todos, type Todo } from "./db/schema.ts";
 import { isFirebaseConfigured } from "./firebase.ts";
@@ -16,7 +16,7 @@ function TodoApp() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<TodoFilter>("all");
   const [syncEnabled, setSyncEnabled] = useState(false);
-  const [storageRole, setStorageRole] = useState(client.storageRole);
+  const [role, setRole] = useState(client.role);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
@@ -25,17 +25,15 @@ function TodoApp() {
     collections: TODO_COLLECTIONS,
     query: useCallback(
       (queryDb) =>
-        queryDb
-          .select()
-          .from(todos)
-          .where(
-            and(
-              filter === "all" ? undefined : eq(todos.completed, filter === "completed"),
-              search.trim() ? like(todos.title, `%${search.trim()}%`) : undefined,
-            ),
-          )
-          .orderBy(desc(todos.updatedAt), desc(todos.id))
-          .limit(VISIBLE_TODO_LIMIT),
+        queryDb.query.todos.findMany({
+          // Relational filters reject `undefined`: leave unused fields out instead.
+          where: {
+            ...(filter === "all" ? {} : { completed: filter === "completed" }),
+            ...(search.trim() ? { title: { like: `%${search.trim()}%` } } : {}),
+          },
+          orderBy: { updatedAt: "desc", id: "desc" },
+          limit: VISIBLE_TODO_LIMIT,
+        }),
       [filter, search],
     ),
   });
@@ -69,7 +67,7 @@ function TodoApp() {
   });
   const todoCount = countRows ? Number(countRows[0]?.count ?? 0) : null;
 
-  useEffect(() => client.subscribeStorageRole(setStorageRole), [client]);
+  useEffect(() => client.subscribeRole(setRole), [client]);
 
   const addTodo = useCallback(
     async (event: SyntheticEvent) => {
@@ -121,7 +119,7 @@ function TodoApp() {
               : "Offline — sync paused until you're back online"}
         </p>
         <p className="lede" data-testid="storage-role">
-          {storageRole === "owner"
+          {role === "leader"
             ? "This tab holds the local database"
             : "Using the local database held by another tab"}
         </p>

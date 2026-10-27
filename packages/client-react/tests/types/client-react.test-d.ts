@@ -1,6 +1,4 @@
 import type {
-  AtomicLocalChangeStore,
-  CoordinatedStorage,
   BaseDBAdapter,
   CollectionConfig,
   ICheckpointStorage,
@@ -27,10 +25,10 @@ interface QueryBuilder {
 type DB = BaseDBAdapter<Collections, QueryBuilder, { todos: "todos-table"; tags: "tags-table" }>;
 
 declare const collections: Collections;
-declare const storage: CoordinatedStorage<DB, AtomicLocalChangeStore>;
+declare const dbAdapter: DB;
 declare const checkpointStorage: ICheckpointStorage<"todos" | "tags", Checkpoint>;
 
-const react = createSyncClientReact({ collections, storage, checkpointStorage });
+const react = createSyncClientReact({ collections, dbAdapter, checkpointStorage });
 
 test("createSyncClientReact keeps the client fully typed", () => {
   expectTypeOf(react).not.toBeAny();
@@ -66,8 +64,8 @@ test("useLiveQuery infers the query result and adapter types", () => {
 test("options are validated like createSyncClient", () => {
   createSyncClientReact({
     collections,
-    // @ts-expect-error storage must be a branded atomic pair
-    storage: { dbAdapter: storage.dbAdapter, localChangeStore: storage.localChangeStore },
+    // @ts-expect-error the adapter must implement the DB adapter contract
+    dbAdapter: { queryBuilder: dbAdapter.queryBuilder },
     checkpointStorage,
   });
 });

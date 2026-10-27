@@ -3,7 +3,15 @@ import type {
   CollectionConfigMap,
   CollectionNames,
 } from "@ez-kits/sync-client-core";
-import type { Table, InferInsertModel, InferSelectModel, Column } from "drizzle-orm";
+import type {
+  Assume,
+  Column,
+  ExtractTablesWithRelations,
+  InferInsertModel,
+  InferSelectModel,
+  Schema,
+  Table,
+} from "drizzle-orm";
 
 export type InferPrimaryField<TColumns extends Record<string, any>> = {
   [K in keyof TColumns]: TColumns[K] extends infer TColumn extends Column
@@ -41,3 +49,7 @@ export type BuildSchemaFromCollections<C extends CollectionConfigMap> = {
     ? T
     : never;
 };
+
+/** What `defineRelations(buildSchemaFromCollections(collections))` returns. */
+export type BuildRelationsFromCollections<C extends CollectionConfigMap> =
+  ExtractTablesWithRelations<{}, Assume<BuildSchemaFromCollections<C>, Schema>>;

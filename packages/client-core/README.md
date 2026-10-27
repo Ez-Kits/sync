@@ -4,34 +4,27 @@ Provider-neutral client sync primitives for local-first applications. Core defin
 
 ## Client lifecycle
 
-Create a client with collections, a database adapter, checkpoint storage, and an optional provider sync adapter. Call `startSync()` after app initialization and `stopSync()` when the client is no longer active. Network events pause and resume browser sync automatically. Subscribe to status with `subscribeStatus()` or pass `onSyncStatus` to receive `starting`, `syncing`, `idle`, `offline`, `stopped`, and `error` updates.
+Create a client with collections, a DB adapter, checkpoint storage, and an optional provider sync adapter. Call `startSync()` after app initialization and `stopSync()` when the client is no longer active. Network events pause and resume browser sync automatically. Subscribe to status with `subscribeStatus()` or pass `onSyncStatus` to receive `starting`, `syncing`, `idle`, `offline`, `stopped`, and `error` updates.
 
 Implement a `SyncAdapter` with provider `pull` and `push` methods. `pull` and `push` may return promises; push should resolve only after the provider has durably accepted the supplied events and invoke `commitChanges` only after success. Core serializes push batches and retries failures with bounded exponential delays. Failed events are not acknowledged and remain in the outbox for a later sync start or subsequent push.
 
-## Persistence guarantees
+## Storage layers
 
-Every local collection mutation is crash-safe: the collection row, outbox event, and dirty-record state commit together or none are persisted. A `SyncClient` therefore requires storage built by `createCoordinatedStorage` (or an adapter helper such as `createDrizzleStorage`), which builds the database adapter and outbox store from one database handle. Plain objects are rejected at runtime and at the type level.
-
-```ts
-const storage = createCoordinatedStorage({
-  coordinationKey: "todos",
-  open: async () => {
-    const engine = await startEngine(); // runs only in the context that owns the database
-    return {
-      database: engine.db,
-      execute: (request) => engine.run(request),
-      close: () => engine.stop(),
-    };
-  },
-  connect: (send) => createRemoteDatabase(send), // other tabs: forward I/O to the owner
-  createDBAdapter: (db) => createDatabaseAdapter(db),
-  createLocalChangeStore: (db) => createOutboxStore(db),
-});
-
-const client = createSyncClient({ collections, storage, checkpointStorage });
+```
+sync client ──> DB adapter (ORM bridge) ──> DBStorage (contract) ──> engine (the real database)
 ```
 
-The database adapter's required `commitLocalMutation` method must run the row mutation and both local-change writes in the same durable transaction. It passes its native transaction context to the store write methods, and the change bus is notified only after commit. Unsupported or incompatible storage rejects; there is no default outbox or best-effort mutation path. Core exports the local-change-store types only; database integrations provide the storage implementation.
+- A **`DBStorage`** wraps one database engine: `exec(query)`, `transaction(fn)`, its `dialect` (`sqlite` or `postgres`), and its `role`. Engine packages implement it: `@ez-kits/sync-storage-sqljs`, `@ez-kits/sync-storage-sqlite-wasm`, and `@ez-kits/sync-storage-pglite`.
+- A **DB adapter** turns the storage into a driver for its ORM (for example `createDrizzleSqliteDBAdapter({ dbStorage, collections })` from `@ez-kits/sync-client-drizzle-adapter/sqlite`). It implements collection CRUD, keeps the outbox (`localChangeStore`) in the same database, and runs its transactions on `dbStorage.transaction`.
+- The **sync client** takes the adapter: `createSyncClient({ collections, dbAdapter, checkpointStorage })`.
+
+`createLocalDBStorage({ dialect, open })` runs an engine in this context, which always leads. Use it for Node, tests, single-context apps, and engines that are already shared across tabs.
+
+## Persistence guarantees
+
+Every local collection mutation is crash-safe: the collection row, outbox event, and dirty-record state commit together or none are persisted. The adapter's required `commitLocalMutation` runs the row mutation and both local-change writes in one storage transaction. It passes the transaction handle to the store write methods, and the change bus is notified only after commit. Adapters without a DB storage or an atomic local-change store are rejected; there is no default outbox or best-effort mutation path.
+
+The local-change store owns its schema. Every store implements `initialize()`, which creates the outbox and dirty-record storage when it is missing and must be idempotent. The sync client calls it once the DB storage is ready, in every context, and waits for it before any collection read or write, live query, or sync. A failure rejects those operations and reports a sync `error` status. Applications never create these tables in their own migrations.
 
 Adapters should implement `getOptional` to distinguish an absent record from a database failure. When it is unavailable, core treats an explicit `undefined` from `get` as absence and propagates rejected reads; it never infers absence from an arbitrary database error. `get` remains available when callers require the row to exist.
 
@@ -41,13 +34,14 @@ Pass `resolveConflict` to inspect an incoming remote event when the same record 
 
 ## Multiple tabs
 
-Storage, not only sync, is coordinated across tabs. One Web Lock (`ez-sync:<coordinationKey>`) elects the storage owner, and the owner is the only context that syncs. Going offline or calling `stopSync()` pauses sync but keeps ownership; `dispose()` releases it.
+`createWorkerDBStorage({ dialect, key, worker, engineOptions })` (wrapped by each engine package) gives every tab its own dedicated worker. The worker module calls `startDBStorageWorker(open)`.
 
-- `sharing: "exclusive"` (default) is for databases that live in one context at a time: in-memory, WASM, or per-tab workers. Only the owner calls `open`. Other tabs build their adapter from `connect(send)`, so `liveQuery` keeps its typed query builder, but every statement runs in the owner through its `execute`. Their collection writes are sent to the owner as serializable mutations and committed there atomically. Followers cannot open adapter transactions (`FollowerWriteError`), and writing through the query builder from a follower bypasses the outbox, so it is unsupported. When the owner closes or crashes, the next tab reopens the persisted database. Requests in flight are re-sent to it, and retried writes are applied at most once. Requests fail with `StorageOwnerUnavailableError` only when no owner answers. Exclusive storage requires Web Locks and `BroadcastChannel`; without them `ready` rejects with `CoordinationUnavailableError`.
-- `sharing: "shared"` is for engines that are already shared and transactional across contexts. Every tab calls `open`; only sync leadership is elected. Without Web Locks it falls back to the outbox lease when the store supports cross-context leases, and otherwise every tab syncs, so provider writes must be idempotent.
-- `coordinateTabs: false`, Node, and other non-browser runtimes use a single owning context with no cross-tab traffic.
+- **Election happens in the workers.** They compete for one Web Lock (`ez-sync:db:<key>:leader`). The leader's worker calls `open` and holds the real database. The other workers forward every statement and transaction to it over `BroadcastChannel`. Only the leader opens the engine, so engines that allow a single holder (sql.js snapshots, the OPFS SAH pool) never clobber each other.
+- **Transactions are forwarded.** A follower runs its adapter transaction itself. Each statement carries the transaction id, and the leader serves no other context until that transaction commits or rolls back. The leader rolls the transaction back when the follower's context dies (detected through a per-context Web Lock) or stays idle longer than `transactionTimeoutMs`. Statements sent outside a transaction by the context that owns it join it, as they would on one connection. Never send `BEGIN`/`COMMIT` yourself (`TransactionStatementError`); use the adapter's `transaction`.
+- **Handover.** When the leader closes, crashes, or its page enters the back/forward cache, the next worker reopens the persisted database. Reads in flight are re-sent to it. Writes and transactions in flight fail with the retriable `LeaderChangedError`, because the old leader may or may not have applied them. The sync client retries local mutations, and skips the retry when the first attempt already reached the database. Requests fail with `LeaderUnavailableError` only when no leader answers. Without Web Locks or `BroadcastChannel`, `ready` rejects with `CoordinationUnavailableError`.
+- **Sync follows the storage.** Only the tab whose worker leads runs sync. A follower's `startSync()` asks the leader to sync. Writes and pulled changes are announced once, by the context that committed them, so live queries in every tab refresh and the leader pushes followers' outbox events. Going offline or calling `stopSync()` pauses sync but keeps leadership; `dispose()` releases it.
 
-Writes and pulled changes are announced once, by the context that committed them, over `BroadcastChannel`. Receivers republish them as remote events and never re-broadcast, so live queries in every tab refresh. `client.storageRole` and `subscribeStorageRole()` report whether this tab owns the storage. Client-side coordination is not a substitute for server-side conflict detection.
+`client.role` and `subscribeRole()` report whether this tab leads (`"leader"` or `"follower"`). Client-side coordination is not a substitute for server-side conflict detection.
 
 Outbox stores return events in deterministic `createdAt`, then event-ID order. Keep event IDs stable and unique so same-time events have a consistent replay order.
 

@@ -6,17 +6,15 @@ import {
   type LocalMutation,
 } from "../src/collection/local-mutation";
 import { CollectionRuntime } from "../src/collection/runtime";
-import { createCoordinatedStorage } from "../src/storage-coordination";
-import { CoordinatedStorage } from "../src/storage-coordination/coordinated-storage";
+import { LeaderChangedError } from "../src/db-storage";
 import { SyncClientImpl } from "../src/sync-client/sync-client";
-import { AtomicLocalMutationStorage } from "../src/sync-client/storage-pair";
 import { createTestLocalChangeStore } from "./helpers/local-change-store";
 import {
   atomicMemoryStore,
   clientConfig,
   collection as config,
+  fakeDBStorage,
   makeDb,
-  standaloneStorage,
   tick,
 } from "./helpers/storage";
 
@@ -27,18 +25,6 @@ const runtimeStorage = (db: any, store: any) => ({
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
-
-test("atomic storage pairs reject creation without the storage factory token", () => {
-  expect(() =>
-    AtomicLocalMutationStorage.create(makeDb() as never, atomicMemoryStore(), Symbol() as never),
-  ).toThrow("Atomic storage pairs must be created by a storage factory");
-});
-
-test("coordinated storage rejects creation without the factory token", () => {
-  expect(() => CoordinatedStorage.create({} as never, Symbol() as never)).toThrow(
-    "Coordinated storage must be created by createCoordinatedStorage",
-  );
 });
 
 test("collection runtime persists outbox and dirty records before publishing, and delegates reads", async () => {
@@ -155,26 +141,35 @@ test("retried mutations are recognised by their outbox event or an existing crea
   expect(await isLocalMutationCommitted(throwingGet, store, create)).toBe(false);
 });
 
-test("sync clients reject storage not built by createCoordinatedStorage", () => {
-  const forged = { dbAdapter: makeDb(), localChangeStore: atomicMemoryStore() };
-  expect(() => new SyncClientImpl(clientConfig(forged), new ChangeBus<any>())).toThrow(
-    "Sync clients require storage created by createCoordinatedStorage",
-  );
-  expect(() => new SyncClientImpl(clientConfig(undefined), new ChangeBus<any>())).toThrow(
-    "createCoordinatedStorage",
-  );
+test("sync clients reject adapters without a DB storage or an atomic local-change store", () => {
+  const reject = (dbAdapter: unknown) =>
+    expect(() => new SyncClientImpl(clientConfig(dbAdapter), new ChangeBus<any>())).toThrow(
+      "Sync clients require a database adapter with a DB storage and an atomic local-change store",
+    );
+  reject(undefined);
+  reject({ ...makeDb(), commitLocalMutation: undefined });
+  reject({ ...makeDb(), dbStorage: {} });
+  reject(makeDb(undefined, createTestLocalChangeStore()));
+  reject(makeDb(undefined, { ...atomicMemoryStore(), initialize: undefined }));
 });
 
-test("storage rejects stores without an atomic mutation capability", async () => {
-  const storage = standaloneStorage(makeDb(), createTestLocalChangeStore());
-  const statuses: string[] = [];
+test("storage failures surface as sync errors", async () => {
+  const failure = new Error("open failed");
+  const ready = Promise.reject(failure);
+  ready.catch(() => undefined);
+  const dbStorage = fakeDBStorage({ ready });
+  const statuses: Array<{ status: string; error?: unknown }> = [];
   const client = new SyncClientImpl(
-    clientConfig(storage, { onSyncStatus: (e: any) => statuses.push(e.status) }),
+    clientConfig(makeDb(undefined, undefined, dbStorage), {
+      onSyncStatus: (e: any) => statuses.push(e),
+    }),
     new ChangeBus<any>(),
   );
-  await expect(storage.ready).rejects.toThrow("paired database adapter and local-change store");
   await tick();
-  expect(statuses).toContain("error");
+  expect(statuses.at(-1)?.error).toBe(failure);
+  const later = new Error("leader failed");
+  dbStorage.fail(later);
+  expect(statuses.at(-1)?.error).toBe(later);
   await client.dispose();
 });
 
@@ -182,7 +177,7 @@ test("sync client supports query subscriptions, checkpoint APIs, status listener
   const db = makeDb();
   const statuses: string[] = [];
   const client = new SyncClientImpl(
-    clientConfig(standaloneStorage(db), { onSyncStatus: (e: any) => statuses.push(e.status) }),
+    clientConfig(db, { onSyncStatus: (e: any) => statuses.push(e.status) }),
     new ChangeBus<any>() as never,
   );
   const statusEvents: string[] = [];
@@ -200,7 +195,7 @@ test("sync client supports query subscriptions, checkpoint APIs, status listener
   client.startSync();
   expect(statuses).toContain("syncing");
   expect(statusEvents[0]).toBe("stopped");
-  expect(client.storageRole).toBe("owner");
+  expect(client.role).toBe("leader");
   unsubscribe();
   unsubStatus();
   await client.dispose();
@@ -209,10 +204,7 @@ test("sync client supports query subscriptions, checkpoint APIs, status listener
 
 test("sync client handles offline state and subscribe overload validation", async () => {
   vi.stubGlobal("navigator", { onLine: false });
-  const client = new SyncClientImpl(
-    clientConfig(standaloneStorage()),
-    new ChangeBus<any>() as never,
-  );
+  const client = new SyncClientImpl(clientConfig(makeDb()), new ChangeBus<any>() as never);
   const statuses: string[] = [];
   client.subscribeStatus((e) => statuses.push(e.status));
   client.startSync();
@@ -221,19 +213,84 @@ test("sync client handles offline state and subscribe overload validation", asyn
   await client.dispose();
 });
 
-test("disposed storage rejects further use, and dispose is idempotent", async () => {
-  const close = vi.fn(async () => {});
-  const storage = createCoordinatedStorage({
-    sharing: "shared",
-    coordinateTabs: false,
-    open: () => ({ database: makeDb(), close }),
-    createDBAdapter: (database: any) => database,
-    createLocalChangeStore: () => atomicMemoryStore(),
-  });
-  await storage.ready;
-  const client = new SyncClientImpl(clientConfig(storage), new ChangeBus<any>());
+test("disposing the client closes its storage", async () => {
+  const db = makeDb();
+  const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());
   await client.dispose();
-  await storage.dispose();
-  expect(close).toHaveBeenCalledOnce();
-  await expect(client.collections.todos.getMany()).rejects.toThrow("disposed");
+  expect(db.dbStorage.close).toHaveBeenCalledOnce();
+});
+
+test("a commit cut short by a leader change is retried once, without duplicates", async () => {
+  const db = makeDb();
+  const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());
+  const commit = db.commitLocalMutation.getMockImplementation();
+
+  // Rolled back before reaching the database: retried.
+  db.commitLocalMutation.mockRejectedValueOnce(new LeaderChangedError());
+  await client.collections.todos.insert({ id: "1" } as never);
+  expect(db.rows.has("1")).toBe(true);
+  expect(db.commitLocalMutation).toHaveBeenCalledTimes(2);
+
+  // Committed, but the acknowledgement was lost: not applied twice.
+  db.commitLocalMutation.mockClear();
+  db.commitLocalMutation.mockImplementationOnce(async (options: any) => {
+    await commit(options);
+    throw new LeaderChangedError();
+  });
+  await client.collections.todos.update({ id: "1", title: "b" } as never);
+  await client.collections.todos.insert({ id: "2" } as never);
+  db.commitLocalMutation.mockClear();
+  db.commitLocalMutation.mockImplementationOnce(async (options: any) => {
+    await commit(options);
+    throw new LeaderChangedError();
+  });
+  await client.collections.todos.insert({ id: "3" } as never);
+  expect(db.commitLocalMutation).toHaveBeenCalledOnce();
+
+  // Other failures and repeated leader changes surface.
+  db.commitLocalMutation.mockRejectedValueOnce(new Error("constraint"));
+  await expect(client.collections.todos.insert({ id: "4" } as never)).rejects.toThrow("constraint");
+  db.commitLocalMutation.mockRejectedValue(new LeaderChangedError());
+  await expect(client.collections.todos.insert({ id: "5" } as never)).rejects.toBeInstanceOf(
+    LeaderChangedError,
+  );
+  await client.dispose();
+});
+
+test("the local-change store is initialized before anything touches the database", async () => {
+  let finish!: () => void;
+  const store = atomicMemoryStore();
+  store.initialize.mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+  const db = makeDb(undefined, store);
+  const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());
+  const onData = vi.fn();
+  client.liveQuery({ query: async () => "rows", onData } as never);
+  const insert = client.collections.todos.insert({ id: "1" } as never);
+  (db.dbStorage as any).setRole("follower");
+  await tick();
+  expect(store.initialize).toHaveBeenCalledOnce();
+  expect(db.commitLocalMutation).not.toHaveBeenCalled();
+  expect(onData).not.toHaveBeenCalled();
+  expect(client.role).toBe("follower");
+
+  finish();
+  await insert;
+  await tick();
+  expect(onData).toHaveBeenCalledWith("rows");
+  // The role at the end of initialization is applied.
+  expect(client.role).toBe("follower");
+  await client.dispose();
+});
+
+test("a failing local-change store initialization surfaces as a sync error", async () => {
+  const store = atomicMemoryStore();
+  store.initialize.mockRejectedValue(new Error("no tables"));
+  const statuses: Array<{ status: string; error?: unknown }> = [];
+  const client = new SyncClientImpl(
+    clientConfig(makeDb(undefined, store), { onSyncStatus: (e: any) => statuses.push(e) }),
+    new ChangeBus<any>(),
+  );
+  await expect(client.collections.todos.insert({ id: "1" } as never)).rejects.toThrow("no tables");
+  expect(statuses.at(-1)?.error).toEqual(new Error("no tables"));
+  await client.dispose();
 });
