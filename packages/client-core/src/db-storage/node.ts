@@ -334,7 +334,7 @@ export class DBStorageNode {
       if (epoch !== leadership.epoch) throw new LeaderChangedError();
       localId = id;
     }
-    if (body.t === "exec") return scheduler.exec(body.query, localId, from);
+    if (body.t === "exec") return scheduler.exec(body.query, localId);
     try {
       if (body.t === "commit") await scheduler.commit(localId!);
       else await scheduler.rollback(localId!);

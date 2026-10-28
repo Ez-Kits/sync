@@ -12,7 +12,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     get: vi.fn(async (): Promise<{ id: number } | undefined> => ({ id: 1 })),
     getOptional: vi.fn(async (): Promise<{ id: number } | undefined> => ({ id: 1 })),
     getMany: vi.fn(async () => []),
-    transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
+    transaction: vi.fn(async (fn: (tx: any, context: any) => Promise<unknown>) =>
+      fn(db, { operations: db, native: undefined }),
+    ),
   };
   const checkpointStorage = {
     getCheckpoint: vi.fn(async (_name: string): Promise<unknown> => undefined),
@@ -31,8 +33,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
     apply(event: any, target?: any) {
       return this.applyAnyCollectionEvent(event, target);
     }
-    resolve(event: any) {
-      return this.resolveRemoteEvent(event);
+    resolve(event: any, native?: unknown) {
+      return this.resolveRemoteEvent(event, { operations: this.config.db, native });
     }
     collect(name = "todos") {
       return this.collectPendingPushEvents(name);

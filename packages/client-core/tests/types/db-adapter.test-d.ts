@@ -1,5 +1,9 @@
 import { expectTypeOf, test } from "vite-plus/test";
-import type { DBAdapterOperations, LocalMutationTransactionContext } from "../../src";
+import type {
+  DBAdapterOperations,
+  DBAdapterTransactionContext,
+  LocalMutationTransactionContext,
+} from "../../src";
 import { db, type Collections, type DB, type TodoSelect, type UserSelect } from "./fixtures";
 
 test("adapter reads return the collection select model", () => {
@@ -33,6 +37,24 @@ test("transactions keep typed operations and results", () => {
   expectTypeOf<LocalMutationTransactionContext<Collections>["operations"]>().toEqualTypeOf<
     DBAdapterOperations<Collections>
   >();
+});
+
+test("transactions hand out the same context as local mutations", () => {
+  expectTypeOf<DB["transaction"]>()
+    .parameter(0)
+    .parameter(1)
+    .toEqualTypeOf<DBAdapterTransactionContext<Collections>>();
+  expectTypeOf<LocalMutationTransactionContext<Collections>>().toEqualTypeOf<
+    DBAdapterTransactionContext<Collections>
+  >();
+  expectTypeOf<DBAdapterTransactionContext<Collections>["native"]>().toBeUnknown();
+  // Callbacks that ignore the context still type-check.
+  expectTypeOf(
+    db.transaction(async (tx) => tx.get("todos", 1)),
+  ).resolves.toEqualTypeOf<TodoSelect>();
+  void db.transaction(async (_tx, { native }) => {
+    await db.localChangeStore.getPendingEvents({ collection: "todos", recordId: "1" }, native);
+  });
 });
 
 test("query builder and schema keep their concrete types", () => {

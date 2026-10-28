@@ -393,7 +393,7 @@ test("a leader's goodbye fails its pending writes and keeps reads for the next l
   await Promise.all([leader.node.close(), follower.node.close()]);
 });
 
-test("a follower's reads outside its transaction join it instead of deadlocking", async () => {
+test("a context's statements outside its transaction wait for it to end", async () => {
   const { locks } = installTabs();
   const disk = createDisk();
   const leader = startNode(locks, "a", { disk });
@@ -402,9 +402,13 @@ test("a follower's reads outside its transaction join it instead of deadlocking"
   await settle();
   const tx = await begin(follower.node);
   await exec(follower.node, "SET pending 1", tx);
-  expect((await exec(follower.node, "GET")).rows).toEqual([["pending", "1"]]);
-  const leaderRead = exec(leader.node, "GET");
-  await follower.node.request({ t: "commit", txId: tx });
-  expect((await leaderRead).rows).toEqual([["pending", "1"]]);
+  const followerRead = exec(follower.node, "GET");
+  const leaderWrite = exec(leader.node, "SET other 1");
+  await settle();
+  expect(disk.rows.has("other")).toBe(false);
+  await follower.node.request({ t: "rollback", txId: tx });
+  expect((await followerRead).rows).not.toContainEqual(["pending", "1"]);
+  await leaderWrite;
+  expect([...disk.rows.keys()]).toEqual(["other"]);
   await Promise.all([leader.node.close(), follower.node.close()]);
 });

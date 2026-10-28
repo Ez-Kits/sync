@@ -2,6 +2,7 @@ import { vi } from "vite-plus/test";
 import type {
   DirtyRecord,
   ILocalChangeStore,
+  LocalChangeScope,
   StoredChangeBusEvent,
 } from "../../src/local-change-store";
 
@@ -9,7 +10,14 @@ function dirtyKey(collection: string, recordId: string): string {
   return `${collection}\0${recordId}`;
 }
 
+function inScope(item: { collection: string; recordId: string }, scope?: LocalChangeScope) {
+  if (scope === undefined) return true;
+  if (typeof scope === "string") return item.collection === scope;
+  return item.collection === scope.collection && item.recordId === scope.recordId;
+}
+
 export function createTestLocalChangeStore(): ILocalChangeStore {
+  // Like the database's `seq`: events are read back in append order.
   const events = new Map<string, StoredChangeBusEvent>();
   const dirtyRecords = new Map<string, DirtyRecord>();
 
@@ -20,10 +28,8 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
         events.set(event.id, event);
       }
     },
-    async getPendingEvents(collection) {
-      const all = Array.from(events.values());
-      const filtered = collection ? all.filter((event) => event.collection === collection) : all;
-      return filtered.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    async getPendingEvents(scope) {
+      return Array.from(events.values()).filter((event) => inScope(event, scope));
     },
     async deleteEvents(ids) {
       for (const id of ids) {
@@ -38,9 +44,8 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
         dirtyRecords.delete(dirtyKey(key.collection, key.recordId));
       }
     },
-    async getDirtyRecords(collection) {
-      const all = Array.from(dirtyRecords.values());
-      return collection ? all.filter((record) => record.collection === collection) : all;
+    async getDirtyRecords(scope) {
+      return Array.from(dirtyRecords.values()).filter((record) => inScope(record, scope));
     },
   };
 }

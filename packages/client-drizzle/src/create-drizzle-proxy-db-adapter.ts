@@ -4,6 +4,7 @@ import type {
   CollectionNames,
   ConfigForName,
   DBAdapterOperations,
+  DBAdapterTransactionContext,
   DBDialect,
   DBExecutor,
   DBStorage,
@@ -220,8 +221,11 @@ export function createDrizzleProxyDBAdapter<
   const db = drizzleFor(dbStorage);
   const operationsFor = (queryDb: unknown) =>
     createOperations(queryDb as DrizzleQueryDb, schema, collections);
-  const inTransaction = <T>(fn: (txDb: unknown) => Promise<T>) =>
-    dbStorage.transaction((tx) => fn(drizzleFor(tx)));
+  const inTransaction = <T>(fn: (context: DBAdapterTransactionContext<C>) => Promise<T>) =>
+    dbStorage.transaction((tx) => {
+      const txDb = drizzleFor(tx);
+      return fn({ operations: operationsFor(txDb), native: txDb });
+    });
 
   return {
     db,
@@ -231,12 +235,13 @@ export function createDrizzleProxyDBAdapter<
     dbStorage,
     localChangeStore: driver.createLocalChangeStore(db, dbStorage),
     ...operationsFor(db),
-    transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
-      return inTransaction((txDb) => fn(operationsFor(txDb)));
+    transaction<T>(
+      fn: (tx: DBAdapterOperations<C>, context: DBAdapterTransactionContext<C>) => Promise<T>,
+    ): Promise<T> {
+      return inTransaction((context) => fn(context.operations, context));
     },
     commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
-      return inTransaction(async (txDb) => {
-        const context = { operations: operationsFor(txDb), native: txDb };
+      return inTransaction(async (context) => {
         await mutate(context);
         await persistOutboxEvent(context);
         await persistDirtyRecord(context);

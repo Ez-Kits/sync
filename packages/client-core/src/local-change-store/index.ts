@@ -4,5 +4,6 @@ export type {
   DirtyRecordState,
   AtomicLocalChangeStore,
   ILocalChangeStore,
+  LocalChangeScope,
   StoredChangeBusEvent,
 } from "./types";

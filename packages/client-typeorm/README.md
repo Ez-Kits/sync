@@ -51,7 +51,9 @@ The data source opens when the sync client initializes the local-change store, b
 
 ## Outbox entities
 
-The outbox and dirty records live in predefined entities, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeEntities` from `./sqlite`, `pgLocalChangeEntities` from `./pg`). The adapter registers them on its data source and creates their tables itself: its local-change store's `initialize()` builds them from the entity metadata, and the sync client calls it before anything touches the database. Declare and migrate only your own entities.
+The outbox and dirty records live in predefined entities, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeEntities` from `./sqlite`, `pgLocalChangeEntities` from `./pg`). Pending events are read in the order of `seq`, a generated primary key the database assigns on insert (`TypeOrmEventRow`), so they follow commit order; event `id`s stay unique. The adapter registers the entities on its data source and creates their tables itself: its local-change store's `initialize()` builds them from the entity metadata in one transaction and records the schema version in `ez_sync_meta`. Tables an older version created (without `seq`) are rebuilt in that transaction, numbering the pending events in their old `createdAt, id` order. The sync client calls it before anything touches the database. Declare and migrate only your own entities.
+
+`dbAdapter.transaction((tx, { native }) => ...)` passes the transaction's entity manager as `native`; give it to the local-change store to read or write the outbox in the same transaction.
 
 The row, outbox event, and dirty record of a local mutation commit together or are rolled back together.
 

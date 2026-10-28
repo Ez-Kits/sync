@@ -7,7 +7,9 @@ import { createFirestoreSyncAdapter } from "@ez-kits/sync-firebase/sync-firestor
 import { createRealtimeDBSyncAdapter } from "@ez-kits/sync-firebase/sync-realtime-db";
 ```
 
-Each provider config maps a local collection to a Firestore collection path or Realtime Database path. Configure stable ID resolution and serializers whenever remote document shapes differ from local rows. Pushes are acknowledged only after Firebase writes complete; retry safety depends on idempotent IDs and writes.
+Each provider config maps a local collection to a Firestore collection path or Realtime Database path. Configure stable ID resolution and serializers whenever remote document shapes differ from local rows. Pushes are acknowledged only after Firebase writes complete, and a push resolves only after core has removed the acknowledged events from the outbox (`await commitChanges(...)`), so the next push never re-reads them. Retry safety depends on idempotent IDs and writes.
+
+Stopping a pull removes its listeners: Realtime Database listeners are detached through the unsubscribe functions `onChildAdded`, `onChildChanged`, and `onChildRemoved` return, so a stopped or retried pull, or a tab that stopped leading, receives no further events.
 
 Pull listener failures are reported to the core client and the listener is retried with capped backoff. Checkpoints advance only after incoming changes are committed locally.
 

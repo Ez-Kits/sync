@@ -1,14 +1,11 @@
-import type {
-  CollectionConfigMap,
-  DirtyRecord,
-  StoredChangeBusEvent,
-} from "@ez-kits/sync-client-core";
+import type { CollectionConfigMap, DirtyRecord } from "@ez-kits/sync-client-core";
 import { DataSource, EntitySchema, type DataSourceOptions, type ValueTransformer } from "typeorm";
 import type { BuildSchemaFromCollections } from "../collection";
 import {
   createTypeOrmProxyDBAdapter,
   type TypeOrmProxyDBAdapterConfig,
 } from "../core/create-typeorm-proxy-db-adapter";
+import type { TypeOrmEventRow } from "../core/local-change-store";
 import type { TypeOrmDBAdapter } from "../types";
 import { createTypeOrmPgDriver } from "./storage-driver";
 
@@ -22,20 +19,26 @@ const bigintAsNumber: ValueTransformer = {
 
 /**
  * Outbox and dirty-record entities of Postgres storages. The adapter registers them and
- * creates their tables itself; applications never declare or migrate them.
+ * creates and upgrades their tables itself; applications never declare or migrate them.
+ * `seq` is assigned on insert, so pending events follow commit order.
  */
 export const pgLocalChangeEntities = {
-  events: new EntitySchema<StoredChangeBusEvent>({
+  events: new EntitySchema<TypeOrmEventRow>({
     name: "EzSyncEvent",
     tableName: "ez_sync_events",
     columns: {
-      id: { type: "text", primary: true },
+      seq: { type: "bigint", primary: true, generated: "increment", transformer: bigintAsNumber },
+      id: { type: "text", unique: true },
       type: { type: "text" },
       collection: { type: "text" },
       data: { type: "jsonb", nullable: true },
       recordId: { type: "text" },
       createdAt: { type: "bigint", transformer: bigintAsNumber },
     },
+    indices: [
+      { name: "ez_sync_events_collection_seq", columns: ["collection", "seq"] },
+      { name: "ez_sync_events_record", columns: ["collection", "recordId"] },
+    ],
   }),
   dirtyRecords: new EntitySchema<DirtyRecord>({
     name: "EzSyncDirtyRecord",

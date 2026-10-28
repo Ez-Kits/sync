@@ -55,7 +55,6 @@ export class CollectionSyncHandler<
         void this.flushPendingPushEvents(
           collectionName,
           syncAdapter,
-          (events) => this.commitPushChanges(collectionName, events),
           String(collectionName),
           pushController.signal,
         ).catch((error) => this.config.onSyncError?.(error));
@@ -155,12 +154,7 @@ export class CollectionSyncHandler<
       () =>
         this.collectPendingPushEvents(collectionName).then((events) => {
           if (events.length === 0) return;
-          return syncAdapter.push({
-            events,
-            commitChanges: ({ events: committedEvents }) => {
-              void this.commitPushChanges(collectionName, committedEvents);
-            },
-          });
+          return this.pushAndAcknowledge(syncAdapter, events);
         }),
       pushController.signal,
     );
@@ -177,10 +171,11 @@ export class CollectionSyncHandler<
       .then(async () => {
         if (!this.mayCommit()) return;
         if (changes.length > 0) {
-          await this.config.db.transaction(async (tx) => {
+          await this.config.db.transaction(async (tx, context) => {
             for (const event of changes) {
               const resolved = await this.resolveRemoteEvent(
                 event as ChangeBusEvent<SyncHandlerDataMap<C>>,
+                context,
               );
               if (!resolved) continue;
               await this.applyEvent(collectionName, resolved as never, tx);
@@ -200,12 +195,5 @@ export class CollectionSyncHandler<
     const safeNext = next.catch((error) => this.config.onSyncError?.(error));
     this.pullCommitQueues.set(collectionName, safeNext);
     return safeNext;
-  }
-
-  private async commitPushChanges<N extends CollectionNames<C>>(
-    _collectionName: N,
-    events: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
-  ): Promise<void> {
-    await this.ackPushedEvents(events);
   }
 }

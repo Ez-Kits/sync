@@ -8,7 +8,7 @@ const sdk = vi.hoisted(() => ({
   firestoreCommits: [] as Array<ReturnType<typeof vi.fn>>,
   rtdbCallbacks: {} as Record<string, Array<(snapshot: any) => void>>,
   rtdbCancelCallbacks: {} as Record<string, Array<(error: Error) => void>>,
-  rtdbOffs: [] as unknown[][],
+  rtdbUnsubscribes: {} as Record<string, Array<ReturnType<typeof vi.fn>>>,
   updates: [] as unknown[][],
   failCommit: false,
 }));
@@ -43,44 +43,31 @@ vi.mock("firebase/firestore", () => ({
   },
 }));
 
-vi.mock("firebase/database", () => ({
-  ref: (_db: unknown, path?: string) => ({ path: path ?? "" }),
-  query: (target: unknown, ...constraints: unknown[]) => ({ target, constraints }),
-  onChildAdded: (
-    target: unknown,
-    callback: (snapshot: any) => void,
-    onError: (error: Error) => void,
-  ) => {
-    (sdk.rtdbCallbacks.added ??= []).push(callback);
-    (sdk.rtdbCancelCallbacks.added ??= []).push(onError);
-    return callback;
-  },
-  onChildChanged: (
-    target: unknown,
-    callback: (snapshot: any) => void,
-    onError: (error: Error) => void,
-  ) => {
-    (sdk.rtdbCallbacks.changed ??= []).push(callback);
-    (sdk.rtdbCancelCallbacks.changed ??= []).push(onError);
-    return callback;
-  },
-  onChildRemoved: (
-    target: unknown,
-    callback: (snapshot: any) => void,
-    onError: (error: Error) => void,
-  ) => {
-    (sdk.rtdbCallbacks.removed ??= []).push(callback);
-    (sdk.rtdbCancelCallbacks.removed ??= []).push(onError);
-    return callback;
-  },
-  off: (...args: unknown[]) => {
-    sdk.rtdbOffs.push(args);
-  },
-  update: async (...args: unknown[]) => {
-    sdk.updates.push(args);
-    if (sdk.failCommit) throw new Error("update failed");
-  },
-}));
+vi.mock("firebase/database", () => {
+  // Like the modular SDK: each listener returns its own unsubscribe function.
+  const listen =
+    (kind: string) =>
+    (_target: unknown, callback: (snapshot: any) => void, onError: (error: Error) => void) => {
+      (sdk.rtdbCallbacks[kind] ??= []).push(callback);
+      (sdk.rtdbCancelCallbacks[kind] ??= []).push(onError);
+      const unsubscribe = vi.fn(() => {
+        sdk.rtdbCallbacks[kind] = sdk.rtdbCallbacks[kind]!.filter((cb) => cb !== callback);
+      });
+      (sdk.rtdbUnsubscribes[kind] ??= []).push(unsubscribe);
+      return unsubscribe;
+    };
+  return {
+    ref: (_db: unknown, path?: string) => ({ path: path ?? "" }),
+    query: (target: unknown, ...constraints: unknown[]) => ({ target, constraints }),
+    onChildAdded: listen("added"),
+    onChildChanged: listen("changed"),
+    onChildRemoved: listen("removed"),
+    update: async (...args: unknown[]) => {
+      sdk.updates.push(args);
+      if (sdk.failCommit) throw new Error("update failed");
+    },
+  };
+});
 
 import { createFirestoreCollectionSyncAdapter, createFirestoreSyncAdapter } from "../src/firestore";
 import { defineFirestoreCollectionSyncAdapterConfig } from "../src/firestore/define-collection-sync-adapter-config";
@@ -107,7 +94,7 @@ beforeEach(() => {
   sdk.firestoreCommits.length = 0;
   sdk.rtdbCallbacks = {};
   sdk.rtdbCancelCallbacks = {};
-  sdk.rtdbOffs.length = 0;
+  sdk.rtdbUnsubscribes = {};
   sdk.updates.length = 0;
   sdk.failCommit = false;
 });
@@ -415,7 +402,15 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
   ]);
   expect(commit.mock.calls[4]?.[0].checkpoint).toEqual({ todos: "old!!!!!" });
   cleanup();
-  expect(sdk.rtdbOffs).toHaveLength(3);
+  for (const kind of ["added", "changed", "removed"]) {
+    expect(sdk.rtdbUnsubscribes[kind]).toHaveLength(1);
+    expect(sdk.rtdbUnsubscribes[kind]![0]).toHaveBeenCalledOnce();
+  }
+  // Nothing is listening any more, so later SDK events never reach core.
+  for (const callbacks of Object.values(sdk.rtdbCallbacks)) {
+    for (const callback of callbacks) callback(docSnapshot("late", { id: "late" }));
+  }
+  expect(commit).toHaveBeenCalledTimes(5);
 });
 
 test("Realtime Database pull uses default listeners and custom mapping hooks", () => {
@@ -560,4 +555,42 @@ test("Firestore pull reads tombstone timestamps exposed through toMillis", () =>
     }),
   );
   cleanup();
+});
+
+test("Firebase pushes resolve only after core has acknowledged the pushed events", async () => {
+  const config = {
+    db: {} as never,
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    resolveDocumentId: (event: any) => String(event.data.id),
+    resolveRecordId: (event: any) => String(event.data.id),
+  };
+  for (const adapter of [
+    createFirestoreCollectionSyncAdapter(config as never),
+    createRealtimeDBCollectionSyncAdapter(config as never),
+  ]) {
+    let acknowledge!: () => void;
+    const commitChanges = vi.fn(() => new Promise<void>((resolve) => (acknowledge = resolve)));
+    let pushed = false;
+    const push = Promise.resolve(
+      adapter.push({
+        events: [{ type: "create", collection: "todos", data: { id: "a" } }],
+        commitChanges,
+      } as never),
+    ).then(() => (pushed = true));
+    await vi.waitFor(() => expect(commitChanges).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pushed).toBe(false);
+    acknowledge();
+    await push;
+
+    // A failed acknowledgement fails the push, so core retries it.
+    commitChanges.mockRejectedValueOnce(new Error("ack failed"));
+    await expect(
+      adapter.push({
+        events: [{ type: "create", collection: "todos", data: { id: "b" } }],
+        commitChanges,
+      } as never),
+    ).rejects.toThrow("ack failed");
+  }
 });

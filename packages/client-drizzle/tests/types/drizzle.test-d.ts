@@ -33,7 +33,8 @@ const users = sqliteTable("users", {
   email: text("email").notNull(),
 });
 const events = sqliteTable("outbox", {
-  id: text("id").primaryKey(),
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull().unique(),
   type: text("type"),
   collection: text("collection"),
   data: text("data", { mode: "json" }),
@@ -186,7 +187,8 @@ describe("drizzle adapter", () => {
     });
 
     const textDataEvents = sqliteTable("text_data_events", {
-      id: text("id").primaryKey(),
+      seq: integer("seq").primaryKey({ autoIncrement: true }),
+      id: text("id").notNull().unique(),
       type: text("type"),
       collection: text("collection"),
       data: text("data"),
@@ -197,6 +199,33 @@ describe("drizzle adapter", () => {
     createDrizzleLocalChangeStore({
       db,
       tables: { events: textDataEvents, dirtyRecords },
+      initialize,
+    });
+
+    const unordered = () => ({
+      id: text("id").notNull().unique(),
+      type: text("type"),
+      collection: text("collection"),
+      data: text("data", { mode: "json" }),
+      recordId: text("record_id"),
+      createdAt: integer("created_at"),
+    });
+    const unorderedEvents = sqliteTable("unordered_events", unordered());
+    createDrizzleLocalChangeStore({
+      db,
+      // @ts-expect-error pending events are ordered by a `seq` column
+      tables: { events: unorderedEvents, dirtyRecords },
+      initialize,
+    });
+
+    const callerSequencedEvents = sqliteTable("caller_sequenced_events", {
+      ...unordered(),
+      seq: integer("seq").notNull(),
+    });
+    // @ts-expect-error the database assigns `seq`; callers never supply it
+    createDrizzleLocalChangeStore({
+      db,
+      tables: { events: callerSequencedEvents, dirtyRecords },
       initialize,
     });
   });

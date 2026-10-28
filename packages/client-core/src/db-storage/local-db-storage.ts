@@ -46,8 +46,8 @@ export function createLocalDBStorage(options: LocalDBStorageOptions): DBStorage 
     onRoleChange: () => () => undefined,
     onInvalidate: () => () => undefined,
     onError: () => () => undefined,
-    // This context owns every transaction, so its other statements join an open one.
-    exec: (query: DBQuery): Promise<DBQueryResult> => use((s) => s.exec(query, undefined, OWNER)),
+    // Outside a transaction, a statement waits for the open one to end, even this context's.
+    exec: (query: DBQuery): Promise<DBQueryResult> => use((s) => s.exec(query)),
     transaction: <T>(fn: (tx: DBExecutor) => Promise<T>): Promise<T> =>
       use(async (s) => {
         const txId = await s.begin(OWNER);

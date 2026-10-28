@@ -183,15 +183,24 @@ test("engine failures while ending transactions are contained", async () => {
   expect(engine.close).toHaveBeenCalledOnce();
 });
 
-test("statements of the transaction owner join it instead of waiting for it", async () => {
+test("statements outside a transaction wait for it, even from its owner", async () => {
   const engine = memoryEngine();
   const scheduler = new TxScheduler(engine);
   const tx = await scheduler.begin("a");
-  await scheduler.exec(q("SET own 1"), undefined, "a");
-  const other = scheduler.exec(q("SET other 1"), undefined, "b");
-  expect((await scheduler.exec(q("GET", "all"), undefined, "a")).rows).toEqual([["own", "1"]]);
+  await scheduler.exec(q("SET uncommitted 1"), tx);
+  let readDone = false;
+  const read = scheduler.exec(q("GET", "all")).then((result) => {
+    readDone = true;
+    return result;
+  });
+  const write = scheduler.exec(q("SET outside 1"));
+  await Promise.resolve();
+  expect(readDone).toBe(false);
   await scheduler.rollback(tx);
-  await other;
-  // The owner's statement was part of the rolled-back transaction.
-  expect([...engine.disk.rows.keys()]).toEqual(["other"]);
+  // The read ran after the rollback, so it never saw the uncommitted row.
+  expect((await read).rows).toEqual([]);
+  await write;
+  // The write was not part of the rolled-back transaction.
+  expect([...engine.disk.rows.keys()]).toEqual(["outside"]);
+  expect(engine.log).toEqual(["BEGIN", "SET uncommitted 1", "ROLLBACK", "GET", "SET outside 1"]);
 });

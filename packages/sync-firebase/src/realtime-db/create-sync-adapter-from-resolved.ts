@@ -1,6 +1,5 @@
 import type { ChangeBusEvent, ChangeBusEventDataMap, SyncAdapter } from "@ez-kits/sync-client-core";
 import {
-  off,
   onChildAdded,
   onChildChanged,
   onChildRemoved,
@@ -95,7 +94,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
           return nextCheckpoint;
         };
 
-        const addedHandler = onChildAdded(
+        const unsubscribeAdded = onChildAdded(
           listenTarget,
           (snapshot) => {
             const raw = snapshot.val();
@@ -134,7 +133,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
           (error: Error) => pullOptions.onError?.(error),
         );
 
-        const changedHandler = onChildChanged(
+        const unsubscribeChanged = onChildChanged(
           listenTarget,
           (snapshot) => {
             const raw = snapshot.val();
@@ -173,7 +172,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
           (error: Error) => pullOptions.onError?.(error),
         );
 
-        const removedHandler = onChildRemoved(
+        const unsubscribeRemoved = onChildRemoved(
           listenTarget,
           (snapshot) => {
             const id = collectionConfig.deserializeDeleteId
@@ -197,11 +196,8 @@ export function createRealtimeDBSyncAdapterFromResolved<
           (error: Error) => pullOptions.onError?.(error),
         );
 
-        unsubscribeFns.push(
-          () => off(listenTarget, "child_added", addedHandler),
-          () => off(listenTarget, "child_changed", changedHandler),
-          () => off(listenTarget, "child_removed", removedHandler),
-        );
+        // The modular SDK returns an unsubscribe function, not the callback `off` matches.
+        unsubscribeFns.push(unsubscribeAdded, unsubscribeChanged, unsubscribeRemoved);
       }
 
       return () => {
@@ -255,7 +251,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
       if (Object.keys(updates).length > 0) {
         await update(ref(db), updates);
       }
-      if (handledEvents.length > 0) commitChanges({ events: handledEvents });
+      if (handledEvents.length > 0) await commitChanges({ events: handledEvents });
     },
   };
 }

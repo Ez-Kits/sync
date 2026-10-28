@@ -40,10 +40,21 @@ export interface DBAdapterOperations<C extends CollectionConfigMap> {
   ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>[]>;
 }
 
-export interface LocalMutationTransactionContext<C extends CollectionConfigMap> {
+/**
+ * One open adapter transaction. Everything that must see or join it goes through it: CRUD
+ * through `operations`, the local-change store by passing `native` as `transactionContext`.
+ * A statement sent any other way waits until the transaction ends, so awaiting one inside
+ * the transaction deadlocks until the transaction timeout.
+ */
+export interface DBAdapterTransactionContext<C extends CollectionConfigMap> {
   operations: DBAdapterOperations<C>;
+  /** The adapter's own transaction handle (a Drizzle transaction database, a TypeORM entity manager). */
   native: unknown;
 }
+
+/** The transaction context `commitLocalMutation` passes to its callbacks. */
+export type LocalMutationTransactionContext<C extends CollectionConfigMap> =
+  DBAdapterTransactionContext<C>;
 
 export interface BaseDBAdapter<
   C extends CollectionConfigMap,
@@ -58,9 +69,12 @@ export interface BaseDBAdapter<
   readonly localChangeStore: AtomicLocalChangeStore;
   /**
    * Run adapter operations in a single database transaction (`dbStorage.transaction`).
-   * All writes succeed together or none are applied.
+   * All writes succeed together or none are applied. `context.operations` is `tx`; pass
+   * `context.native` to the local-change store to read or write in the same transaction.
    */
-  transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T>;
+  transaction<T>(
+    fn: (tx: DBAdapterOperations<C>, context: DBAdapterTransactionContext<C>) => Promise<T>,
+  ): Promise<T>;
   /** Atomically commit the row mutation with outbox and dirty-record writes. */
   commitLocalMutation(options: {
     mutate: (context: LocalMutationTransactionContext<C>) => Promise<void>;

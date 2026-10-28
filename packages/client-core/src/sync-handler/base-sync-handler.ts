@@ -5,8 +5,12 @@ import type {
 } from "../change-bus";
 import type { ICheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
-import type { BaseDBAdapter, DBAdapterOperations } from "../db-adapter";
-import type { DirtyRecordState, ILocalChangeStore } from "../local-change-store";
+import type {
+  BaseDBAdapter,
+  DBAdapterOperations,
+  DBAdapterTransactionContext,
+} from "../db-adapter";
+import type { DirtyRecordKey, DirtyRecordState, ILocalChangeStore } from "../local-change-store";
 import type { ConflictResolution, SyncAdapter } from "./types";
 
 export type SyncHandlerDataMap<C extends CollectionConfigMap> =
@@ -165,9 +169,13 @@ export abstract class BaseSyncHandler<
     await this.applyEvent(event.collection as CollectionNames<C>, event as never, db);
   }
 
-  /** Apply the configured conflict hook only when this record has local pending writes. */
+  /**
+   * Apply the configured conflict hook only when this record has local pending writes.
+   * Called inside the pull transaction, so every read goes through `context`.
+   */
   protected async resolveRemoteEvent(
     event: ChangeBusEvent<SyncHandlerDataMap<C>>,
+    context: DBAdapterTransactionContext<C>,
   ): Promise<ChangeBusEvent<SyncHandlerDataMap<C>> | undefined> {
     const resolver = this.config.conflictResolver;
     if (!resolver) return event;
@@ -176,21 +184,20 @@ export abstract class BaseSyncHandler<
     const recordId = String(
       event.type === "delete" ? event.id : (event.data as Record<string, unknown>)[primaryField],
     );
-    const [dirty, pending] = await Promise.all([
-      this.config.localChangeStore.getDirtyRecords(String(collection)),
-      this.config.localChangeStore.getPendingEvents(String(collection)),
-    ]);
+    const key = { collection: String(collection), recordId };
+    const store = this.config.localChangeStore;
     if (
-      !dirty.some((record) => record.recordId === recordId) &&
-      !pending.some((record) => record.recordId === recordId)
+      (await store.getDirtyRecords(key, context.native)).length === 0 &&
+      (await store.getPendingEvents(key, context.native)).length === 0
     ) {
       return event;
     }
 
-    let local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined;
-    local = this.config.db.getOptional
-      ? await this.config.db.getOptional(collection, coerceRecordId(recordId) as never)
-      : await this.config.db.get(collection, coerceRecordId(recordId) as never);
+    const { operations } = context;
+    const local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined =
+      operations.getOptional
+        ? await operations.getOptional(collection, coerceRecordId(recordId) as never)
+        : await operations.get(collection, coerceRecordId(recordId) as never);
     const resolution = await resolver({ remote: event, local });
     if (resolution === "local") return undefined;
     if (resolution === "remote") return event;
@@ -244,10 +251,40 @@ export abstract class BaseSyncHandler<
     return batches.flat();
   }
 
+  /**
+   * Push `events` and acknowledge what the provider accepted. Resolves only once every
+   * acknowledgement started during the push has finished, awaited by the adapter or not, so
+   * the next push reads the outbox after it; a failed one rejects, to be retried.
+   */
+  protected async pushAndAcknowledge<N extends CollectionNames<C>>(
+    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    events: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
+  ): Promise<void> {
+    const acknowledgements: Promise<void>[] = [];
+    let pushError: { error: unknown } | undefined;
+    try {
+      await syncAdapter.push({
+        events,
+        commitChanges: ({ events: committedEvents }) => {
+          const acknowledgement = this.ackPushedEvents(committedEvents);
+          // Observed below, even when the adapter neither awaits it nor finishes pushing.
+          acknowledgement.catch(() => undefined);
+          acknowledgements.push(acknowledgement);
+          return acknowledgement;
+        },
+      });
+    } catch (error) {
+      pushError = { error };
+    }
+    const results = await Promise.allSettled(acknowledgements);
+    if (pushError) throw pushError.error;
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
+  }
+
   protected async flushPendingPushEvents<N extends CollectionNames<C>>(
     collectionName: N,
     syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
-    commitPushChanges: (events: ChangeBusEvent<SyncHandlerDataMap<C>, N>[]) => Promise<void>,
     queueKey = String(collectionName),
     signal?: AbortSignal,
   ): Promise<void> {
@@ -256,19 +293,15 @@ export abstract class BaseSyncHandler<
       async () => {
         const events = await this.collectPendingPushEvents(collectionName);
         if (events.length === 0) return;
-        await syncAdapter.push({
-          events,
-          commitChanges: ({ events: committedEvents }) => {
-            void commitPushChanges(committedEvents);
-          },
-        });
+        await this.pushAndAcknowledge(syncAdapter, events);
       },
       signal,
     );
   }
 
   /**
-   * After a successful push, remove acked events from the local store and refresh dirty tracking.
+   * After a successful push, remove acked events from the local store and refresh dirty
+   * tracking, in one transaction: a failure part way leaves the outbox as it was.
    */
   protected async ackPushedEvents(events: ChangeBusEvent<SyncHandlerDataMap<C>>[]): Promise<void> {
     if (!this.mayCommit()) return;
@@ -276,11 +309,7 @@ export abstract class BaseSyncHandler<
       .map((event) => event.eventId)
       .filter((eventId): eventId is string => typeof eventId === "string");
 
-    if (eventIds.length > 0) {
-      await this.config.localChangeStore.deleteEvents(eventIds);
-    }
-
-    const affectedKeys = new Map<string, { collection: string; recordId: string }>();
+    const affectedKeys = new Map<string, DirtyRecordKey>();
     for (const event of events) {
       const collection = String(event.collection);
       const recordId =
@@ -292,30 +321,28 @@ export abstract class BaseSyncHandler<
       affectedKeys.set(`${collection}\0${recordId}`, { collection, recordId });
     }
 
-    const keysToRemove: Array<{ collection: string; recordId: string }> = [];
-    for (const key of affectedKeys.values()) {
-      const remaining = (
-        await this.config.localChangeStore.getPendingEvents(key.collection)
-      ).filter((event) => event.recordId === key.recordId);
+    const store = this.config.localChangeStore;
+    await this.config.db.transaction(async (_tx, { native }) => {
+      if (eventIds.length > 0) await store.deleteEvents(eventIds, native);
 
-      if (remaining.length === 0) {
-        keysToRemove.push(key);
-        continue;
+      const keysToRemove: DirtyRecordKey[] = [];
+      for (const key of affectedKeys.values()) {
+        const remaining = await store.getPendingEvents(key, native);
+        if (remaining.length === 0) {
+          keysToRemove.push(key);
+          continue;
+        }
+
+        const latest = remaining[remaining.length - 1]!;
+        const state: DirtyRecordState = latest.type === "delete" ? "deleted" : "dirty";
+        await store.upsertDirtyRecord(
+          { collection: key.collection, recordId: key.recordId, state, updatedAt: Date.now() },
+          native,
+        );
       }
 
-      const latest = remaining[remaining.length - 1]!;
-      const state: DirtyRecordState = latest.type === "delete" ? "deleted" : "dirty";
-      await this.config.localChangeStore.upsertDirtyRecord({
-        collection: key.collection,
-        recordId: key.recordId,
-        state,
-        updatedAt: Date.now(),
-      });
-    }
-
-    if (keysToRemove.length > 0) {
-      await this.config.localChangeStore.removeDirtyRecords(keysToRemove);
-    }
+      if (keysToRemove.length > 0) await store.removeDirtyRecords(keysToRemove, native);
+    });
   }
 
   protected mayCommit(): boolean {

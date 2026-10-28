@@ -308,3 +308,38 @@ test("local storage leads in-process and runs transactions", async () => {
   await expect(broken.ready).rejects.toThrow("no wasm");
   await broken.close();
 });
+
+test("local storage: statements outside a transaction neither see nor join it", async () => {
+  const engine = memoryEngine();
+  const storage = createLocalDBStorage({ dialect: "sqlite", open: () => engine });
+  let releaseTx!: () => void;
+  const txOpen = new Promise<void>((resolve) => (releaseTx = resolve));
+  let readRows: unknown[] | undefined;
+  let read: Promise<unknown> | undefined;
+  const committed = storage.transaction(async (tx) => {
+    await tx.exec(q("SET uncommitted 1"));
+    // Same context, outside the transaction handle: waits for the commit.
+    read = storage.exec(q("GET", "all")).then((result) => (readRows = result.rows));
+    await txOpen;
+  });
+  await vi.waitFor(() => expect(read).toBeDefined());
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(readRows).toBeUndefined();
+  releaseTx();
+  await committed;
+  await read;
+  expect(readRows).toEqual([["uncommitted", "1"]]);
+
+  let write: Promise<unknown> | undefined;
+  await expect(
+    storage.transaction(async (tx) => {
+      await tx.exec(q("SET rolledBack 1"));
+      write = storage.exec(q("SET outside 1"));
+      throw new Error("abort");
+    }),
+  ).rejects.toThrow("abort");
+  await write;
+  // The write ran on its own after the rollback, so it survived it.
+  expect([...engine.disk.rows.keys()].sort()).toEqual(["outside", "uncommitted"]);
+  await storage.close();
+});

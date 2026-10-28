@@ -64,15 +64,16 @@ test("a sync client writes through the adapter, its outbox created by the adapte
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
       )
     ).map((row) => (row as { table_name: string }).table_name),
-  ).toEqual(["ez_sync_dirty_records", "ez_sync_events", "todos"]);
+  ).toEqual(["ez_sync_dirty_records", "ez_sync_events", "ez_sync_meta", "todos"]);
 
   // Outbox rows keep their JSON payload and numeric timestamps.
   const pending = await adapter.localChangeStore.getPendingEvents("todos");
-  expect(pending.map((event) => `${event.type}:${event.recordId}`).sort()).toEqual([
+  // Commit order, whatever the clock said.
+  expect(pending.map((event) => `${event.type}:${event.recordId}`)).toEqual([
     "create:a",
+    "update:a",
     "create:b",
     "delete:b",
-    "update:a",
   ]);
   const created = pending.find((event) => event.type === "create" && event.recordId === "a")!;
   expect(created.data).toEqual({ id: "a", title: "first" });

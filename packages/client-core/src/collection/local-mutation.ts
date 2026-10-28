@@ -93,7 +93,10 @@ export async function isLocalMutationCommitted(
   localChangeStore: ILocalChangeStore,
   mutation: LocalMutation,
 ): Promise<boolean> {
-  const pending = await localChangeStore.getPendingEvents(mutation.collection);
+  const pending = await localChangeStore.getPendingEvents({
+    collection: mutation.collection,
+    recordId: mutation.recordId,
+  });
   if (pending.some((event) => event.id === mutation.eventId)) return true;
   if (mutation.type !== "create") return false;
   const id = mutation.id as never;

@@ -3,6 +3,7 @@ import type {
   CollectionNames,
   ConfigForName,
   DBAdapterOperations,
+  DBAdapterTransactionContext,
   DBDialect,
   DBStorage,
   InferCollectionInsertModel,
@@ -199,8 +200,12 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
   // SQLite drivers share one query runner, so a second transaction would nest inside an
   // open one and outlive its commit: run them one at a time.
   let lastTransaction: Promise<unknown> = Promise.resolve();
-  const serialized = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = lastTransaction.then(fn);
+  const inTransaction = <T>(fn: (context: DBAdapterTransactionContext<C>) => Promise<T>) => {
+    const next = lastTransaction.then(() =>
+      dataSource.transaction((manager) =>
+        fn({ operations: createOperations(manager, schema, collections), native: manager }),
+      ),
+    );
     lastTransaction = next.catch(() => undefined);
     return next;
   };
@@ -213,23 +218,17 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
     dbStorage,
     localChangeStore: createTypeOrmLocalChangeStore(dataSource, driver.localChangeEntities),
     ...operations,
-    transaction<T>(fn: (tx: DBAdapterOperations<C>) => Promise<T>): Promise<T> {
-      return serialized(() =>
-        dataSource.transaction((manager) => fn(createOperations(manager, schema, collections))),
-      );
+    transaction<T>(
+      fn: (tx: DBAdapterOperations<C>, context: DBAdapterTransactionContext<C>) => Promise<T>,
+    ): Promise<T> {
+      return inTransaction((context) => fn(context.operations, context));
     },
     commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
-      return serialized(() =>
-        dataSource.transaction(async (manager) => {
-          const context = {
-            operations: createOperations(manager, schema, collections),
-            native: manager,
-          };
-          await mutate(context);
-          await persistOutboxEvent(context);
-          await persistDirtyRecord(context);
-        }),
-      );
+      return inTransaction(async (context) => {
+        await mutate(context);
+        await persistOutboxEvent(context);
+        await persistDirtyRecord(context);
+      });
     },
   };
 }

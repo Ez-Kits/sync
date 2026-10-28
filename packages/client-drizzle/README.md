@@ -52,13 +52,15 @@ createDrizzleSqliteDBAdapter({ dbStorage, collections, relations });
 
 ## Outbox tables
 
-The outbox and dirty records live in predefined tables, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeTables` from `./sqlite`, `pgLocalChangeTables` from `./pg`). The adapter creates them itself: its local-change store's `initialize()` runs `CREATE TABLE IF NOT EXISTS` through the storage, and the sync client calls it before anything touches the database. Keep only your own tables in your migrations.
+The outbox and dirty records live in predefined tables, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeTables` from `./sqlite`, `pgLocalChangeTables` from `./pg`). Pending events are read in the order of `seq`, a key the database assigns on insert (`INTEGER PRIMARY KEY AUTOINCREMENT` on SQLite, a `BIGINT` identity on Postgres), so they follow commit order; event `id`s stay unique. A custom events table for `createDrizzleLocalChangeStore` needs such a `seq` column too.
+
+The adapter creates the tables itself: its local-change store's `initialize()` creates them in one storage transaction and records the schema version in `ez_sync_meta`. Tables an older version created (without `seq`) are rebuilt in that transaction, numbering the pending events in their old `createdAt, id` order. The sync client calls it before anything touches the database. Keep only your own tables in your migrations.
 
 The row, outbox event, and dirty record of a local mutation commit together or are rolled back together.
 
 ## Transactions
 
-`dbAdapter.transaction`, local mutations, and pulled changes get a Drizzle database bound to one `dbStorage.transaction`, so a follower's transaction runs isolated on the leader. Do not call `queryBuilder.transaction()`: the proxy drivers would send a bare `BEGIN`, which the storage rejects.
+`dbAdapter.transaction`, local mutations, and pulled changes get a Drizzle database bound to one `dbStorage.transaction`, so a follower's transaction runs isolated on the leader. `dbAdapter.transaction((tx, { native }) => ...)` passes that database as `native`; give it to the local-change store to read or write the outbox in the same transaction. Queries through `queryBuilder` or the adapter itself wait until the transaction ends, so do not await them inside it. Do not call `queryBuilder.transaction()`: the proxy drivers would send a bare `BEGIN`, which the storage rejects.
 
 ## Development
 

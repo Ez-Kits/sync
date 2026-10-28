@@ -135,7 +135,8 @@ test("Drizzle commitLocalMutation uses transaction-bound operations", async () =
 
 test("Drizzle local-change writes use the transaction handle", async () => {
   const events = sqliteTable("outbox", {
-    id: text("id").primaryKey(),
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull().unique(),
     type: text("type"),
     collection: text("collection"),
     data: text("data", { mode: "json" }),
@@ -149,8 +150,12 @@ test("Drizzle local-change writes use the transaction handle", async () => {
     updatedAt: integer("updated_at"),
   });
   const rootInsert = vi.fn();
+  const inserted: unknown[] = [];
   const transactionInsert = vi.fn(() => ({
-    values: vi.fn(() => ({ onConflictDoUpdate: vi.fn() })),
+    values: vi.fn((values: unknown) => {
+      inserted.push(values);
+      return { onConflictDoUpdate: vi.fn() };
+    }),
   }));
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
@@ -158,19 +163,17 @@ test("Drizzle local-change writes use the transaction handle", async () => {
     initialize,
   });
   const nativeTransaction = { insert: transactionInsert };
-  await store.appendEvents(
-    [
-      {
-        id: "event",
-        type: "create",
-        collection: "todos",
-        data: null,
-        recordId: "1",
-        createdAt: 1,
-      },
-    ],
-    nativeTransaction,
-  );
+  const event = {
+    id: "event",
+    type: "create" as const,
+    collection: "todos",
+    data: null,
+    recordId: "1",
+    createdAt: 1,
+  };
+  // A `seq` read back with an event never reaches the insert: the database assigns it.
+  await store.appendEvents([{ ...event, seq: 7 } as typeof event], nativeTransaction);
+  expect(inserted[0]).toEqual([event]);
   await store.upsertDirtyRecord(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     nativeTransaction,
@@ -184,7 +187,8 @@ test("Drizzle local-change writes use the transaction handle", async () => {
 
 test("Drizzle local-change store queries and deletes events and dirty records", async () => {
   const events = sqliteTable("outbox_queries", {
-    id: text("id").primaryKey(),
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull().unique(),
     type: text("type"),
     collection: text("collection"),
     data: text("data", { mode: "json" }),
@@ -218,16 +222,25 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
     return query;
   };
   const deletes: unknown[][] = [];
-  const db = {
-    select: vi.fn(() => ({
-      from: (table: unknown) => queryFor(table === events ? eventRows : dirtyRows),
-    })),
+  const selections: unknown[] = [];
+  const databaseFor = (label: string) => ({
+    select: vi.fn((fields?: unknown) => {
+      selections.push(fields);
+      return {
+        from: (table: unknown) => {
+          queryCalls.push(["from", label]);
+          return queryFor(table === events ? eventRows : dirtyRows);
+        },
+      };
+    }),
     delete: vi.fn((table: unknown) => ({
       where: vi.fn(async (condition: unknown) => {
-        deletes.push([table, condition]);
+        deletes.push([label, table, condition]);
       }),
     })),
-  };
+  });
+  const db = databaseFor("root");
+  const tx = databaseFor("tx");
   const store = createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords }, initialize });
 
   await store.appendEvents([]);
@@ -240,18 +253,56 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   await expect(store.getDirtyRecords()).resolves.toEqual(dirtyRows);
   await store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
 
-  expect(queryCalls.map(([kind]) => kind)).toEqual(["where", "orderBy", "orderBy", "where"]);
-  expect(queryCalls.filter(([kind]) => kind === "orderBy").every((call) => call.length === 3)).toBe(
-    true,
-  );
+  expect(queryCalls.map(([kind]) => kind)).toEqual([
+    "from",
+    "where",
+    "orderBy",
+    "from",
+    "orderBy",
+    "from",
+    "where",
+    "from",
+  ]);
+  // Pending events sort by the database-assigned `seq` alone.
+  const seq = getColumns(events).seq;
+  for (const call of queryCalls.filter(([kind]) => kind === "orderBy")) {
+    expect(call).toHaveLength(2);
+    expect((call[1] as any).queryChunks).toContain(seq);
+  }
+  // `seq` only orders rows; it is never read back.
+  expect(Object.keys(selections[0] as object)).toEqual([
+    "id",
+    "type",
+    "collection",
+    "data",
+    "recordId",
+    "createdAt",
+  ]);
   expect(deletes).toHaveLength(2);
-  expect(deletes[0]?.[0]).toBe(events);
-  expect(deletes[1]?.[0]).toBe(dirtyRecords);
+  expect(deletes[0]?.slice(0, 2)).toEqual(["root", events]);
+  expect(deletes[1]?.slice(0, 2)).toEqual(["root", dirtyRecords]);
+
+  // Every method, reads included, runs on a transaction handle it is given.
+  queryCalls.length = 0;
+  deletes.length = 0;
+  const key = { collection: "todos", recordId: "1" };
+  await store.getPendingEvents(key, tx);
+  await store.getDirtyRecords(key, tx);
+  await store.deleteEvents(["event"], tx);
+  await store.removeDirtyRecords([key], tx);
+  expect(queryCalls.filter(([kind]) => kind === "from")).toEqual([
+    ["from", "tx"],
+    ["from", "tx"],
+  ]);
+  expect(deletes.map(([label]) => label)).toEqual(["tx", "tx"]);
+  expect(db.select).toHaveBeenCalledTimes(4);
+  expect(db.delete).toHaveBeenCalledTimes(2);
 });
 
 test("Drizzle local-change store supports MySQL upserts and reports unsupported dialects", async () => {
   const events = sqliteTable("outbox_upsert", {
-    id: text("id").primaryKey(),
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull().unique(),
     type: text("type"),
     collection: text("collection"),
     data: text("data", { mode: "json" }),
@@ -311,7 +362,8 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
   });
 
   const textDataEvents = sqliteTable("text_data_events", {
-    id: text("id").primaryKey(),
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull().unique(),
     type: text("type"),
     collection: text("collection"),
     data: text("data"),

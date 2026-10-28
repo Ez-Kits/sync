@@ -99,12 +99,7 @@ export class GlobalSyncHandler<
       () =>
         this.collectAllPendingPushEvents().then((events) => {
           if (events.length === 0) return;
-          return syncAdapter.push({
-            events,
-            commitChanges: ({ events: committedEvents }) => {
-              void this.commitPushChanges(committedEvents);
-            },
-          });
+          return this.pushAndAcknowledge(syncAdapter, events);
         }),
       pushController.signal,
     );
@@ -119,9 +114,9 @@ export class GlobalSyncHandler<
       .then(async () => {
         if (!this.mayCommit()) return;
         if (changes.length > 0) {
-          await this.config.db.transaction(async (tx) => {
+          await this.config.db.transaction(async (tx, context) => {
             for (const event of changes) {
-              const resolved = await this.resolveRemoteEvent(event);
+              const resolved = await this.resolveRemoteEvent(event, context);
               if (!resolved) continue;
               await this.applyAnyCollectionEvent(resolved, tx);
             }
@@ -135,9 +130,5 @@ export class GlobalSyncHandler<
       });
     this.pullCommitQueue = next.catch((error) => this.config.onSyncError?.(error));
     return this.pullCommitQueue;
-  }
-
-  private async commitPushChanges(events: ChangeBusEvent<SyncHandlerDataMap<C>>[]): Promise<void> {
-    await this.ackPushedEvents(events);
   }
 }

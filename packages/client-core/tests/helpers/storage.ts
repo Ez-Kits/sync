@@ -105,7 +105,9 @@ export function makeDb(
     }),
     get: vi.fn(async (_n: string, id: string) => rows.get(String(id))),
     getMany: vi.fn(async () => [...rows.values()]),
-    transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
+    transaction: vi.fn(async (fn: (tx: any, context: any) => Promise<unknown>) =>
+      fn(db, { operations: db, native: undefined }),
+    ),
   };
   db.commitLocalMutation = vi.fn(
     async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {

@@ -77,12 +77,12 @@ async function exerciseAdapter(
   expect(await client.collections.todos.getMany()).toHaveLength(1);
 
   const pending = await adapter.localChangeStore.getPendingEvents("todos");
-  // Events of the same millisecond have no defined order.
-  expect(pending.map((event: any) => `${event.type}:${event.recordId}`).sort()).toEqual([
+  // Commit order, whatever the clock said.
+  expect(pending.map((event: any) => `${event.type}:${event.recordId}`)).toEqual([
     "create:a",
+    "update:a",
     "create:b",
     "delete:b",
-    "update:a",
   ]);
   expect(
     pending.find((event: any) => event.type === "create" && event.recordId === "a").data,
@@ -119,12 +119,21 @@ async function exerciseAdapter(
     TransactionStatementError,
   );
 
-  // Reading through the adapter (not the transaction) joins the open transaction, as
-  // conflict resolution does while applying pulled changes.
-  await adapter.transaction(async (tx: any) => {
+  // Reading through the adapter (not the transaction) waits for the commit, so it never
+  // sees the transaction's uncommitted rows.
+  let outside: Promise<unknown> | undefined;
+  await adapter.transaction(async (tx: any, { native }: any) => {
     await tx.insert("todos", { id: "d", title: "inside" });
-    expect(await adapter.getOptional("todos", "d")).toMatchObject({ title: "inside" });
+    outside = adapter.getOptional("todos", "d");
+    // The local-change store joins the transaction through its native handle.
+    expect(
+      await adapter.localChangeStore.getPendingEvents(
+        { collection: "todos", recordId: "a" },
+        native,
+      ),
+    ).toHaveLength(2);
   });
+  expect(await outside).toMatchObject({ title: "inside" });
 
   await client.dispose();
 }
@@ -255,6 +264,24 @@ test("predefined dirty-record tables are unique per collection and record", () =
     expect(index?.config.columns.map((column: any) => column.name)).toEqual([
       "collection",
       "recordId",
+    ]);
+  }
+});
+
+test("predefined event tables index pending events by collection, then seq or record", () => {
+  for (const config of [
+    getSqliteTableConfig(sqliteLocalChangeTables.events),
+    getPgTableConfig(pgLocalChangeTables.events),
+  ]) {
+    expect(config.columns.find((column) => column.name === "seq")?.primary).toBe(true);
+    expect(
+      config.indexes.map((index) => [
+        index.config.name,
+        index.config.columns.map((column: any) => column.name),
+      ]),
+    ).toEqual([
+      ["ez_sync_events_collection_seq", ["collection", "seq"]],
+      ["ez_sync_events_record", ["collection", "recordId"]],
     ]);
   }
 });

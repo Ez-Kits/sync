@@ -45,6 +45,15 @@ test("push options carry typed events", () => {
   >();
 });
 
+test("push acknowledgements are awaitable", () => {
+  type Commit = PushOptions<DataMap, "todos">["commitChanges"];
+  expectTypeOf<Commit>().returns.toEqualTypeOf<Promise<void>>();
+  expectTypeOf<Commit>()
+    .parameter(0)
+    .toHaveProperty("events")
+    .toEqualTypeOf<ChangeBusEvent<DataMap, "todos">[]>();
+});
+
 test("conflict resolution receives the typed local record", () => {
   type Context = Parameters<ConflictResolution<DataMap, "todos">>[0];
   expectTypeOf<Context["local"]>().toEqualTypeOf<TodoSelect | undefined>();

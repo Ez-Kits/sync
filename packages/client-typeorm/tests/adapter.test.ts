@@ -148,45 +148,43 @@ test("TypeORM commitLocalMutation uses transaction-scoped repository operations"
 });
 
 test("TypeORM local-change writes use the transaction manager", async () => {
-  const rootSave = vi.fn();
+  const rootInsert = vi.fn();
   const rootUpsert = vi.fn();
-  const transactionSave = vi.fn();
+  const transactionInsert = vi.fn();
   const transactionUpsert = vi.fn();
   const db = {
     options: { type: "sqljs" },
     manager: {
-      getRepository: vi.fn(() => ({ save: rootSave, upsert: rootUpsert })),
+      getRepository: vi.fn(() => ({ insert: rootInsert, upsert: rootUpsert })),
     },
   };
   const transactionManager = {
-    getRepository: vi.fn(() => ({ save: transactionSave, upsert: transactionUpsert })),
+    getRepository: vi.fn(() => ({ insert: transactionInsert, upsert: transactionUpsert })),
   };
   const store = createTypeOrmLocalChangeStore(db as never, entities);
-  await store.appendEvents(
-    [
-      {
-        id: "event",
-        type: "create",
-        collection: "todos",
-        data: null,
-        recordId: "1",
-        createdAt: 1,
-      },
-    ],
-    transactionManager as never,
-  );
+  const event = {
+    id: "event",
+    type: "create" as const,
+    collection: "todos",
+    data: null,
+    recordId: "1",
+    createdAt: 1,
+  };
+  // A `seq` read back with an event never reaches the insert: the database assigns it.
+  await store.appendEvents([{ ...event, seq: 7 } as typeof event], transactionManager as never);
+  expect(transactionInsert).toHaveBeenCalledWith([event]);
   await store.upsertDirtyRecord(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     transactionManager as never,
   );
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
-  expect(transactionSave).toHaveBeenCalledOnce();
+  expect(transactionInsert).toHaveBeenCalledOnce();
   expect(transactionUpsert).toHaveBeenCalledWith(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     ["collection", "recordId"],
   );
-  expect(rootSave).not.toHaveBeenCalled();
+  expect(rootInsert).not.toHaveBeenCalled();
   expect(rootUpsert).not.toHaveBeenCalled();
 
   const adapter = adapterFor(db);
@@ -206,7 +204,7 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
   ];
   const dirtyRows = [{ collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 }];
   const eventRepository = {
-    save: vi.fn(),
+    insert: vi.fn(),
     delete: vi.fn(),
     find: vi.fn(async () => eventRows),
   };
@@ -215,11 +213,12 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
     delete: vi.fn(),
     find: vi.fn(async () => dirtyRows),
   };
-  const manager = {
+  const repositories = () => ({
     getRepository: vi.fn((entity: unknown) =>
       entity === OutboxEvent ? eventRepository : dirtyRepository,
     ),
-  };
+  });
+  const manager = repositories();
   const store = createTypeOrmLocalChangeStore({ manager } as never, entities);
 
   await store.appendEvents([]);
@@ -234,19 +233,36 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
   await expect(store.getDirtyRecords()).resolves.toEqual(dirtyRows);
   await store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
 
+  // Pending events sort by the database-assigned `seq`, which is never read back.
+  const select = ["id", "type", "collection", "data", "recordId", "createdAt"];
   expect(eventRepository.find).toHaveBeenNthCalledWith(1, {
     where: { collection: "todos" },
-    order: { createdAt: "ASC", id: "ASC" },
+    select,
+    order: { seq: "ASC" },
   });
-  expect(eventRepository.find).toHaveBeenNthCalledWith(2, {
-    order: { createdAt: "ASC", id: "ASC" },
-  });
+  expect(eventRepository.find).toHaveBeenNthCalledWith(2, { select, order: { seq: "ASC" } });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(1, { id: "event" });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(2, { id: "other" });
   expect(dirtyRepository.upsert).toHaveBeenCalledWith(record, ["collection", "recordId"]);
   expect(dirtyRepository.find).toHaveBeenNthCalledWith(1, { where: { collection: "todos" } });
   expect(dirtyRepository.find).toHaveBeenNthCalledWith(2, {});
   expect(dirtyRepository.delete).toHaveBeenCalledWith({ collection: "todos", recordId: "1" });
+
+  // Every method, reads included, runs on a transaction manager it is given.
+  const transaction = repositories();
+  const key = { collection: "todos", recordId: "1" };
+  await store.getPendingEvents(key, transaction as never);
+  await store.getDirtyRecords(key, transaction as never);
+  await store.deleteEvents(["event"], transaction as never);
+  await store.removeDirtyRecords([key], transaction as never);
+  expect(eventRepository.find).toHaveBeenLastCalledWith({
+    where: key,
+    select,
+    order: { seq: "ASC" },
+  });
+  expect(dirtyRepository.find).toHaveBeenLastCalledWith({ where: key });
+  expect(transaction.getRepository).toHaveBeenCalledTimes(4);
+  expect(manager.getRepository).toHaveBeenCalledTimes(9);
 });
 
 test("TypeORM adapter propagates repository failures and maps null optional reads", async () => {

@@ -16,6 +16,8 @@ test("initialize opens the data source and creates the predefined outbox tables 
   expect(tables.map((row: { name: string }) => row.name)).toEqual([
     "ez_sync_dirty_records",
     "ez_sync_events",
+    "ez_sync_meta",
+    "sqlite_sequence",
   ]);
 
   await store.appendEvents([

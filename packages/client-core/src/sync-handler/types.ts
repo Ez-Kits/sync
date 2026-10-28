@@ -12,7 +12,14 @@ export interface SyncStatusEvent {
   changedAt: number;
 }
 
-/** App supplied policy for reconciling an incoming remote event with local data. */
+/**
+ * App supplied policy for reconciling an incoming remote event with local data.
+ *
+ * It runs inside the transaction that applies pulled changes, which holds the database
+ * until it commits. Decide from `remote` and `local` only: a resolver that queries the
+ * database itself (through the adapter, a collection or a live query) waits for that
+ * transaction and deadlocks it until the transaction timeout rolls it back.
+ */
 export type ConflictResolution<
   C extends ChangeBusEventDataMap,
   N extends keyof C = keyof C,
@@ -90,10 +97,13 @@ export interface PushOptions<C extends ChangeBusEventDataMap, N extends keyof C 
   events: ChangeBusEvent<C, N>[];
 
   /**
-   * Commit changes after successful sync.
+   * Acknowledge events the provider durably accepted, removing them from the outbox. Await
+   * it before `push` resolves: the next push reads the outbox once it has finished. The
+   * handler also waits for one that is not awaited, and a rejection fails the push, which is
+   * retried (re-sending events still in the outbox).
    * @param options - The options for the commit operation.
    */
-  commitChanges: (options: PushCommitChangesOptions<C, N>) => void;
+  commitChanges: (options: PushCommitChangesOptions<C, N>) => Promise<void>;
 }
 
 export interface PushCommitChangesOptions<

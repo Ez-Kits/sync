@@ -226,7 +226,7 @@ export function createFirestoreSyncAdapterFromResolved<
       for (const batch of batches) {
         await batch.commit();
       }
-      if (handledEvents.length > 0) commitChanges({ events: handledEvents });
+      if (handledEvents.length > 0) await commitChanges({ events: handledEvents });
     },
   };
 }

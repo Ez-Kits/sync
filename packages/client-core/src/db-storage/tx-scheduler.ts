@@ -36,23 +36,20 @@ export class TxScheduler {
     private readonly options: { transactionTimeoutMs?: number } = {},
   ) {}
 
-  /** The owner of the open transaction, if any. */
+  /** The owner of the open transaction, if any; {@link abandon} rolls it back. */
   get activeOwner(): string | undefined {
     return this.active?.owner;
   }
 
   /**
    * Run a statement in transaction `txId`, or else on its own once no transaction is open.
-   * Statements of the owner of the open transaction join it: on one connection they would
-   * anyway, and waiting would deadlock an owner that reads outside its transaction handle.
+   * A statement outside a transaction never joins one, whoever sent it: it would see
+   * uncommitted rows and be rolled back with them. Work inside a transaction must use its
+   * executor.
    */
-  async exec(query: DBQuery, txId?: string, owner?: string): Promise<DBQueryResult> {
+  async exec(query: DBQuery, txId?: string): Promise<DBQueryResult> {
     if (txId !== undefined) return this.inTransaction(txId, () => this.engine.exec(query));
     if (isTransactionControl(query.sql)) throw new TransactionStatementError();
-    const active = this.active;
-    if (owner !== undefined && active?.owner === owner) {
-      return this.inTransaction(active.id, () => this.engine.exec(query));
-    }
     return this.mutex.run(async () => {
       if (this.closed) throw new DBStorageClosedError();
       const result = await this.engine.exec(query);

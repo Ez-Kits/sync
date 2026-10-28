@@ -21,7 +21,9 @@ function fixture(adapter: any, overrides: Record<string, unknown> = {}) {
     get: vi.fn(async () => undefined),
     getOptional: vi.fn(async () => undefined),
     getMany: vi.fn(async () => []),
-    transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
+    transaction: vi.fn(async (fn: (tx: any, context: any) => Promise<unknown>) =>
+      fn(db, { operations: db, native: undefined }),
+    ),
   };
   const changeBus = new ChangeBus<any>();
   const localChangeStore = createTestLocalChangeStore();
@@ -750,3 +752,171 @@ for (const scope of ["global", "collection"] as const) {
     else handler.stopAll();
   });
 }
+
+const storedEvent = (id: string, recordId = "1") => ({
+  id,
+  type: "update" as const,
+  collection: "todos",
+  recordId,
+  data: { id: Number(recordId) },
+  createdAt: 1,
+});
+
+test("a push finishes only after its acknowledgement, so the next push never re-sends", async () => {
+  const pushed: string[][] = [];
+  const f = fixture({
+    pull: vi.fn(),
+    // Acknowledges without awaiting: the handler still waits for it.
+    push: vi.fn(async ({ events, commitChanges }: any) => {
+      pushed.push(events.map((event: any) => event.eventId));
+      void commitChanges({ events });
+    }),
+  });
+  // Hold every acknowledgement's transaction until released.
+  let releaseAck!: () => void;
+  let ackStarted = 0;
+  f.db.transaction.mockImplementation(async (fn: any) => {
+    ackStarted += 1;
+    await new Promise<void>((resolve) => (releaseAck = resolve));
+    return fn(f.db, { operations: f.db, native: undefined });
+  });
+  await f.localChangeStore.appendEvents([storedEvent("e1")]);
+  const handler = new GlobalSyncHandler(f.config as never);
+  handler.start();
+  await vi.waitFor(() => expect(ackStarted).toBe(1));
+
+  // Local writes in quick succession while the first acknowledgement is still running.
+  await f.localChangeStore.appendEvents([storedEvent("e2")]);
+  f.changeBus.publishLocal({ type: "update", collection: "todos", data: { id: 1 } } as never);
+  await f.localChangeStore.appendEvents([storedEvent("e3")]);
+  f.changeBus.publishLocal({ type: "update", collection: "todos", data: { id: 1 } } as never);
+  await tick();
+  await tick();
+  expect(pushed).toEqual([["e1"]]);
+
+  releaseAck();
+  await vi.waitFor(() => expect(ackStarted).toBe(2));
+  releaseAck();
+  await vi.waitFor(async () => expect(await f.localChangeStore.getPendingEvents()).toEqual([]));
+  await tick();
+  // Every event went out exactly once.
+  expect(pushed.flat()).toEqual(["e1", "e2", "e3"]);
+  expect(f.onSyncError).not.toHaveBeenCalled();
+  handler.stop();
+});
+
+test("a failed acknowledgement is reported and retried without an unhandled rejection", async () => {
+  vi.useFakeTimers();
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  try {
+    const pushed: string[][] = [];
+    const f = fixture({
+      pull: vi.fn(),
+      // An adapter that neither awaits nor returns the acknowledgement.
+      push: vi.fn(async ({ events, commitChanges }: any) => {
+        pushed.push(events.map((event: any) => event.eventId));
+        void commitChanges({ events });
+      }),
+    });
+    const failure = new Error("ack failed");
+    f.db.transaction.mockRejectedValueOnce(failure);
+    await f.localChangeStore.appendEvents([storedEvent("e1")]);
+    const handler = new CollectionSyncHandler(f.config as never);
+    handler.start("todos");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.onSyncError).toHaveBeenCalledWith(failure);
+    // Still in the outbox, so the retry re-sends it and then acknowledges it.
+    expect(await f.localChangeStore.getPendingEvents()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(pushed).toEqual([["e1"], ["e1"]]);
+    expect(await f.localChangeStore.getPendingEvents()).toEqual([]);
+    expect(f.onSyncError).toHaveBeenCalledOnce();
+    handler.stop("todos");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off("unhandledRejection", unhandled);
+    vi.useRealTimers();
+  }
+});
+
+test("an adapter that awaits a failed acknowledgement fails the push with it", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture({
+      pull: vi.fn(),
+      push: vi.fn(async ({ events, commitChanges }: any) => {
+        await commitChanges({ events });
+      }),
+    });
+    const failure = new Error("ack failed");
+    f.db.transaction.mockRejectedValueOnce(failure);
+    await f.localChangeStore.appendEvents([storedEvent("e1")]);
+    const handler = new GlobalSyncHandler(f.config as never);
+    handler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.onSyncError).toHaveBeenCalledExactlyOnceWith(failure);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await f.localChangeStore.getPendingEvents()).toEqual([]);
+    handler.stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("acknowledgements and conflict reads run in the sync transaction", async () => {
+  const native = { transaction: "native" };
+  const conflictResolver = vi.fn(() => "remote");
+  let pullOptions: any;
+  const f = fixture(
+    {
+      pull: vi.fn((options: any) => {
+        pullOptions = options;
+      }),
+      push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
+    },
+    { conflictResolver },
+  );
+  f.db.transaction.mockImplementation(async (fn: any) => fn(f.db, { operations: f.db, native }));
+  const store = f.localChangeStore;
+  const spy = {
+    getPendingEvents: vi.spyOn(store, "getPendingEvents"),
+    getDirtyRecords: vi.spyOn(store, "getDirtyRecords"),
+    deleteEvents: vi.spyOn(store, "deleteEvents"),
+    removeDirtyRecords: vi.spyOn(store, "removeDirtyRecords"),
+  };
+  await store.appendEvents([storedEvent("e1"), storedEvent("e2", "2")]);
+  await store.upsertDirtyRecord({
+    collection: "todos",
+    recordId: "1",
+    state: "dirty",
+    updatedAt: 1,
+  });
+  const handler = new GlobalSyncHandler(f.config as never);
+  handler.start();
+  await vi.waitFor(() => expect(spy.deleteEvents).toHaveBeenCalledWith(["e1", "e2"], native));
+  expect(spy.removeDirtyRecords).toHaveBeenCalledWith(
+    [
+      { collection: "todos", recordId: "1" },
+      { collection: "todos", recordId: "2" },
+    ],
+    native,
+  );
+  // Remaining pending events are looked up per record, in the transaction.
+  expect(spy.getPendingEvents).toHaveBeenCalledWith({ collection: "todos", recordId: "1" }, native);
+
+  await store.appendEvents([storedEvent("e3")]);
+  await vi.waitFor(() => expect(pullOptions).toBeDefined());
+  pullOptions.commitChanges({
+    changes: [{ type: "update", collection: "todos", data: { id: 1 } }],
+    checkpoint: {},
+  });
+  await vi.waitFor(() => expect(conflictResolver).toHaveBeenCalled());
+  expect(spy.getDirtyRecords).toHaveBeenCalledWith({ collection: "todos", recordId: "1" }, native);
+  expect(spy.getPendingEvents).toHaveBeenLastCalledWith(
+    { collection: "todos", recordId: "1" },
+    native,
+  );
+  handler.stop();
+});

@@ -1,21 +1,24 @@
 import {
   createSyncClient,
   type DBStorage,
+  type StoredChangeBusEvent,
   type InferCollectionInsertModel,
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
-import type { DeepPartial, Repository } from "typeorm";
+import type { DeepPartial, EntitySchema, Repository } from "typeorm";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   buildSchemaFromCollections,
   defineTypeormCollection,
   type TypeOrmDatabase,
   type TypeOrmDBAdapter,
+  type TypeOrmEventRow,
+  type TypeOrmLocalChangeEntities,
 } from "../../src";
-import { createTypeOrmPgDBAdapter } from "../../src/pg";
-import { createTypeOrmSqliteDBAdapter } from "../../src/sqlite";
+import { createTypeOrmPgDBAdapter, pgLocalChangeEntities } from "../../src/pg";
+import { createTypeOrmSqliteDBAdapter, sqliteLocalChangeEntities } from "../../src/sqlite";
 
 class Todo {
   id!: number;
@@ -111,5 +114,16 @@ describe("typeorm adapter", () => {
       },
       onData: (todos) => expectTypeOf(todos).toEqualTypeOf<Todo[]>(),
     });
+  });
+});
+
+describe("outbox entities", () => {
+  test("event rows add the database-assigned seq to stored events", () => {
+    expectTypeOf<TypeOrmEventRow>().toEqualTypeOf<StoredChangeBusEvent & { seq: number }>();
+    expectTypeOf<TypeOrmLocalChangeEntities["events"]>().toEqualTypeOf<
+      EntitySchema<TypeOrmEventRow>
+    >();
+    expectTypeOf(sqliteLocalChangeEntities).toExtend<TypeOrmLocalChangeEntities>();
+    expectTypeOf(pgLocalChangeEntities).toExtend<TypeOrmLocalChangeEntities>();
   });
 });
