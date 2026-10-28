@@ -1,71 +1,50 @@
 import type {
+  AtomicLocalChangeStore,
   DirtyRecord,
   DirtyRecordKey,
-  AtomicLocalChangeStore,
   StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
+  type EntitySchema,
   Table,
   type DataSource,
   type EntityManager,
-  type EntityTarget,
-  type ObjectLiteral,
+  type QueryRunner,
 } from "typeorm";
-import type { EntityClass } from "./collection";
 
-export interface TypeOrmLocalChangeStoreConfig<
-  TDataSource extends DataSource,
-  TEventEntity extends EntityClass<StoredChangeBusEvent>,
-  TDirtyEntity extends EntityClass<DirtyRecord>,
-> {
-  db: TDataSource;
-  eventEntity: TEventEntity;
-  dirtyRecordEntity: TDirtyEntity;
+/** The predefined outbox and dirty-record entities of one dialect. */
+export interface TypeOrmLocalChangeEntities {
+  readonly events: EntitySchema<StoredChangeBusEvent>;
+  readonly dirtyRecords: EntitySchema<DirtyRecord>;
 }
 
-export type TypeOrmSchemaTypeCheck<
-  TEventEntity extends EntityClass<StoredChangeBusEvent>,
-  TDirtyEntity extends EntityClass<DirtyRecord>,
-> =
-  StoredChangeBusEvent extends InstanceType<NoInfer<TEventEntity>>
-    ? DirtyRecord extends InstanceType<NoInfer<TDirtyEntity>>
-      ? []
-      : [schemaError: never]
-    : [schemaError: never];
-
 /**
- * Create an outbox/dirty-record store in the same TypeORM database as the
- * collection adapter. Pass the transaction manager through atomic callbacks.
+ * The outbox/dirty-record store of a TypeORM adapter, on the adapter's own data source.
+ * Atomic callbacks pass the transaction's entity manager.
  */
-export function createTypeOrmLocalChangeStore<
-  TDataSource extends DataSource,
-  TEventEntity extends EntityClass<StoredChangeBusEvent>,
-  TDirtyEntity extends EntityClass<DirtyRecord>,
->(
-  config: TypeOrmLocalChangeStoreConfig<TDataSource, TEventEntity, TDirtyEntity>,
-  ...typeCheck: TypeOrmSchemaTypeCheck<TEventEntity, TDirtyEntity>
+export function createTypeOrmLocalChangeStore(
+  db: DataSource,
+  entities: TypeOrmLocalChangeEntities,
 ): AtomicLocalChangeStore<EntityManager> {
-  void typeCheck;
-  const { db, eventEntity, dirtyRecordEntity } = config;
   const managerFor = (transactionContext?: unknown): EntityManager =>
     (transactionContext as EntityManager | undefined) ?? db.manager;
-  const eventTarget = eventEntity as EntityTarget<ObjectLiteral>;
-  const dirtyRecordTarget = dirtyRecordEntity as EntityTarget<ObjectLiteral>;
+  const eventTarget = entities.events;
+  const dirtyRecordTarget = entities.dirtyRecords;
 
   return {
     atomicLocalMutationCapability: "atomic",
-    // Create the two entity tables (with their indices and unique keys) when missing.
+    // Open the data source, then create the two tables (with their keys) when missing, in
+    // one transaction so contexts sharing a storage cannot both create them.
     async initialize() {
-      const queryRunner = db.createQueryRunner();
-      try {
+      if (!db.isInitialized) await db.initialize();
+      await db.transaction(async (manager) => {
+        const queryRunner = manager.queryRunner as QueryRunner;
         for (const target of [eventTarget, dirtyRecordTarget]) {
           const metadata = db.getMetadata(target);
           if (await queryRunner.hasTable(metadata.tablePath)) continue;
           await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
         }
-      } finally {
-        await queryRunner.release();
-      }
+      });
     },
     async appendEvents(events: StoredChangeBusEvent[], transactionContext) {
       if (events.length === 0) return;
@@ -76,7 +55,7 @@ export function createTypeOrmLocalChangeStore<
         ...(collection ? { where: { collection } } : {}),
         order: { createdAt: "ASC", id: "ASC" },
       });
-      return rows as StoredChangeBusEvent[];
+      return rows;
     },
     async deleteEvents(ids: string[]) {
       const repository = db.manager.getRepository(eventTarget);
@@ -95,7 +74,7 @@ export function createTypeOrmLocalChangeStore<
       const rows = await db.manager
         .getRepository(dirtyRecordTarget)
         .find(collection ? { where: { collection } } : {});
-      return rows as DirtyRecord[];
+      return rows;
     },
   };
 }

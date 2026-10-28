@@ -1,23 +1,21 @@
 import {
   createSyncClient,
-  type DBRole,
-  type DirtyRecord,
+  type DBStorage,
   type InferCollectionInsertModel,
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
-  type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
-import type { DataSource, DeepPartial } from "typeorm";
+import type { DeepPartial, Repository } from "typeorm";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   buildSchemaFromCollections,
-  createTypeOrmDBAdapter,
-  createTypeOrmLocalChangeStore,
-  createTypeOrmDBStorage,
   defineTypeormCollection,
+  type TypeOrmDatabase,
   type TypeOrmDBAdapter,
 } from "../../src";
+import { createTypeOrmPgDBAdapter } from "../../src/pg";
+import { createTypeOrmSqliteDBAdapter } from "../../src/sqlite";
 
 class Todo {
   id!: number;
@@ -27,23 +25,7 @@ class User {
   uid!: string;
   email!: string;
 }
-class OutboxEvent implements StoredChangeBusEvent {
-  id!: string;
-  type!: "create" | "update" | "delete";
-  collection!: string;
-  data!: unknown;
-  recordId!: string;
-  createdAt!: number;
-}
-class DirtyRecordEntity implements DirtyRecord {
-  collection!: string;
-  recordId!: string;
-  state!: "dirty" | "deleted";
-  updatedAt!: number;
-}
-
-declare const db: DataSource;
-const entities = { eventEntity: OutboxEvent, dirtyRecordEntity: DirtyRecordEntity };
+declare const dbStorage: DBStorage;
 
 const todoCollection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
 const userCollection = defineTypeormCollection({
@@ -83,26 +65,38 @@ describe("typeorm adapter", () => {
     }>();
   });
 
-  test("createTypeOrmDBAdapter exposes the data source and schema", () => {
-    const adapter = createTypeOrmDBAdapter({ db, collections, ...entities });
-    expectTypeOf(adapter).toEqualTypeOf<
-      TypeOrmDBAdapter<typeof collections, DataSource, { todos: typeof Todo; users: typeof User }>
-    >();
-    expectTypeOf(adapter.queryBuilder).toEqualTypeOf<DataSource>();
+  test("each entry point creates a typed data source", () => {
+    type Schema = { todos: typeof Todo; users: typeof User };
+    const adapter = createTypeOrmSqliteDBAdapter({ dbStorage, collections });
+    expectTypeOf(adapter).toEqualTypeOf<TypeOrmDBAdapter<typeof collections, Schema>>();
+    expectTypeOf(adapter.queryBuilder).toEqualTypeOf<TypeOrmDatabase<Schema>>();
+    expectTypeOf(adapter.db.repositories.todos).toEqualTypeOf<Repository<Todo>>();
+    expectTypeOf(
+      adapter.db.repositories.users.findOneBy({ uid: "u1" }),
+    ).resolves.toEqualTypeOf<User | null>();
+    // @ts-expect-error repositories are typed by entity
+    void adapter.db.repositories.users.findOneBy({ email: 1 });
     expectTypeOf(adapter.get("users", "u1")).resolves.toEqualTypeOf<User>();
     // @ts-expect-error todos are keyed by numeric id
     void adapter.get("todos", "1");
-    // @ts-expect-error a data source is required
-    createTypeOrmDBAdapter({ db: {}, collections, ...entities });
+
+    const pg = createTypeOrmPgDBAdapter({
+      dbStorage,
+      collections,
+      entities: [User],
+      dataSourceOptions: { logging: true, schema: "public" },
+    });
+    expectTypeOf(pg.queryBuilder).toEqualTypeOf<TypeOrmDatabase<Schema>>();
+    // @ts-expect-error the data source type, driver and entities are set by the adapter
+    createTypeOrmSqliteDBAdapter({ dbStorage, collections, dataSourceOptions: { type: "expo" } });
+    // @ts-expect-error the storage is required
+    createTypeOrmPgDBAdapter({ collections });
   });
 
-  test("the adapter is accepted by createSyncClient", () => {
-    expectTypeOf(createTypeOrmDBStorage(db).role).toEqualTypeOf<DBRole>();
-    // @ts-expect-error the outbox entities are required
-    createTypeOrmDBAdapter({ db, collections });
+  test("the adapter is accepted by createSyncClient and types live queries", () => {
     const client = createSyncClient({
       collections,
-      dbAdapter: createTypeOrmDBAdapter({ db, collections, ...entities }),
+      dbAdapter: createTypeOrmSqliteDBAdapter({ dbStorage, collections }),
       checkpointStorage: {
         getCheckpoint: async () => undefined,
         saveCheckpoint: async () => {},
@@ -111,40 +105,11 @@ describe("typeorm adapter", () => {
     expectTypeOf(client.collections.todos.get(1)).resolves.toEqualTypeOf<Todo>();
     client.liveQuery({
       query: (qb, schema) => {
-        expectTypeOf(qb).toEqualTypeOf<DataSource>();
         expectTypeOf(schema.users).toEqualTypeOf<typeof User>();
+        expectTypeOf(qb.getRepository(schema.users)).toEqualTypeOf<Repository<User>>();
+        return qb.repositories.todos.find({ where: { title: "x" } });
       },
-      onData: () => {},
-    });
-  });
-
-  test("local-change entities must persist every stored field", () => {
-    createTypeOrmLocalChangeStore({
-      db,
-      eventEntity: OutboxEvent,
-      dirtyRecordEntity: DirtyRecordEntity,
-    });
-    createTypeOrmLocalChangeStore({
-      db,
-      // @ts-expect-error event entity omits persisted event fields
-      eventEntity: class {},
-      dirtyRecordEntity: DirtyRecordEntity,
-    });
-
-    class TextPayloadEvent {
-      id!: string;
-      type!: "create" | "update" | "delete";
-      collection!: string;
-      data!: string;
-      recordId!: string;
-      createdAt!: number;
-    }
-    // @ts-expect-error event data must accept all local event payloads
-    createTypeOrmDBAdapter({
-      db,
-      collections,
-      eventEntity: TextPayloadEvent,
-      dirtyRecordEntity: DirtyRecordEntity,
+      onData: (todos) => expectTypeOf(todos).toEqualTypeOf<Todo[]>(),
     });
   });
 });

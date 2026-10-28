@@ -1,28 +1,67 @@
-# TypeORM DB adapter
+# @ez-kits/sync-client-typeorm-adapter
 
-`@ez-kits/sync-client-typeorm-adapter` connects the sync client to a TypeORM `DataSource`. It implements the core `DBAdapter` operations and runs transactional callbacks through a TypeORM `EntityManager`.
-
-Use `createTypeOrmDBAdapter` with the data source and the outbox entities. The adapter builds its local-change store on the same `DataSource`. Event and dirty-record entity classes must expose the fields persisted by the sync client; invalid entity shapes fail type checking.
+TypeORM adapter for EzSync. It bridges a `DBStorage` (sql.js, SQLite WASM, PGlite, ...) to TypeORM: it creates the `DataSource` itself, with a driver that runs every statement on the storage, and provides collection CRUD, a typed data source for live queries, transactional application of pulled remote changes, and the outbox. It supports scalar and composite primary keys when the collection configuration and entity metadata agree.
 
 ```ts
-import { createTypeOrmDBAdapter } from "@ez-kits/sync-client-typeorm-adapter";
+import { createSyncClient } from "@ez-kits/sync-client-core";
+import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
+import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
+import { createSqlJsStorage } from "@ez-kits/sync-storage-sqljs";
 
-const dbAdapter = createTypeOrmDBAdapter({
-  db: dataSource,
-  collections,
-  eventEntity: SyncEventEntity,
-  dirtyRecordEntity: DirtyRecordEntity,
+const dbStorage = createSqlJsStorage({
+  key: "todos",
+  engineOptions: { indexedDB: "todos-sqljs" },
+  worker: () => new Worker(new URL("./db-worker.ts", import.meta.url), { type: "module" }),
 });
 
+const collections = [defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" })];
+const dbAdapter = createTypeOrmSqliteDBAdapter({ dbStorage, collections });
+
 const client = createSyncClient({ collections, dbAdapter, checkpointStorage });
+
+client.liveQuery({
+  collections: ["todos"],
+  query: (db) => db.repositories.todos.find({ where: { completed: false } }),
+  onData: (todos) => render(todos),
+});
 ```
 
-TypeORM cannot run on a forwarding driver, so multi-tab storage (one leader worker serving every tab) is not available yet. By default the adapter reports a `createTypeOrmDBStorage(dataSource)` storage: this context always leads, and therefore always syncs. Use it for a single context, such as a per-tab `sqljs` data source, or with an engine that is already shared across tabs. You can pass your own `dbStorage` instead.
+## Entry points
 
-Configure collection entity schemas through `collections`, or provide a matching `schema` map when using entities defined elsewhere.
+Each dialect has its own entry point with its own storage driver:
 
-`get` rejects when a record is missing. `getOptional` returns `undefined` for a missing record and still rejects on database errors, allowing the sync engine to distinguish absence from a failed query. Both methods support scalar and composite primary keys.
+| Entry point                                   | Adapter                        | Storages            | Data source                                                                              |
+| --------------------------------------------- | ------------------------------ | ------------------- | ---------------------------------------------------------------------------------------- |
+| `@ez-kits/sync-client-typeorm-adapter/sqlite` | `createTypeOrmSqliteDBAdapter` | sql.js, SQLite WASM | `expo` type, driver from `createTypeOrmSqliteDriver`                                     |
+| `@ez-kits/sync-client-typeorm-adapter/pg`     | `createTypeOrmPgDBAdapter`     | PGlite              | `postgres` type, `pg` module from `createTypeOrmPgDriver`                                |
+| `@ez-kits/sync-client-typeorm-adapter`        | —                              | —                   | Shared, dialect-free API: `defineTypeormCollection`, `buildSchemaFromCollections`, types |
 
-`transaction` executes its callback against the transaction-scoped manager and exposes the same CRUD operations, including `getOptional`. The paired adapter passes its transaction-scoped `EntityManager` to both store writes, so the row, outbox event, and dirty marker commit or roll back together. A store that cannot join the transaction cannot be paired, and local writes never fall back to sequential persistence.
+The driver runs every statement on the storage, so the data source works the same in the leader tab and in followers. TypeORM's `BEGIN`/`START TRANSACTION`, `COMMIT` and `ROLLBACK` open and end a `dbStorage.transaction`, so a follower's transaction runs isolated on the leader; savepoints stay inside it. An adapter throws when the storage speaks another dialect. Both adapters are built on `createTypeOrmProxyDBAdapter`, which takes a small driver (`dialect`, `createDataSource`, `localChangeEntities`).
 
-The adapter creates the event and dirty-record tables itself when they are missing: the sync client calls the store's `initialize()`, which builds them from the entity metadata (columns, indices and unique keys) without touching other entities. The event entity must persist `id`, `type`, `collection`, `data`, `recordId`, and `createdAt`; use a JSON-capable column for `data`. The dirty-record entity must persist `collection`, `recordId`, `state`, and `updatedAt`, with a unique constraint on `(collection, recordId)`. Keep these entities and the collection entities in the same `DataSource` and database transaction.
+Options:
+
+- `entities`: other entities the data source should know, such as targets of relations. Collection entities are registered for you.
+- `dataSourceOptions`: other TypeORM options (`logging`, `namingStrategy`, `synchronize`, ...). The type, driver and entities are set by the adapter.
+
+## Typed data source
+
+`dbAdapter.queryBuilder` (the first argument of `liveQuery`) is the adapter's `DataSource`, with a typed repository per collection: `db.repositories.todos` is a `Repository<Todo>`. The second argument maps collection names to entity classes, so `db.getRepository(schema.todos)` is typed too.
+
+The data source opens when the sync client initializes the local-change store, before its first query. Use `dbAdapter.db` for anything else you need from TypeORM.
+
+## Outbox entities
+
+The outbox and dirty records live in predefined entities, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeEntities` from `./sqlite`, `pgLocalChangeEntities` from `./pg`). The adapter registers them on its data source and creates their tables itself: its local-change store's `initialize()` builds them from the entity metadata, and the sync client calls it before anything touches the database. Declare and migrate only your own entities.
+
+The row, outbox event, and dirty record of a local mutation commit together or are rolled back together.
+
+## Reads
+
+`get` rejects when a record is missing. `getOptional` returns `undefined` for a missing record and still rejects on database errors, so the sync engine can tell absence from a failed query.
+
+## Development
+
+```bash
+pnpm --filter @ez-kits/sync-client-typeorm-adapter build
+pnpm --filter @ez-kits/sync-client-typeorm-adapter test
+```

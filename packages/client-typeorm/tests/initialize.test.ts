@@ -1,48 +1,13 @@
-import "reflect-metadata";
-import { Column, DataSource, Entity, PrimaryColumn, Unique } from "typeorm";
+import { DataSource } from "typeorm";
 import { expect, test } from "vite-plus/test";
-import { createTypeOrmLocalChangeStore } from "../src/create-typeorm-local-change-store";
+import { createTypeOrmLocalChangeStore } from "../src/core/local-change-store";
+import { sqliteLocalChangeEntities } from "../src/sqlite";
 
-class OutboxEvent {
-  id!: string;
-  type!: "create" | "update" | "delete";
-  collection!: string;
-  data!: unknown;
-  recordId!: string;
-  createdAt!: number;
-}
-Entity("ez_sync_events")(OutboxEvent);
-PrimaryColumn("text")(OutboxEvent.prototype, "id");
-for (const field of ["type", "collection", "recordId"])
-  Column("text")(OutboxEvent.prototype, field);
-Column("simple-json", { nullable: true })(OutboxEvent.prototype, "data");
-Column("integer")(OutboxEvent.prototype, "createdAt");
-
-class DirtyRecordEntity {
-  collection!: string;
-  recordId!: string;
-  state!: "dirty" | "deleted";
-  updatedAt!: number;
-}
-Entity("ez_sync_dirty_records")(DirtyRecordEntity);
-Unique(["collection", "recordId"])(DirtyRecordEntity);
-PrimaryColumn("text")(DirtyRecordEntity.prototype, "collection");
-PrimaryColumn("text")(DirtyRecordEntity.prototype, "recordId");
-Column("text")(DirtyRecordEntity.prototype, "state");
-Column("integer")(DirtyRecordEntity.prototype, "updatedAt");
-
-test("initialize creates the outbox tables once, without touching other entities", async () => {
-  const db = new DataSource({
-    type: "sqljs",
-    entities: [OutboxEvent, DirtyRecordEntity],
-    synchronize: false,
-  });
-  await db.initialize();
-  const store = createTypeOrmLocalChangeStore({
-    db,
-    eventEntity: OutboxEvent,
-    dirtyRecordEntity: DirtyRecordEntity,
-  });
+test("initialize opens the data source and creates the predefined outbox tables once", async () => {
+  const { events, dirtyRecords } = sqliteLocalChangeEntities;
+  const db = new DataSource({ type: "sqljs", entities: [events, dirtyRecords] });
+  const store = createTypeOrmLocalChangeStore(db, sqliteLocalChangeEntities);
+  // Opens the data source too.
   await store.initialize();
   await store.initialize();
   const tables = await db.query(

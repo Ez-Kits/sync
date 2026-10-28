@@ -1,5 +1,5 @@
+// Dialect-independent API. Adapters live in the `./sqlite` and `./pg` entry points.
 export * from "./collection";
-export * from "./create-typeorm-db-adapter";
-export * from "./create-typeorm-db-storage";
-export * from "./create-typeorm-local-change-store";
+export * from "./core/create-typeorm-proxy-db-adapter";
+export type { TypeOrmLocalChangeEntities } from "./core/local-change-store";
 export * from "./types";

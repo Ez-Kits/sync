@@ -11,6 +11,7 @@
   "dependencies": {
     "@ez-kits/sync-client-core": "workspace:*",
     "@ez-kits/sync-client-typeorm-adapter": "workspace:*",
+    "@ez-kits/sync-storage-sqljs": "workspace:*",
     "reflect-metadata": "^0.2.2",
     "sql.js": "^1.13.0",
     "typeorm": "catalog:"

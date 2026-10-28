@@ -2,9 +2,8 @@ import "reflect-metadata";
 import { expect, test, vi } from "vite-plus/test";
 import { PrimaryColumn } from "typeorm";
 import { buildSchemaFromCollections, defineTypeormCollection } from "../src/collection";
-import { createTypeOrmDBAdapter } from "../src/create-typeorm-db-adapter";
-import { createTypeOrmLocalChangeStore } from "../src/create-typeorm-local-change-store";
-import { createTypeOrmDBStorage } from "../src/create-typeorm-db-storage";
+import { createTypeOrmProxyDBAdapter } from "../src/core/create-typeorm-proxy-db-adapter";
+import { createTypeOrmLocalChangeStore } from "../src/core/local-change-store";
 import type { DirtyRecord, StoredChangeBusEvent } from "@ez-kits/sync-client-core";
 
 class Todo {
@@ -29,15 +28,36 @@ class DirtyRecordEntity implements DirtyRecord {
 }
 PrimaryColumn("integer")(Todo.prototype, "id");
 const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
-const entities = { eventEntity: OutboxEvent, dirtyRecordEntity: DirtyRecordEntity };
+/** Stand-ins for the dialect's outbox entities; only their identity matters here. */
+const entities = { events: OutboxEvent, dirtyRecords: DirtyRecordEntity } as never;
+
+/** An adapter whose driver hands back the mock data source. */
+function adapterFor(db: unknown, createDataSource = vi.fn(() => db as never)) {
+  return createTypeOrmProxyDBAdapter(
+    { dbStorage: { dialect: "sqlite" } as never, collections: [collection] },
+    { dialect: "sqlite", createDataSource, localChangeEntities: entities },
+  );
+}
 
 function makeDb(row: unknown = { id: 1, title: "one" }) {
   const calls: unknown[][] = [];
+  const execute = vi.fn(async () => ({}));
+  const write: unknown[] = [];
+  const builder = {
+    insert: () => builder,
+    into: () => builder,
+    values: (values: unknown) => (write.push("insert", values), builder),
+    update: () => builder,
+    set: (values: unknown) => (write.push("update", values), builder),
+    where: (where: unknown) => (write.push(where), builder),
+    updateEntity: () => builder,
+    execute: async () => {
+      calls.push(write.splice(0));
+      return execute();
+    },
+  };
   const repository = {
-    save: vi.fn(async (value: unknown) => {
-      calls.push(["save", value]);
-      return value;
-    }),
+    createQueryBuilder: () => builder,
     delete: vi.fn(async (where: unknown) => {
       calls.push(["delete", where]);
     }),
@@ -57,7 +77,7 @@ function makeDb(row: unknown = { id: 1, title: "one" }) {
     getRepository: vi.fn(() => repository),
     transaction: vi.fn(async (fn: (manager: any) => Promise<unknown>) => fn(db)),
   };
-  return { db, repository, calls };
+  return { db, repository, execute, calls };
 }
 
 test("TypeORM collection validates metadata primary key and builds entity schema", () => {
@@ -75,8 +95,8 @@ test("TypeORM collection validates metadata primary key and builds entity schema
 });
 
 test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and runs transactions", async () => {
-  const { db, repository, calls } = makeDb();
-  const adapter = createTypeOrmDBAdapter({ db, collections: [collection], ...entities } as never);
+  const { db, calls } = makeDb();
+  const adapter = adapterFor(db);
   expect(adapter.schema.todos).toBe(Todo);
   expect(adapter.queryBuilder).toBe(db);
   expect(adapter.querySchema.todos).toBe(Todo);
@@ -88,14 +108,19 @@ test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and run
   expect(await adapter.getOptional!("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getMany("todos" as never)).toHaveLength(1);
   await adapter.transaction(async (tx) => tx.insert("todos" as never, { id: 2 } as never));
-  expect(repository.save).toHaveBeenCalledTimes(3);
+  await expect(adapter.update("todos" as never, { title: "no id" } as never)).rejects.toThrow(
+    'Update requires primary field "id"',
+  );
+  expect(calls).toContainEqual(["insert", { id: 1, title: "one" }]);
+  expect(calls).toContainEqual(["update", { id: 1, title: "two" }, { id: 1 }]);
+  expect(calls).toContainEqual(["insert", { id: 2 }]);
   expect(calls).toContainEqual(["delete", { id: 1 }]);
   expect(db.transaction).toHaveBeenCalledOnce();
 });
 
 test("TypeORM commitLocalMutation uses transaction-scoped repository operations", async () => {
-  const { db, repository, calls } = makeDb();
-  const adapter = createTypeOrmDBAdapter({ db, collections: [collection], ...entities } as never);
+  const { db, calls } = makeDb();
+  const adapter = adapterFor(db);
   const callbackOrder: string[] = [];
   let transactionContext: any;
 
@@ -119,8 +144,7 @@ test("TypeORM commitLocalMutation uses transaction-scoped repository operations"
   expect(db.transaction).toHaveBeenCalledOnce();
   expect(transactionContext.native).toBe(db);
   expect(callbackOrder).toEqual(["mutate", "outbox", "dirty"]);
-  expect(repository.save).toHaveBeenCalledWith({ id: 9, title: "transactional" });
-  expect(calls).toContainEqual(["save", { id: 9, title: "transactional" }]);
+  expect(calls).toContainEqual(["insert", { id: 9, title: "transactional" }]);
 });
 
 test("TypeORM local-change writes use the transaction manager", async () => {
@@ -137,11 +161,7 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   const transactionManager = {
     getRepository: vi.fn(() => ({ save: transactionSave, upsert: transactionUpsert })),
   };
-  const store = createTypeOrmLocalChangeStore({
-    db,
-    eventEntity: OutboxEvent,
-    dirtyRecordEntity: DirtyRecordEntity,
-  } as never);
+  const store = createTypeOrmLocalChangeStore(db as never, entities);
   await store.appendEvents(
     [
       {
@@ -169,9 +189,8 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   expect(rootSave).not.toHaveBeenCalled();
   expect(rootUpsert).not.toHaveBeenCalled();
 
-  const adapter = createTypeOrmDBAdapter({ db, collections: [collection], ...entities } as never);
+  const adapter = adapterFor(db);
   expect(adapter.localChangeStore.atomicLocalMutationCapability).toBe("atomic");
-  expect(adapter.dbStorage.role).toBe("leader");
 });
 
 test("TypeORM local-change store queries, deletes, and upserts records", async () => {
@@ -201,11 +220,7 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
       entity === OutboxEvent ? eventRepository : dirtyRepository,
     ),
   };
-  const store = createTypeOrmLocalChangeStore({
-    db: { manager },
-    eventEntity: OutboxEvent,
-    dirtyRecordEntity: DirtyRecordEntity,
-  } as never);
+  const store = createTypeOrmLocalChangeStore({ manager } as never, entities);
 
   await store.appendEvents([]);
   await store.deleteEvents([]);
@@ -234,39 +249,12 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
   expect(dirtyRepository.delete).toHaveBeenCalledWith({ collection: "todos", recordId: "1" });
 });
 
-test("TypeORM local-change entities reject incomplete schemas at type level", () => {
-  const invalidEventEntity = class {};
-  const db = {} as never;
-
-  createTypeOrmLocalChangeStore({
-    db,
-    // @ts-expect-error event entity omits persisted event fields
-    eventEntity: invalidEventEntity,
-    dirtyRecordEntity: DirtyRecordEntity,
-  });
-
-  class TextPayloadEvent {
-    id!: string;
-    type!: "create" | "update" | "delete";
-    collection!: string;
-    data!: string;
-    recordId!: string;
-    createdAt!: number;
-  }
-  // @ts-expect-error event data must accept all local event payloads
-  createTypeOrmLocalChangeStore({
-    db,
-    eventEntity: TextPayloadEvent,
-    dirtyRecordEntity: DirtyRecordEntity,
-  });
-});
-
 test("TypeORM adapter propagates repository failures and maps null optional reads", async () => {
-  const { db, repository } = makeDb(null);
-  const adapter = createTypeOrmDBAdapter({ db, collections: [collection], ...entities } as never);
+  const { db, execute } = makeDb(null);
+  const adapter = adapterFor(db);
   await expect(adapter.getOptional!("todos" as never, 1 as never)).resolves.toBeUndefined();
   await expect(adapter.get("todos" as never, 1 as never)).rejects.toThrow("missing");
-  repository.save.mockRejectedValueOnce(new Error("write failed"));
+  execute.mockRejectedValueOnce(new Error("write failed"));
   await expect(adapter.insert("todos" as never, { id: 2 } as never)).rejects.toThrow(
     "write failed",
   );
@@ -275,43 +263,40 @@ test("TypeORM adapter propagates repository failures and maps null optional read
   );
 });
 
-test("TypeORM adapter accepts an explicit schema", () => {
-  const { db } = makeDb();
-  const schema = { todos: Todo };
-  const adapter = createTypeOrmDBAdapter({
-    db,
-    collections: [collection],
-    schema,
-    ...entities,
-  } as never);
-  expect(adapter.schema).toBe(schema);
+test("the driver builds the data source from every entity and exposes typed repositories", () => {
+  const { db, repository } = makeDb();
+  const createDataSource = vi.fn(() => db as never);
+  const adapter = adapterFor(db, createDataSource);
+  expect(createDataSource).toHaveBeenCalledWith(
+    { dialect: "sqlite" },
+    [Todo, OutboxEvent, DirtyRecordEntity],
+    undefined,
+  );
+  expect((adapter.db.repositories as any).todos).toBe(repository);
+  expect(Object.keys(adapter.db.repositories)).toEqual(["todos"]);
+
+  createDataSource.mockReturnValue(makeDb().db as never);
+  createTypeOrmProxyDBAdapter(
+    {
+      dbStorage: { dialect: "sqlite" } as never,
+      collections: [collection],
+      entities: [DirtyRecordEntity],
+      dataSourceOptions: { logging: true },
+    },
+    { dialect: "sqlite", createDataSource, localChangeEntities: entities },
+  );
+  expect(createDataSource).toHaveBeenLastCalledWith(
+    { dialect: "sqlite" },
+    [Todo, DirtyRecordEntity, OutboxEvent, DirtyRecordEntity],
+    { logging: true },
+  );
 });
 
-test("the default storage runs statements on the data source in this context", async () => {
-  const query = vi.fn(async (sql: string) => (sql.startsWith("SELECT") ? [{ one: 1 }] : undefined));
-  const sqlite = createTypeOrmDBStorage({ options: { type: "sqljs" }, query } as never, "todos");
-  await sqlite.ready;
-  expect([sqlite.dialect, sqlite.key, sqlite.role]).toEqual(["sqlite", "todos", "leader"]);
-  expect(await sqlite.exec({ sql: "SELECT 1 AS one", params: [], method: "all" })).toEqual({
-    rows: [{ one: 1 }],
-  });
-  expect(await sqlite.exec({ sql: "DELETE FROM t", params: [1], method: "run" })).toEqual({
-    rows: [],
-  });
-  expect(query).toHaveBeenLastCalledWith("DELETE FROM t", [1]);
-  await sqlite.close();
-
-  const postgres = createTypeOrmDBStorage({ options: { type: "postgres" }, query } as never);
-  expect(postgres.dialect).toBe("postgres");
-  await postgres.close();
-  const custom = { role: "leader" } as never;
-  const { db } = makeDb();
-  expect(
-    createTypeOrmDBAdapter({
-      db,
-      collections: [collection],
-      ...entities,
-      dbStorage: custom,
-    } as never).dbStorage,
-  ).toBe(custom);
+test("the adapter rejects a storage of another dialect", () => {
+  expect(() =>
+    createTypeOrmProxyDBAdapter(
+      { dbStorage: { dialect: "postgres" } as never, collections: [collection] },
+      { dialect: "sqlite", createDataSource: vi.fn(), localChangeEntities: entities },
+    ),
+  ).toThrow("built for sqlite but the storage speaks postgres");
 });

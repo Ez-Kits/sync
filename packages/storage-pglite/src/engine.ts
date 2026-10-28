@@ -20,7 +20,8 @@ async function execute(pg: PGlite, query: DBQuery): Promise<DBQueryResult> {
   }
   const result = await pg.query(query.sql, query.params, { rowMode: query.rowMode ?? "array" });
   if (query.method === "run") return { rows: [] };
-  return { rows: query.method === "get" ? result.rows.slice(0, 1) : result.rows };
+  const rows = query.method === "get" ? result.rows.slice(0, 1) : result.rows;
+  return { rows, affectedRows: result.affectedRows };
 }
 
 /** Open PGlite in this (leader) worker. PGlite persists `idb://` data on its own. */

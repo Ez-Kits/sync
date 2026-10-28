@@ -35,6 +35,7 @@
     "@ez-kits/sync-client-drizzle-adapter": "workspace:*",
     "@ez-kits/sync-client-react": "workspace:*",
     "@ez-kits/sync-client-typeorm-adapter": "workspace:*",
+    "@ez-kits/sync-storage-sqljs": "workspace:*",
     "drizzle-orm": "catalog:",
     "react": "catalog:",
     "reflect-metadata": "^0.2.2",

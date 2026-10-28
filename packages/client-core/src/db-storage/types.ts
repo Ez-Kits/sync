@@ -17,6 +17,8 @@ export interface DBQuery {
 export interface DBQueryResult {
   /** Every result row; `get` callers read `rows[0]`. */
   rows: unknown[];
+  /** Rows changed by a write, when the engine reports it. */
+  affectedRows?: number;
 }
 
 export interface DBExecutor {

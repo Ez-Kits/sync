@@ -1,0 +1,38 @@
+{
+  "name": "todo-react-typeorm-firestore",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "tsc && vp build",
+    "check": "vp check",
+    "preview": "vp preview",
+    "test": "vp test",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@ez-kits/sync-client-core": "workspace:*",
+    "@ez-kits/sync-client-react": "workspace:*",
+    "@ez-kits/sync-client-typeorm-adapter": "workspace:*",
+    "@ez-kits/sync-conflict-resolution": "workspace:*",
+    "@ez-kits/sync-firebase": "workspace:*",
+    "@ez-kits/sync-storage-sqljs": "workspace:*",
+    "@faker-js/faker": "^10.5.0",
+    "firebase": "catalog:",
+    "react": "catalog:",
+    "react-dom": "19.2.5",
+    "reflect-metadata": "^0.2.2",
+    "sql.js": "^1.13.0",
+    "typeorm": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/react": "catalog:",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.9",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
