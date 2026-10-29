@@ -18,3 +18,5 @@ export function isFirebaseConfigured(): boolean {
 const app = isFirebaseConfigured() ? initializeApp(firebaseConfig) : null;
 
 export const firestore = app ? getFirestore(app) : null;
+// An app using Firebase Auth would export `getAuth(app)` here too; see `sync.ts` for retrying
+// the writes parked while signed out.

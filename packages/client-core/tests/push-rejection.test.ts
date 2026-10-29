@@ -139,10 +139,154 @@ for (const scope of ["global", "collection"] as const) {
     const before = log.length;
     f.retryRejectedPushes();
     await vi.waitFor(async () => expect(await pendingIds(f)).toEqual([]));
-    // The parked events go first, then what they held back.
-    expect(log.slice(before)).toEqual(["accepted e1,e3,e4", "accepted e2"]);
+    // The oldest parked event probes alone, then the other parked events, then what they held.
+    expect(log.slice(before)).toEqual(["accepted e1", "accepted e3,e4", "accepted e2"]);
     expect(await f.store.getDirtyRecords()).toEqual([]);
     expect(onPushRejected).toHaveBeenCalledTimes(3);
+    f.stop();
+  });
+
+  test(`${scope}: while signed out, each retry of many parked events is one provider push`, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const onPushRejected = vi.fn();
+    const f = fixture(scope, { onPushRejected });
+    const ids = Array.from({ length: 12 }, (_, i) => String(i + 1));
+    for (const id of ids) await f.writeLocally(write(`e${id}`, id, `t${id}`));
+    await f.writeLocally(write("e13", "1", "later"));
+    let signedIn = false;
+    const log = atomicProvider(f, () => !signedIn);
+    f.start();
+    await flush();
+    expect(onPushRejected).toHaveBeenCalledTimes(12);
+
+    // Backoff retries, a restart and an explicit retry: one refused probe each, rotating.
+    let before = log.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flush();
+    expect(log.slice(before)).toEqual(["rejected e1"]);
+    before = log.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await flush();
+    expect(log.slice(before)).toEqual(["rejected e2"]);
+    before = log.length;
+    f.retryRejectedPushes();
+    await flush();
+    expect(log.slice(before)).toEqual(["rejected e3"]);
+    before = log.length;
+    f.stop();
+    f.start();
+    await flush();
+    expect(log.slice(before)).toEqual(["rejected e4"]);
+    expect(onPushRejected).toHaveBeenCalledTimes(12);
+    expect(await pendingIds(f)).toHaveLength(13);
+
+    // One retry after sign-in pushes everything, each record in order.
+    signedIn = true;
+    before = log.length;
+    f.retryRejectedPushes();
+    await flush();
+    expect(log.slice(before)).toEqual([
+      "accepted e5",
+      `accepted ${["e1", "e2", "e3", "e4", ...ids.slice(5).map((id) => `e${id}`)].join(",")}`,
+      "accepted e13",
+    ]);
+    expect(await pendingIds(f)).toEqual([]);
+    expect(f.rows.get("1")).toEqual({ id: 1, title: "later" });
+    f.stop();
+  });
+
+  test(`${scope}: an accepted probe pushes the other parked events; a refused one stays parked`, async () => {
+    const onPushRejected = vi.fn();
+    const f = fixture(scope, { onPushRejected });
+    for (const id of ["1", "2", "3"]) await f.writeLocally(write(`e${id}`, id, `t${id}`));
+    let signedIn = false;
+    const log = atomicProvider(f, (event) => !signedIn || event.eventId === "e3");
+    f.start();
+    await vi.waitFor(() => expect(onPushRejected).toHaveBeenCalledTimes(3));
+    await settle();
+
+    signedIn = true;
+    const before = log.length;
+    f.retryRejectedPushes();
+    await vi.waitFor(async () => expect(await pendingIds(f)).toEqual(["e3"]));
+    await settle();
+    expect(log.slice(before)).toEqual([
+      "accepted e1",
+      "rejected e2,e3",
+      "accepted e2",
+      "rejected e3",
+    ]);
+    expect(onPushRejected).toHaveBeenCalledTimes(3);
+    f.stop();
+  });
+
+  test(`${scope}: a refused probe moves on to the next parked record on the next retry`, async () => {
+    const onPushRejected = vi.fn();
+    const f = fixture(scope, { onPushRejected });
+    for (const id of ["1", "2", "3"]) await f.writeLocally(write(`e${id}`, id, `t${id}`));
+    await f.writeLocally(write("e4", "1", "held"));
+    let signedIn = false;
+    // e1 can never be written: a true poison.
+    const log = atomicProvider(f, (event) => !signedIn || event.eventId === "e1");
+    f.start();
+    await vi.waitFor(() => expect(onPushRejected).toHaveBeenCalledTimes(3));
+    await settle();
+
+    signedIn = true;
+    let before = log.length;
+    f.retryRejectedPushes();
+    await vi.waitFor(() => expect(log.length).toBeGreaterThan(before));
+    await settle();
+    // The poison probes first and blocks this retry of the others.
+    expect(log.slice(before)).toEqual(["rejected e1"]);
+    expect(await pendingIds(f)).toEqual(["e1", "e2", "e3", "e4"]);
+
+    before = log.length;
+    f.retryRejectedPushes();
+    await vi.waitFor(async () => expect(await pendingIds(f)).toEqual(["e1", "e4"]));
+    await settle();
+    // The next record probes and is accepted; the other parked events follow, narrowed down.
+    expect(log.slice(before)).toEqual([
+      "accepted e2",
+      "rejected e1,e3",
+      "rejected e1",
+      "accepted e3",
+    ]);
+
+    // The next retry starts over from the oldest parked event.
+    before = log.length;
+    f.retryRejectedPushes();
+    await vi.waitFor(() => expect(log.length).toBeGreaterThan(before));
+    await settle();
+    expect(log.slice(before)).toEqual(["rejected e1"]);
+    expect(onPushRejected).toHaveBeenCalledTimes(3);
+    f.stop();
+  });
+
+  test(`${scope}: a transient failure of the probe retries the probe`, async () => {
+    const onPushRejected = vi.fn();
+    const f = fixture(scope, { onPushRejected });
+    for (const id of ["1", "2"]) await f.writeLocally(write(`e${id}`, id, `t${id}`));
+    let signedIn = false;
+    const log = atomicProvider(f, () => !signedIn);
+    f.start();
+    await vi.waitFor(() => expect(onPushRejected).toHaveBeenCalledTimes(2));
+    await settle();
+
+    const offline = new Error("unavailable");
+    const permanent = f.adapter.push.getMockImplementation()!;
+    f.adapter.push.mockImplementationOnce(async () => {
+      log.push("offline");
+      throw offline;
+    });
+    f.adapter.push.mockImplementation(permanent);
+    signedIn = true;
+    const before = log.length;
+    f.retryRejectedPushes();
+    await vi.waitFor(async () => expect(await pendingIds(f)).toEqual([]));
+    expect(log.slice(before)).toEqual(["offline", "accepted e1", "accepted e2"]);
+    expect(f.onSyncError).toHaveBeenCalledWith(offline);
+    expect(onPushRejected).toHaveBeenCalledTimes(2);
     f.stop();
   });
 

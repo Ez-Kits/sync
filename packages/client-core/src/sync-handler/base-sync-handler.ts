@@ -82,6 +82,8 @@ export abstract class BaseSyncHandler<
   private parkedRetryDue = new Set<string>();
   private parkedRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private parkedRetryDelays = new Map<string, number>();
+  /** Per queue, the event id of the last retry's probe (see `retryParked`). */
+  private parkedProbes = new Map<string, string>();
 
   constructor(protected readonly config: BaseSyncHandlerConfig<C, DB, TCheckpoint>) {
     this.collectionMap = new Map(
@@ -397,7 +399,7 @@ export abstract class BaseSyncHandler<
   /**
    * Push a queue's pending `events` (all of them, in outbox order). Parked events, and later
    * events of their records, are left out, except when their retry is due: then the parked
-   * events are pushed first, on their own. Resolves `false` while events stay parked.
+   * events are retried first (`retryParked`). Resolves `false` while events stay parked.
    */
   protected async pushPending<N extends CollectionNames<C>>(
     queueKey: string,
@@ -415,8 +417,7 @@ export abstract class BaseSyncHandler<
     let toPush = events;
     if (this.parkedRetryDue.has(queueKey)) {
       const parked = events.filter(({ eventId }) => this.parkedEvents.has(eventId as string));
-      if (parked.length > 0) {
-        await this.pushAndAcknowledge(syncAdapter, parked, pass);
+      if (parked.length > 0 && (await this.retryParked(queueKey, syncAdapter, parked, pass))) {
         toPush = await this.pendingAmong(events);
       }
       this.parkedRetryDue.delete(queueKey);
@@ -429,8 +430,42 @@ export abstract class BaseSyncHandler<
     if (pass.rejections.length > 0) this.config.onSyncError?.(pass.rejections.at(-1));
     const parked = [...this.parkedEvents.values()].some((entry) => entry.queueKey === queueKey);
     if (parked) this.scheduleParkedRetry(queueKey, signal);
-    else this.parkedRetryDelays.delete(queueKey);
+    else {
+      this.parkedRetryDelays.delete(queueKey);
+      this.parkedProbes.delete(queueKey);
+    }
     return !parked;
+  }
+
+  /**
+   * Retry a queue's `parked` events, in outbox order, starting with one probe pushed alone.
+   * Resolves whether the probe was accepted; only then are the other parked events pushed (and
+   * narrowed down again if refused). A refused probe keeps everything parked and ends the
+   * retry, so a client whose every write is refused, e.g. signed out, costs one provider write
+   * per retry, not about two per parked event. A transient failure rejects, and the push queue
+   * retries the same probe.
+   *
+   * The probe is the parked event after the previous retry's probe, wrapping around, starting
+   * with the oldest. Parked events of different records are independent, so the trade-off is a
+   * refused probe that only its own record cannot write (a true poison) delays the others by a
+   * retry; rotating the probe tries each parked record over successive retries, so a
+   * writable one is reached within as many retries as there are parked records.
+   */
+  private async retryParked<N extends CollectionNames<C>>(
+    queueKey: string,
+    syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
+    parked: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
+    pass: PushPass,
+  ): Promise<boolean> {
+    const previous = parked.findIndex(({ eventId }) => eventId === this.parkedProbes.get(queueKey));
+    const probe = parked[(previous + 1) % parked.length]!;
+    await this.pushAndAcknowledge(syncAdapter, [probe], pass);
+    this.parkedProbes.set(queueKey, probe.eventId as string);
+    // An acknowledged event is no longer parked.
+    if (this.parkedEvents.has(probe.eventId as string)) return false;
+    const others = parked.filter((event) => event !== probe);
+    if (others.length > 0) await this.pushAndAcknowledge(syncAdapter, others, pass);
+    return true;
   }
 
   /**

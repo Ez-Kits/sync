@@ -159,4 +159,29 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
       onTie: "local",
     }),
     syncAdapter: createTodoFirestoreSyncAdapter(),
+    /**
+     * Firestore refused a write on its own (security rules, validation). It stays in the
+     * outbox and is retried, so log it and keep it. A write that can never succeed (rules
+     * or data that will not change) would be dropped with `rejection.discard()`, then the
+     * local row reverted, e.g. by reading the document back with `getDoc` and writing it
+     * locally, or left for the user to fix and save again.
+     */
+    onPushRejected: (rejection) => {
+      console.warn(
+        "Firestore rejected a todo write; it stays queued:",
+        rejection.event,
+        rejection.error,
+      );
+    },
   });
+
+/*
+ * This example does not use Firebase Auth. With rules that require a signed-in user, writes
+ * made while signed out are refused and parked; push them as soon as the user signs in:
+ *
+ *   import { getAuth, onAuthStateChanged } from "firebase/auth";
+ *
+ *   onAuthStateChanged(getAuth(), (user) => {
+ *     if (user) syncClient.retryRejectedPushes();
+ *   });
+ */
