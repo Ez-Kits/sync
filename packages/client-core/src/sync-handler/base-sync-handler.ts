@@ -3,7 +3,11 @@ import type {
   ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
 } from "../change-bus";
-import type { ICheckpointStorage } from "../checkpoint-storage";
+import {
+  isTransactionalCheckpointStorage,
+  type ICheckpointStorage,
+  type TransactionalCheckpointStorage,
+} from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
 import type {
   BaseDBAdapter,
@@ -26,6 +30,10 @@ export interface BaseSyncHandlerConfig<
   collections: C;
   db: DB;
   changeBus: ChangeBus<SyncHandlerDataMap<C>>;
+  /**
+   * A transactional storage (`createDBCheckpointStorage`) over `localChangeStore` is saved
+   * inside each pull transaction; any other storage after the transaction commits.
+   */
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
   localChangeStore: ILocalChangeStore;
   onSyncError?: (error: unknown) => void;
@@ -51,21 +59,6 @@ export abstract class BaseSyncHandler<
 > {
   protected readonly collectionMap: Map<CollectionNames<C>, C[number]>;
   private pushQueues = new Map<string, Promise<void>>();
-  /**
-   * Per record, the latest pulled event skipped because the record had pending local writes.
-   * Its pending writes may already be on the remote, and that event may be their echo, with
-   * server-assigned fields or a concurrent write the server applied after them. Pull will not
-   * send it again past the saved checkpoint, so the acknowledgement that leaves the record
-   * with no pending writes applies it. Pull delivers in server order: when the latest skipped
-   * event predates the push, the push's own echo follows and is applied normally over it.
-   * Any later remote event of the record replaces it, or clears it once applied or merged.
-   *
-   * Kept in memory: a reload, or a new leader, before that acknowledgement forgets it, and
-   * the record then catches up with the remote on its next remote change. A pull transaction
-   * that rolls back after updating it leaves remote state at least as old as what its stream
-   * re-delivers from the checkpoint, so the next delivery corrects it.
-   */
-  private skippedRemoteEvents = new Map<string, ChangeBusEvent<SyncHandlerDataMap<C>>>();
   /**
    * Pending events the provider refused on their own, by event id. A parked event stays in the
    * outbox and is left out of pushes, with every later event of its record, so the record's
@@ -244,7 +237,9 @@ export abstract class BaseSyncHandler<
 
   /**
    * Apply one pulled batch in a single transaction, announce what it applied and save its
-   * checkpoint. Resolves `true` when conflict resolution queued an outbox event to push.
+   * checkpoint: in that transaction when the checkpoint storage is transactional (then a
+   * batch without changes still opens one), after it commits otherwise. Resolves `true`
+   * when conflict resolution queued an outbox event to push.
    */
   protected async commitPulledChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
@@ -256,23 +251,30 @@ export abstract class BaseSyncHandler<
   ): Promise<boolean> {
     let applied: ChangeBusEvent<SyncHandlerDataMap<C>>[] = [];
     let needsPush = false;
-    if (changes.length > 0) {
+    const transactionalStorage = this.transactionalCheckpointStorage();
+    if (changes.length > 0 || transactionalStorage) {
       await this.config.db.transaction(async (tx, context) => {
         applied = [];
         needsPush = false;
+        const skipped = await this.config.localChangeStore.getSkippedRemoteEvents(
+          undefined,
+          context.native,
+        );
+        const skippedKeys = new Set(skipped.map(recordKeyString));
         for (const event of changes) {
-          const resolved = await this.resolveRemoteEvent(event, context);
+          const resolved = await this.resolveRemoteEvent(event, context, skippedKeys);
           needsPush ||= resolved.needsPush;
           if (!resolved.event) continue;
           await apply(resolved.event, tx);
           applied.push(resolved.event);
         }
+        if (transactionalStorage) await this.saveCheckpointMap(checkpoint, context.native);
       });
     }
 
     this.config.changeBus.publishRemoteBatch(applied);
     if (applied.length > 0) this.config.onRemoteChangesCommitted?.(applied);
-    await this.saveCheckpointMap(checkpoint);
+    if (!transactionalStorage) await this.saveCheckpointMap(checkpoint);
     this.config.onSyncSuccess?.();
     return needsPush;
   }
@@ -283,7 +285,7 @@ export abstract class BaseSyncHandler<
    * writes takes the remote event as is; otherwise the conflict resolver decides, and without
    * one the local state is kept:
    * - `"local"`: skip the remote event; the pending writes are pushed later. The skipped event
-   *   is remembered for their acknowledgement (see `skippedRemoteEvents`).
+   *   is stored for their acknowledgement (see below).
    * - `"remote"`: apply it and drop the pending writes, so they never overwrite it.
    * - `{ data }`: apply the merged data and replace the pending writes with one event that
    *   pushes it: a create when the remote deleted the record, an update otherwise.
@@ -293,10 +295,24 @@ export abstract class BaseSyncHandler<
    * pending and is pushed after it. What the provider accepted cannot be taken back, though: it
    * lands remotely after the decision and, like any remote write, comes back through pull,
    * where both sides converge on it.
+   *
+   * Skipped remote events: per record, the store keeps the latest pulled event skipped because
+   * the record had pending writes. Those writes may already be on the remote, and the event may
+   * be their echo, with server-assigned fields or a concurrent write the server applied after
+   * them. Pull will not send it again past the saved checkpoint, so the acknowledgement that
+   * leaves the record with no pending writes applies it (`removeFromOutbox`). Pull delivers in
+   * server order: when the latest skipped event predates the push, the push's own echo follows
+   * and is applied normally over it. Any later remote event of the record replaces it, or
+   * removes it once applied or merged. It is written in the pull transaction, so it rolls back
+   * with the batch and survives a reload or a leader change with the outbox.
+   *
+   * `skippedKeys` holds the records (`recordKeyString`) with a stored skipped event; when
+   * given, no removal is sent for a record without one, and it is kept up to date.
    */
   protected async resolveRemoteEvent(
     event: ChangeBusEvent<SyncHandlerDataMap<C>>,
     context: DBAdapterTransactionContext<C>,
+    skippedKeys?: Set<string>,
   ): Promise<{ event?: ChangeBusEvent<SyncHandlerDataMap<C>>; needsPush: boolean }> {
     const collection = event.collection as CollectionNames<C>;
     const key = this.dirtyRecordKey(event);
@@ -304,16 +320,24 @@ export abstract class BaseSyncHandler<
     const skippedKey = recordKeyString(key);
     const store = this.config.localChangeStore;
     const { native, operations } = context;
+    const rememberSkipped = async () => {
+      await store.upsertSkippedRemoteEvent({ ...key, event }, native);
+      skippedKeys?.add(skippedKey);
+    };
+    const forgetSkipped = async () => {
+      if (skippedKeys && !skippedKeys.delete(skippedKey)) return;
+      await store.removeSkippedRemoteEvents([key], native);
+    };
     const dirty = await store.getDirtyRecords(key, native);
     const pending = await store.getPendingEvents(key, native);
     if (dirty.length === 0 && pending.length === 0) {
-      this.skippedRemoteEvents.delete(skippedKey);
+      await forgetSkipped();
       return { event, needsPush: false };
     }
 
     const resolver = this.config.conflictResolver;
     if (!resolver) {
-      this.skippedRemoteEvents.set(skippedKey, event);
+      await rememberSkipped();
       return { needsPush: false };
     }
     const local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined =
@@ -322,11 +346,11 @@ export abstract class BaseSyncHandler<
         : await operations.get(collection, coerceRecordId(recordId) as never);
     const resolution = await resolver({ remote: event, local });
     if (resolution === "local") {
-      this.skippedRemoteEvents.set(skippedKey, event);
+      await rememberSkipped();
       return { needsPush: false };
     }
     // Applied, or merged into the pushed data: the remote state is no longer missing locally.
-    this.skippedRemoteEvents.delete(skippedKey);
+    await forgetSkipped();
 
     await store.deleteEvents(
       pending.map(({ id }) => id),
@@ -623,8 +647,9 @@ export abstract class BaseSyncHandler<
   /**
    * Remove pushed events from the local store and refresh dirty tracking, in one transaction:
    * a failure part way leaves the outbox as it was. A record left with no pending writes takes
-   * its skipped remote event (`skippedRemoteEvents`) in that transaction, announced like a
-   * pulled change once it commits. Resolves false when this handler may no longer write.
+   * its stored skipped remote event (see `resolveRemoteEvent`) in that transaction, which also
+   * removes it, announced like a pulled change once it commits. Resolves false when this
+   * handler may no longer write.
    */
   private async removeFromOutbox(
     events: ChangeBusEvent<SyncHandlerDataMap<C>>[],
@@ -641,20 +666,32 @@ export abstract class BaseSyncHandler<
     }
 
     const store = this.config.localChangeStore;
-    let applied: Array<[string, ChangeBusEvent<SyncHandlerDataMap<C>>]> = [];
+    let applied: ChangeBusEvent<SyncHandlerDataMap<C>>[] = [];
     await this.config.db.transaction(async (tx, { native }) => {
       applied = [];
       if (eventIds.length > 0) await store.deleteEvents(eventIds, native);
 
       const keysToRemove: DirtyRecordKey[] = [];
-      for (const [skippedKey, key] of affectedKeys) {
+      const appliedKeys: DirtyRecordKey[] = [];
+      // Read once, when a record is left with no pending writes.
+      let skippedEvents: Map<string, unknown> | undefined;
+      for (const [recordKey, key] of affectedKeys) {
         const remaining = await store.getPendingEvents(key, native);
         if (remaining.length === 0) {
           keysToRemove.push(key);
-          const skipped = this.skippedRemoteEvents.get(skippedKey);
+          skippedEvents ??= new Map(
+            (await store.getSkippedRemoteEvents(undefined, native)).map((entry) => [
+              recordKeyString(entry),
+              entry.event,
+            ]),
+          );
+          const skipped = skippedEvents.get(recordKey) as
+            | ChangeBusEvent<SyncHandlerDataMap<C>>
+            | undefined;
           if (skipped) {
             await this.applyAnyCollectionEvent(skipped, tx);
-            applied.push([skippedKey, skipped]);
+            applied.push(skipped);
+            appliedKeys.push(key);
           }
           continue;
         }
@@ -668,15 +705,14 @@ export abstract class BaseSyncHandler<
       }
 
       if (keysToRemove.length > 0) await store.removeDirtyRecords(keysToRemove, native);
+      // Removed with the acknowledgement: a failed transaction keeps them for the retry.
+      if (appliedKeys.length > 0) await store.removeSkippedRemoteEvents(appliedKeys, native);
     });
 
-    // Forgotten only once applied: a failed transaction keeps them for the retry.
-    for (const [skippedKey] of applied) this.skippedRemoteEvents.delete(skippedKey);
     for (const eventId of eventIds) this.forgetParked(eventId);
     if (applied.length > 0) {
-      const changes = applied.map(([, event]) => event);
-      this.config.changeBus.publishRemoteBatch(changes);
-      this.config.onRemoteChangesCommitted?.(changes);
+      this.config.changeBus.publishRemoteBatch(applied);
+      this.config.onRemoteChangesCommitted?.(applied);
     }
     return true;
   }
@@ -706,15 +742,38 @@ export abstract class BaseSyncHandler<
     return checkpointMap;
   }
 
+  /** Save each defined checkpoint; in the given transaction for a transactional storage. */
   protected async saveCheckpointMap(
     checkpointMap: Partial<Record<CollectionNames<C>, TCheckpoint>>,
+    transactionContext?: unknown,
   ): Promise<void> {
+    const storage = this.config.checkpointStorage;
     for (const collection of this.config.collections) {
       const collectionName = collection.name as CollectionNames<C>;
       const checkpoint = checkpointMap[collectionName];
       if (checkpoint === undefined) continue;
-      await this.config.checkpointStorage.saveCheckpoint(collectionName, checkpoint);
+      if (transactionContext === undefined) {
+        await storage.saveCheckpoint(collectionName, checkpoint);
+      } else {
+        await (
+          storage as TransactionalCheckpointStorage<CollectionNames<C>, TCheckpoint>
+        ).saveCheckpoint(collectionName, checkpoint, transactionContext);
+      }
     }
+  }
+
+  /**
+   * The checkpoint storage when it joins the pull transaction: transactional and over this
+   * handler's local-change store, whose transactions are the adapter's.
+   */
+  private transactionalCheckpointStorage():
+    | TransactionalCheckpointStorage<CollectionNames<C>, TCheckpoint>
+    | undefined {
+    const storage = this.config.checkpointStorage;
+    return isTransactionalCheckpointStorage(storage) &&
+      storage.localChangeStore === this.config.localChangeStore
+      ? storage
+      : undefined;
   }
 
   private dirtyRecordKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): DirtyRecordKey {

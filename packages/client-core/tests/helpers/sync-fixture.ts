@@ -1,6 +1,6 @@
 import { vi } from "vite-plus/test";
 import { ChangeBus } from "../../src/change-bus";
-import type { StoredChangeBusEvent } from "../../src/local-change-store";
+import type { ILocalChangeStore, StoredChangeBusEvent } from "../../src/local-change-store";
 import { CollectionSyncHandler } from "../../src/sync-handler/collection-sync-handler";
 import { GlobalSyncHandler } from "../../src/sync-handler/global-sync-handler";
 import { createTestLocalChangeStore } from "./local-change-store";
@@ -44,7 +44,8 @@ export function fixture(scope: Scope, overrides: Record<string, unknown> = {}) {
       checkpoints.set(name, checkpoint);
     }),
   };
-  const store = createTestLocalChangeStore();
+  const store =
+    (overrides.localChangeStore as ILocalChangeStore | undefined) ?? createTestLocalChangeStore();
   const streams: Array<{ options: any; cleanup: ReturnType<typeof vi.fn> }> = [];
   const pushed: any[][] = [];
   let pushGate: Promise<void> | undefined;
@@ -84,10 +85,11 @@ export function fixture(scope: Scope, overrides: Record<string, unknown> = {}) {
     onRemoteChangesCommitted,
     ...overrides,
   };
-  const handler =
+  const createHandler = () =>
     scope === "global"
       ? new GlobalSyncHandler(config as never)
       : new CollectionSyncHandler(config as never);
+  let handler = createHandler();
   return {
     rows,
     native,
@@ -124,6 +126,11 @@ export function fixture(scope: Scope, overrides: Record<string, unknown> = {}) {
     },
     retryRejectedPushes() {
       handler.retryRejectedPushes();
+    },
+    /** Stop the handler and replace it with a new one over the same rows and store, as a reload does. */
+    reload() {
+      this.stop();
+      handler = createHandler();
     },
     /** A committed local write: the row, its outbox event and its dirty record. */
     async writeLocally(event: StoredChangeBusEvent) {

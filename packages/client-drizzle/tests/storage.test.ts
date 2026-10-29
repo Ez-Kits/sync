@@ -300,3 +300,22 @@ test("predefined applied-event tables are keyed by event id and pruned by applie
     ).toEqual([["ez_sync_applied_events_applied_at", ["appliedAt"]]]);
   }
 });
+
+test("predefined checkpoint and skipped-event tables are keyed by collection, then record", () => {
+  for (const config of [
+    getSqliteTableConfig(sqliteLocalChangeTables.checkpoints),
+    getPgTableConfig(pgLocalChangeTables.checkpoints),
+  ]) {
+    expect(config.name).toBe("ez_sync_checkpoints");
+    expect(config.columns.find((column) => column.name === "collection")?.primary).toBe(true);
+  }
+  for (const config of [
+    getSqliteTableConfig(sqliteLocalChangeTables.skippedRemoteEvents),
+    getPgTableConfig(pgLocalChangeTables.skippedRemoteEvents),
+  ]) {
+    expect(config.name).toBe("ez_sync_skipped_remote_events");
+    expect(config.primaryKeys.map((key) => key.columns.map((column: any) => column.name))).toEqual([
+      ["collection", "recordId"],
+    ]);
+  }
+});

@@ -3,6 +3,7 @@ export * from "./collection";
 export * from "./core/create-typeorm-proxy-db-adapter";
 export type {
   TypeOrmAppliedEventRow,
+  TypeOrmCheckpointRow,
   TypeOrmEventRow,
   TypeOrmLocalChangeEntities,
 } from "./core/local-change-store";

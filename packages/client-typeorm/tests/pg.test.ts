@@ -66,9 +66,11 @@ test("a sync client writes through the adapter, its outbox created by the adapte
     ).map((row) => (row as { table_name: string }).table_name),
   ).toEqual([
     "ez_sync_applied_events",
+    "ez_sync_checkpoints",
     "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
+    "ez_sync_skipped_remote_events",
     "todos",
   ]);
 

@@ -28,13 +28,36 @@ sync client ──> DB adapter (ORM bridge) ──> DBStorage (contract) ──>
 - A **DB adapter** turns the storage into a driver for its ORM (for example `createDrizzleSqliteDBAdapter({ dbStorage, collections })` from `@ez-kits/sync-client-drizzle-adapter/sqlite`). It implements collection CRUD, keeps the outbox (`localChangeStore`) in the same database, and runs its transactions on `dbStorage.transaction`.
 - The **sync client** takes the adapter: `createSyncClient({ collections, dbAdapter, checkpointStorage })`.
 
+## Checkpoint storage
+
+Pull checkpoints belong in the database they describe. Use `createDBCheckpointStorage` over the adapter's local-change store:
+
+```ts
+const checkpointStorage = createDBCheckpointStorage({
+  localChangeStore: dbAdapter.localChangeStore,
+  // Same contract as `createLocalStorageCheckpointStorage`: checkpoints may hold values JSON
+  // cannot represent (a Firestore `Timestamp`), and `undefined` removes the stored one.
+  serializer: (checkpoint) =>
+    JSON.stringify({ ...checkpoint, updatedAt: checkpoint.updatedAt.toMillis() }),
+  deserializer: (value) => {
+    const { updatedAt, id } = JSON.parse(value);
+    return { updatedAt: Timestamp.fromMillis(updatedAt), id };
+  },
+});
+const client = createSyncClient({ collections, dbAdapter, checkpointStorage });
+```
+
+Its checkpoints are stored in the `ez_sync_checkpoints` table, next to the outbox, and each pulled checkpoint is saved inside the transaction that commits the pulled rows: both commit or roll back together, and a database that is lost or reset (an in-memory sql.js storage, a failed or cleared IndexedDB snapshot, a database deleted on logout, a new storage key) loses its checkpoints with its rows, so the next pull starts over and fetches everything again. The sync client rejects a DB checkpoint storage over another store than its adapter's. `client.getCheckpoint` / `saveCheckpoint` read and write it on their own, outside any transaction.
+
+`createLocalStorageCheckpointStorage({ key, serializer, deserializer })`, or any other `ICheckpointStorage`, is saved after the pull transaction commits. It can outlive the database: a pull that resumes from a surviving checkpoint never fetches the remote changes before it, and the reset database misses them for good. Prefer the DB storage. It never reads checkpoints another storage saved, so switching to it makes the next pull of each collection start without a checkpoint, once, a full re-pull that the outbox and conflict handling make safe.
+
 `createLocalDBStorage({ dialect, open })` runs an engine in this context, which always leads. Use it for Node, tests, single-context apps, and engines that are already shared across tabs.
 
 ## Persistence guarantees
 
 Every local collection mutation is crash-safe: the collection row, outbox event, and dirty-record state commit together or none are persisted. The adapter's required `commitLocalMutation` runs the row mutation and both local-change writes in one storage transaction. It passes the transaction handle to the store write methods, and the change bus is notified only after commit. Adapters without a DB storage or an atomic local-change store are rejected; there is no default outbox or best-effort mutation path.
 
-The local-change store owns its schema. Every store implements `initialize()`, which creates the outbox and dirty-record storage when it is missing, upgrades storage an older version created, and must be idempotent and safe to run from several tabs at once. The sync client calls it once the DB storage is ready, in every context, and waits for it before any collection read or write, live query, or sync. A failure rejects those operations and reports a sync `error` status. Applications never create these tables in their own migrations.
+The local-change store owns its schema. Every store implements `initialize()`, which creates the storage of the outbox, dirty records, checkpoints and skipped remote events when it is missing, upgrades storage an older version created, and must be idempotent and safe to run from several tabs at once. The sync client calls it once the DB storage is ready, in every context, and waits for it before any collection read or write, live query, or sync. A failure rejects those operations and reports a sync `error` status. Applications never create these tables in their own migrations.
 
 Adapters should implement `getOptional` to distinguish an absent record from a database failure. When it is unavailable, core treats an explicit `undefined` from `get` as absence and propagates rejected reads; it never infers absence from an arbitrary database error. `get` remains available when callers require the row to exist.
 
@@ -46,7 +69,7 @@ Pass `resolveConflict` to inspect an incoming remote event when the same record 
 - `"remote"` applies the remote event and discards the record's pending local writes, so they are never pushed over it.
 - `{ data }` stores `data` locally and replaces the record's pending writes with one outbox event that pushes it, scheduled once the pull commits. After a remote delete, `data` recreates the record.
 
-With no hook, a record with pending local writes keeps its local state (the `"local"` decision); records without pending writes always take remote changes. A skipped remote event is not lost, though: pull and push are independent streams, so the server's copy of a pushed write (with server-assigned fields such as a server timestamp, and any concurrent change the server applied after it) can arrive before the push is acknowledged, and the checkpoint has already moved past it. Core remembers the latest remote event skipped for each record and applies it in the acknowledgement transaction that leaves the record with no pending writes (or the `discard` of a parked rejected event), announced like a pulled change. Pull delivers in server order, so when that event is older than the push, the push's own echo arrives afterwards and is applied over it. A `"remote"` or `{ data }` decision, or a later remote change applied normally, replaces what was remembered. The memory is per sync handler: a reload or a leader change before the acknowledgement forgets it, and the record catches up with the remote on its next remote change. Live queries, other tabs and `onRemoteChangesCommitted` see the changes as applied, not the raw remote events. A push already in flight when a decision replaces its events cannot be recalled: the provider applies it after the decision, and both sides converge on it once pull delivers it back. Applications should include comparable version metadata if they need a stronger deterministic winner policy.
+With no hook, a record with pending local writes keeps its local state (the `"local"` decision); records without pending writes always take remote changes. A skipped remote event is not lost, though: pull and push are independent streams, so the server's copy of a pushed write (with server-assigned fields such as a server timestamp, and any concurrent change the server applied after it) can arrive before the push is acknowledged, and the checkpoint has already moved past it. Core stores the latest remote event skipped for each record in the local-change store (`ez_sync_skipped_remote_events`), in the pull transaction, and applies and removes it in the acknowledgement transaction that leaves the record with no pending writes (or the `discard` of a parked rejected event), announced like a pulled change. Pull delivers in server order, so when that event is older than the push, the push's own echo arrives afterwards and is applied over it. A `"remote"` or `{ data }` decision, or a later remote change applied normally, removes what was stored. Being in the database, it survives a reload or a leader change before the acknowledgement, and rolls back with a pull transaction that fails. It is stored as JSON, like outbox event data. Live queries, other tabs and `onRemoteChangesCommitted` see the changes as applied, not the raw remote events. A push already in flight when a decision replaces its events cannot be recalled: the provider applies it after the decision, and both sides converge on it once pull delivers it back. Applications should include comparable version metadata if they need a stronger deterministic winner policy.
 
 ## Multiple tabs
 

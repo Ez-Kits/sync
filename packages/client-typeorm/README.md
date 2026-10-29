@@ -3,7 +3,7 @@
 TypeORM adapter for EzSync. It bridges a `DBStorage` (sql.js, SQLite WASM, PGlite, ...) to TypeORM: it creates the `DataSource` itself, with a driver that runs every statement on the storage, and provides collection CRUD, a typed data source for live queries, transactional application of pulled remote changes, and the outbox. It supports scalar and composite primary keys when the collection configuration and entity metadata agree.
 
 ```ts
-import { createSyncClient } from "@ez-kits/sync-client-core";
+import { createDBCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
 import { createSqlJsStorage } from "@ez-kits/sync-storage-sqljs";
@@ -16,6 +16,12 @@ const dbStorage = createSqlJsStorage({
 
 const collections = [defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" })];
 const dbAdapter = createTypeOrmSqliteDBAdapter({ dbStorage, collections });
+// Checkpoints in the database, saved in the transaction of the rows they describe.
+const checkpointStorage = createDBCheckpointStorage({
+  localChangeStore: dbAdapter.localChangeStore,
+  serializer: JSON.stringify,
+  deserializer: JSON.parse,
+});
 
 const client = createSyncClient({ collections, dbAdapter, checkpointStorage });
 
@@ -51,7 +57,7 @@ The data source opens when the sync client initializes the local-change store, b
 
 ## Outbox entities
 
-The outbox and dirty records live in predefined entities, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeEntities` from `./sqlite`, `pgLocalChangeEntities` from `./pg`). Pending events are read in the order of `seq`, a generated primary key the database assigns on insert (`TypeOrmEventRow`), so they follow commit order; event `id`s stay unique. The adapter registers the entities on its data source and creates their tables itself: its local-change store's `initialize()` builds them from the entity metadata in one transaction and records the schema version in `ez_sync_meta`. Tables an older version created (without `seq`) are rebuilt in that transaction, numbering the pending events in their old `createdAt, id` order. A third entity, `ez_sync_applied_events` (`TypeOrmAppliedEventRow`), records the `id` of every appended event in the same transaction and keeps it after the event is acknowledged, so a retried local mutation can tell it already landed (`hasAppliedEvent`). Records older than `APPLIED_EVENT_RETENTION_MS` (24 hours), counted back from the newest appended event, are pruned as events are appended. Schema version 3 adds it: `initialize()` creates it in databases of version 2. The sync client calls it before anything touches the database. Declare and migrate only your own entities.
+The outbox and dirty records live in predefined entities, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeEntities` from `./sqlite`, `pgLocalChangeEntities` from `./pg`). Pending events are read in the order of `seq`, a generated primary key the database assigns on insert (`TypeOrmEventRow`), so they follow commit order; event `id`s stay unique. The adapter registers the entities on its data source and creates their tables itself: its local-change store's `initialize()` builds them from the entity metadata in one transaction and records the schema version in `ez_sync_meta`. Tables an older version created (without `seq`) are rebuilt in that transaction, numbering the pending events in their old `createdAt, id` order. A third entity, `ez_sync_applied_events` (`TypeOrmAppliedEventRow`), records the `id` of every appended event in the same transaction and keeps it after the event is acknowledged, so a retried local mutation can tell it already landed (`hasAppliedEvent`). Records older than `APPLIED_EVENT_RETENTION_MS` (24 hours), counted back from the newest appended event, are pruned as events are appended. Schema version 3 adds it: `initialize()` creates it in databases of version 2. Two more entities keep the sync state that must live and die with the rows: `ez_sync_checkpoints` (`TypeOrmCheckpointRow`) holds the serialized checkpoints of `createDBCheckpointStorage` (recommended over localStorage: they are saved in the pull transaction, and lost with the database), and `ez_sync_skipped_remote_events` (`SkippedRemoteEvent`) holds, per record, the latest pulled event skipped because the record had pending writes, as JSON, until the acknowledgement that applies it. Schema version 4 adds them: `initialize()` creates them in databases of version 3. Switching an existing app to the DB checkpoint storage makes the next pull start without a checkpoint, once. The sync client calls it before anything touches the database. Declare and migrate only your own entities.
 
 `dbAdapter.transaction((tx, { native }) => ...)` passes the transaction's entity manager as `native`; give it to the local-change store to read or write the outbox in the same transaction.
 

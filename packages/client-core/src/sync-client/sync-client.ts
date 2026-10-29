@@ -3,6 +3,7 @@ import type {
   ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
 } from "../change-bus";
+import { isTransactionalCheckpointStorage } from "../checkpoint-storage";
 import {
   CollectionRuntime,
   type CollectionConfigMap,
@@ -82,6 +83,16 @@ export class SyncClientImpl<
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
     assertDBAdapter(config.dbAdapter);
+    const { checkpointStorage } = config;
+    if (
+      isTransactionalCheckpointStorage(checkpointStorage) &&
+      checkpointStorage.localChangeStore !== config.dbAdapter.localChangeStore
+    ) {
+      // Its transactions would not be the adapter's: the checkpoint could not commit with its rows.
+      throw new Error(
+        "The DB checkpoint storage must use the local-change store of the sync client's adapter.",
+      );
+    }
     this.dbAdapter = config.dbAdapter;
     this.dbStorage = config.dbAdapter.dbStorage;
     this.tabs = new SyncTabChannel(this.dbStorage.key);

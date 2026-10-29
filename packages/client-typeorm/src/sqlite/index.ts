@@ -1,18 +1,26 @@
-import type { CollectionConfigMap, DirtyRecord } from "@ez-kits/sync-client-core";
+import type {
+  CollectionConfigMap,
+  DirtyRecord,
+  SkippedRemoteEvent,
+} from "@ez-kits/sync-client-core";
 import { DataSource, EntitySchema, type DataSourceOptions } from "typeorm";
 import type { BuildSchemaFromCollections } from "../collection";
 import {
   createTypeOrmProxyDBAdapter,
   type TypeOrmProxyDBAdapterConfig,
 } from "../core/create-typeorm-proxy-db-adapter";
-import type { TypeOrmAppliedEventRow, TypeOrmEventRow } from "../core/local-change-store";
+import type {
+  TypeOrmAppliedEventRow,
+  TypeOrmCheckpointRow,
+  TypeOrmEventRow,
+} from "../core/local-change-store";
 import type { TypeOrmDBAdapter } from "../types";
 import { createTypeOrmSqliteDriver } from "./storage-driver";
 
 export * from "./storage-driver";
 
 /**
- * Outbox, dirty-record and applied-event entities of SQLite storages. The adapter registers them and
+ * Outbox, dirty-record, applied-event, checkpoint and skipped-event entities of SQLite storages. The adapter registers them and
  * creates and upgrades their tables itself; applications never declare or migrate them.
  * `seq` is assigned on insert, so pending events follow commit order.
  */
@@ -52,6 +60,23 @@ export const sqliteLocalChangeEntities = {
       appliedAt: { type: "integer" },
     },
     indices: [{ name: "ez_sync_applied_events_applied_at", columns: ["appliedAt"] }],
+  }),
+  checkpoints: new EntitySchema<TypeOrmCheckpointRow>({
+    name: "EzSyncCheckpoint",
+    tableName: "ez_sync_checkpoints",
+    columns: {
+      collection: { type: "text", primary: true },
+      value: { type: "text" },
+    },
+  }),
+  skippedRemoteEvents: new EntitySchema<SkippedRemoteEvent>({
+    name: "EzSyncSkippedRemoteEvent",
+    tableName: "ez_sync_skipped_remote_events",
+    columns: {
+      collection: { type: "text", primary: true },
+      recordId: { type: "text", primary: true },
+      event: { type: "simple-json" },
+    },
   }),
 };
 

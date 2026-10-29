@@ -47,9 +47,11 @@ test("runs the adapter and its outbox on the storage, initializing the data sour
   expect(db.isInitialized).toBe(true);
   expect(await rows("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")).toEqual([
     { name: "ez_sync_applied_events" },
+    { name: "ez_sync_checkpoints" },
     { name: "ez_sync_dirty_records" },
     { name: "ez_sync_events" },
     { name: "ez_sync_meta" },
+    { name: "ez_sync_skipped_remote_events" },
     // AUTOINCREMENT's counter for `seq`.
     { name: "sqlite_sequence" },
     { name: "todos" },

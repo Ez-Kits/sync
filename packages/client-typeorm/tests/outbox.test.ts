@@ -123,7 +123,7 @@ for (const dialect of dialects) {
     ]);
     await otherTab.db.destroy();
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 3 },
+      { key: "schema_version", value: 4 },
     ]);
     expect(ids(await localChangeStore.getPendingEvents())).toEqual([
       "first-a",
@@ -168,7 +168,7 @@ for (const dialect of dialects) {
     await otherTab.localChangeStore.initialize();
     await otherTab.db.destroy();
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 3 },
+      { key: "schema_version", value: 4 },
     ]);
     expect(ids(await localChangeStore.getPendingEvents())).toEqual(["pending"]);
     await localChangeStore.appendEvents([event("after", 2)]);
