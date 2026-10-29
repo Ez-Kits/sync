@@ -8,6 +8,10 @@ import { createDrizzleLocalChangeStore } from "../src/create-drizzle-local-chang
 const todos = sqliteTable("todos", { id: integer("id").primaryKey(), title: text("title") });
 const collection = defineDrizzleCollection({ name: "todos", table: todos });
 const initialize = async () => {};
+const appliedEvents = sqliteTable("applied_events", {
+  eventId: text("eventId").primaryKey(),
+  appliedAt: integer("appliedAt").notNull(),
+});
 /** The storage of the last `adapterFor` call. */
 let dbStorage: any;
 
@@ -159,10 +163,16 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   }));
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
-    tables: { events, dirtyRecords },
+    tables: { events, dirtyRecords, appliedEvents },
     initialize,
   });
-  const nativeTransaction = { insert: transactionInsert };
+  const pruned: unknown[] = [];
+  const transactionDelete = vi.fn((table: unknown) => ({
+    where: vi.fn(async () => {
+      pruned.push(table);
+    }),
+  }));
+  const nativeTransaction = { insert: transactionInsert, delete: transactionDelete };
   const event = {
     id: "event",
     type: "create" as const,
@@ -174,6 +184,9 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   // A `seq` read back with an event never reaches the insert: the database assigns it.
   await store.appendEvents([{ ...event, seq: 7 } as typeof event], nativeTransaction);
   expect(inserted[0]).toEqual([event]);
+  // The applied record is pruned and written in the same transaction.
+  expect(pruned).toEqual([appliedEvents]);
+  expect(inserted[1]).toEqual([{ eventId: "event", appliedAt: 1 }]);
   await store.upsertDirtyRecord(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     nativeTransaction,
@@ -181,7 +194,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
   expect(store).toMatchObject({ initialize });
-  expect(transactionInsert).toHaveBeenCalledTimes(2);
+  expect(transactionInsert).toHaveBeenCalledTimes(3);
   expect(rootInsert).not.toHaveBeenCalled();
 });
 
@@ -241,7 +254,11 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   });
   const db = databaseFor("root");
   const tx = databaseFor("tx");
-  const store = createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords }, initialize });
+  const store = createDrizzleLocalChangeStore({
+    db,
+    tables: { events, dirtyRecords, appliedEvents },
+    initialize,
+  });
 
   await store.appendEvents([]);
   await store.deleteEvents([]);
@@ -322,7 +339,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
         values: () => ({ onDuplicateKeyUpdate }),
       }),
     },
-    tables: { events, dirtyRecords },
+    tables: { events, dirtyRecords, appliedEvents },
     initialize,
   });
   const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
@@ -333,7 +350,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
 
   const unsupportedStore = createDrizzleLocalChangeStore({
     db: { insert: () => ({ values: () => ({}) }) },
-    tables: { events, dirtyRecords },
+    tables: { events, dirtyRecords, appliedEvents },
     initialize,
   });
   await expect(unsupportedStore.upsertDirtyRecord(record)).rejects.toThrow(
@@ -357,7 +374,7 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
   createDrizzleLocalChangeStore({
     db,
     // @ts-expect-error event table omits persisted event columns
-    tables: { events: invalidEvents, dirtyRecords },
+    tables: { events: invalidEvents, dirtyRecords, appliedEvents },
     initialize,
   });
 
@@ -373,7 +390,7 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
   // @ts-expect-error arbitrary event payloads require a compatible JSON data column
   createDrizzleLocalChangeStore({
     db,
-    tables: { events: textDataEvents, dirtyRecords },
+    tables: { events: textDataEvents, dirtyRecords, appliedEvents },
     initialize,
   });
 });

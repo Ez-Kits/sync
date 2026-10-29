@@ -121,24 +121,24 @@ test("local mutations never fall back to sequential writes", async () => {
   expect(await store.getPendingEvents("todos")).toHaveLength(0);
 });
 
-test("retried mutations are recognised by their outbox event or an existing created row", async () => {
+test("retried mutations are recognised by their applied event, even once acknowledged", async () => {
   const db = makeDb();
   const store = atomicMemoryStore();
+  const sink = createLocalMutationSink(db, store);
   const base = { collection: "todos", recordId: "1", createdAt: 1, id: "1" };
-  const create: LocalMutation = { ...base, type: "create", eventId: "e1", data: { id: "1" } };
-  expect(await isLocalMutationCommitted(db, store, create)).toBe(false);
-  await createLocalMutationSink(db, store).commit(create);
-  expect(await isLocalMutationCommitted(db, store, create)).toBe(true);
-  await store.deleteEvents(["e1"]);
-  // Committed and already pushed: the row proves it.
-  expect(await isLocalMutationCommitted(db, store, create)).toBe(true);
-  const update: LocalMutation = { ...base, type: "update", eventId: "e2", data: { id: "1" } };
-  expect(await isLocalMutationCommitted(db, store, update)).toBe(false);
-
-  const withOptional = { ...db, getOptional: vi.fn(async () => undefined) };
-  expect(await isLocalMutationCommitted(withOptional, store, create)).toBe(false);
-  const throwingGet = { ...db, get: vi.fn(async () => Promise.reject(new Error("missing"))) };
-  expect(await isLocalMutationCommitted(throwingGet, store, create)).toBe(false);
+  const mutations: LocalMutation[] = [
+    { ...base, type: "create", eventId: "e1", data: { id: "1" } },
+    { ...base, type: "update", eventId: "e2", data: { id: "1" } },
+    { ...base, type: "delete", eventId: "e3" },
+  ];
+  for (const mutation of mutations) {
+    expect(await isLocalMutationCommitted(store, mutation)).toBe(false);
+    await sink.commit(mutation);
+    expect(await isLocalMutationCommitted(store, mutation)).toBe(true);
+    // Pushed and acknowledged: the applied record still proves it.
+    await store.deleteEvents([mutation.eventId]);
+    expect(await isLocalMutationCommitted(store, mutation)).toBe(true);
+  }
 });
 
 test("sync clients reject adapters without a DB storage or an atomic local-change store", () => {
@@ -254,6 +254,35 @@ test("a commit cut short by a leader change is retried once, without duplicates"
   await expect(client.collections.todos.insert({ id: "5" } as never)).rejects.toBeInstanceOf(
     LeaderChangedError,
   );
+  await client.dispose();
+});
+
+test("a retried update or delete never overwrites a newer write made after its push", async () => {
+  const db = makeDb();
+  const store = db.localChangeStore;
+  const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());
+  const commit = db.commitLocalMutation.getMockImplementation();
+  await client.collections.todos.insert({ id: "1", title: "a" } as never);
+  await client.collections.todos.insert({ id: "2", title: "a" } as never);
+
+  // The first attempt commits; its event is pushed and acknowledged, another tab writes a
+  // newer value, and only then does the leader change surface.
+  const committedThenNewerWrite = (newer: () => void) =>
+    db.commitLocalMutation.mockImplementationOnce(async (options: any) => {
+      await commit(options);
+      const pending = await store.getPendingEvents();
+      await store.deleteEvents(pending.map((event: { id: string }) => event.id));
+      newer();
+      throw new LeaderChangedError();
+    });
+  committedThenNewerWrite(() => db.rows.set("1", { id: "1", title: "newer" }));
+  await client.collections.todos.update({ id: "1", title: "stale" } as never);
+  committedThenNewerWrite(() => db.rows.set("2", { id: "2", title: "recreated" }));
+  await client.collections.todos.delete("2" as never);
+
+  expect(db.rows.get("1")).toMatchObject({ title: "newer" });
+  expect(db.rows.get("2")).toMatchObject({ title: "recreated" });
+  expect(db.commitLocalMutation).toHaveBeenCalledTimes(4);
   await client.dispose();
 });
 

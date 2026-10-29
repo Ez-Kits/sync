@@ -184,28 +184,54 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
     );
   }
   const schema = buildSchemaFromCollections(collections);
-  const { events, dirtyRecords } = driver.localChangeEntities;
-  const dataSource = driver.createDataSource(
-    dbStorage,
-    [
-      ...(Object.values(schema) as TypeOrmEntity[]),
-      ...(config.entities ?? []),
-      events,
-      dirtyRecords,
-    ],
-    config.dataSourceOptions,
-  );
+  const { events, dirtyRecords, appliedEvents } = driver.localChangeEntities;
+  const entities = [
+    ...(Object.values(schema) as TypeOrmEntity[]),
+    ...(config.entities ?? []),
+    events,
+    dirtyRecords,
+    appliedEvents,
+  ];
+  const dataSource = driver.createDataSource(dbStorage, entities, config.dataSourceOptions);
+  // SQLite drivers share one query runner per data source, so every statement sent while
+  // one of its transactions is open joins it. Adapter transactions get a data source of
+  // their own: statements on `dataSource` never see them uncommitted and wait their turn.
+  const transactionSource = driver.createDataSource(dbStorage, entities, config.dataSourceOptions);
+  let openingTransactionSource: Promise<unknown> | undefined;
+  const openTransactionSource = () =>
+    (openingTransactionSource ??= transactionSource.initialize().catch((error: unknown) => {
+      openingTransactionSource = undefined;
+      throw error;
+    }));
+  // The transaction data source is the adapter's own: it closes with `db`, and the next
+  // transaction opens it again.
+  const destroy = dataSource.destroy.bind(dataSource);
+  dataSource.destroy = async () => {
+    const opening = openingTransactionSource;
+    openingTransactionSource = undefined;
+    if (
+      opening &&
+      (await opening.then(
+        () => true,
+        () => false,
+      ))
+    ) {
+      await transactionSource.destroy();
+    }
+    await destroy();
+  };
   const db = createTypeOrmDatabase(dataSource, schema);
   const operations = createOperations(dataSource, schema, collections);
-  // SQLite drivers share one query runner, so a second transaction would nest inside an
-  // open one and outlive its commit: run them one at a time.
+  // A second transaction on the shared query runner would nest inside an open one and
+  // outlive its commit: run them one at a time.
   let lastTransaction: Promise<unknown> = Promise.resolve();
   const inTransaction = <T>(fn: (context: DBAdapterTransactionContext<C>) => Promise<T>) => {
-    const next = lastTransaction.then(() =>
-      dataSource.transaction((manager) =>
+    const next = lastTransaction.then(async () => {
+      await openTransactionSource();
+      return transactionSource.transaction((manager) =>
         fn({ operations: createOperations(manager, schema, collections), native: manager }),
-      ),
-    );
+      );
+    });
     lastTransaction = next.catch(() => undefined);
     return next;
   };

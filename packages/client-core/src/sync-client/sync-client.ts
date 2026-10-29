@@ -271,10 +271,7 @@ export class SyncClientImpl<
     const { localChangeStore } = this.dbAdapter;
     for (let attempt = 1; ; attempt += 1) {
       try {
-        if (
-          attempt > 1 &&
-          (await isLocalMutationCommitted(this.dbAdapter, localChangeStore, mutation))
-        ) {
+        if (attempt > 1 && (await isLocalMutationCommitted(localChangeStore, mutation))) {
           return;
         }
         await executeLocalMutation(this.dbAdapter, localChangeStore, mutation);

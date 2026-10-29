@@ -64,7 +64,13 @@ test("a sync client writes through the adapter, its outbox created by the adapte
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
       )
     ).map((row) => (row as { table_name: string }).table_name),
-  ).toEqual(["ez_sync_dirty_records", "ez_sync_events", "ez_sync_meta", "todos"]);
+  ).toEqual([
+    "ez_sync_applied_events",
+    "ez_sync_dirty_records",
+    "ez_sync_events",
+    "ez_sync_meta",
+    "todos",
+  ]);
 
   // Outbox rows keep their JSON payload and numeric timestamps.
   const pending = await adapter.localChangeStore.getPendingEvents("todos");

@@ -1,4 +1,5 @@
 import {
+  APPLIED_EVENT_RETENTION_MS,
   ChangeBus,
   createLocalDBStorage,
   GlobalSyncHandler,
@@ -140,7 +141,7 @@ for (const dialect of dialects) {
     await Promise.all([localChangeStore.initialize(), localChangeStore.initialize()]);
     expect(await rowsOf(dbStorage, dialect.seqColumn)).toEqual([{ name: "seq" }]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 2 },
+      { key: "schema_version", value: 3 },
     ]);
     const pending = await localChangeStore.getPendingEvents();
     expect(pending.map(({ id }) => id)).toEqual(["first-a", "first-b", "second", "late"]);
@@ -163,8 +164,44 @@ for (const dialect of dialects) {
     expect(execSpy).toHaveBeenCalledOnce();
     expect(await rowsOf(dbStorage, "SELECT * FROM ez_sync_events ORDER BY seq")).toEqual(snapshot);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 2 },
+      { key: "schema_version", value: 3 },
     ]);
+    await dbStorage.close();
+  }, 30_000);
+
+  test(`${dialect.name}: initialize upgrades version 2 tables with the applied-event table`, async () => {
+    const dbStorage = dialect.storage("CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);");
+    const { localChangeStore } = dialect.adapter(dbStorage);
+    await localChangeStore.initialize();
+    // Back to version 2: no applied-event table, one pending event.
+    await localChangeStore.appendEvents([event("pending", 1)]);
+    await dbStorage.exec(run("DROP TABLE ez_sync_applied_events"));
+    await dbStorage.exec(run("UPDATE ez_sync_meta SET value = 2 WHERE key = 'schema_version'"));
+
+    await dialect.adapter(dbStorage).localChangeStore.initialize();
+    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
+      { key: "schema_version", value: 3 },
+    ]);
+    expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
+    await localChangeStore.appendEvents([event("after", 2)]);
+    expect(await localChangeStore.hasAppliedEvent("after")).toBe(true);
+    await dbStorage.close();
+  }, 30_000);
+
+  test(`${dialect.name}: applied events outlive their acknowledgement until pruned`, async () => {
+    const dbStorage = dialect.storage("CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);");
+    const { localChangeStore } = dialect.adapter(dbStorage);
+    await localChangeStore.initialize();
+    await localChangeStore.appendEvents([event("old", 1), event("kept", 2)]);
+    expect(await localChangeStore.hasAppliedEvent("unknown")).toBe(false);
+    await localChangeStore.deleteEvents(["old", "kept"]);
+    expect(await localChangeStore.hasAppliedEvent("old")).toBe(true);
+
+    // Only records older than the retention, counted from the newest appended event, go.
+    await localChangeStore.appendEvents([event("new", 2 + APPLIED_EVENT_RETENTION_MS)]);
+    expect(await localChangeStore.hasAppliedEvent("old")).toBe(false);
+    expect(await localChangeStore.hasAppliedEvent("kept")).toBe(true);
+    expect(await localChangeStore.hasAppliedEvent("new")).toBe(true);
     await dbStorage.close();
   }, 30_000);
 }

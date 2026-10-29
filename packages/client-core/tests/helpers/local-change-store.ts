@@ -20,13 +20,18 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
   // Like the database's `seq`: events are read back in append order.
   const events = new Map<string, StoredChangeBusEvent>();
   const dirtyRecords = new Map<string, DirtyRecord>();
+  const appliedEventIds = new Set<string>();
 
   return {
     initialize: vi.fn(async () => {}),
     async appendEvents(newEvents) {
       for (const event of newEvents) {
         events.set(event.id, event);
+        appliedEventIds.add(event.id);
       }
+    },
+    async hasAppliedEvent(eventId) {
+      return appliedEventIds.has(eventId);
     },
     async getPendingEvents(scope) {
       return Array.from(events.values()).filter((event) => inScope(event, scope));

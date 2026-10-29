@@ -15,6 +15,7 @@ function setup() {
       atomicLocalMutationCapability: "atomic" as const,
       initialize: vi.fn(async () => {}),
       appendEvents: vi.fn(async () => {}),
+      hasAppliedEvent: vi.fn(async () => false),
       getPendingEvents: vi.fn(async () => []),
       deleteEvents: vi.fn(async () => {}),
       upsertDirtyRecord: vi.fn(async () => {}),

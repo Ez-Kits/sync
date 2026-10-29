@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import {
+  APPLIED_EVENT_RETENTION_MS,
   createLocalDBStorage,
   type DBStorage,
   type StoredChangeBusEvent,
@@ -122,7 +123,7 @@ for (const dialect of dialects) {
     ]);
     await otherTab.db.destroy();
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 2 },
+      { key: "schema_version", value: 3 },
     ]);
     expect(ids(await localChangeStore.getPendingEvents())).toEqual([
       "first-a",
@@ -150,6 +151,46 @@ for (const dialect of dialects) {
     await localChangeStore.initialize();
     expect(await rowsOf(dbStorage, "SELECT * FROM ez_sync_events ORDER BY seq")).toEqual(snapshot);
     expect(transaction).toHaveBeenCalledOnce();
+    await db.destroy();
+    await dbStorage.close();
+  }, 30_000);
+
+  test(`${dialect.name}: initialize upgrades version 2 tables with the applied-event table`, async () => {
+    const dbStorage = dialect.storage("");
+    const { db, localChangeStore } = dialect.adapter(dbStorage);
+    await localChangeStore.initialize();
+    // Back to version 2: no applied-event table, one pending event.
+    await localChangeStore.appendEvents([event("pending", 1)]);
+    await dbStorage.exec(run("DROP TABLE ez_sync_applied_events"));
+    await dbStorage.exec(run("UPDATE ez_sync_meta SET value = 2 WHERE key = 'schema_version'"));
+
+    const otherTab = dialect.adapter(dbStorage);
+    await otherTab.localChangeStore.initialize();
+    await otherTab.db.destroy();
+    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
+      { key: "schema_version", value: 3 },
+    ]);
+    expect(ids(await localChangeStore.getPendingEvents())).toEqual(["pending"]);
+    await localChangeStore.appendEvents([event("after", 2)]);
+    expect(await localChangeStore.hasAppliedEvent("after")).toBe(true);
+    await db.destroy();
+    await dbStorage.close();
+  }, 30_000);
+
+  test(`${dialect.name}: applied events outlive their acknowledgement until pruned`, async () => {
+    const dbStorage = dialect.storage("");
+    const { db, localChangeStore } = dialect.adapter(dbStorage);
+    await localChangeStore.initialize();
+    await localChangeStore.appendEvents([event("old", 1), event("kept", 2)]);
+    expect(await localChangeStore.hasAppliedEvent("unknown")).toBe(false);
+    await localChangeStore.deleteEvents(["old", "kept"]);
+    expect(await localChangeStore.hasAppliedEvent("old")).toBe(true);
+
+    // Only records older than the retention, counted from the newest appended event, go.
+    await localChangeStore.appendEvents([event("new", 2 + APPLIED_EVENT_RETENTION_MS)]);
+    expect(await localChangeStore.hasAppliedEvent("old")).toBe(false);
+    expect(await localChangeStore.hasAppliedEvent("kept")).toBe(true);
+    expect(await localChangeStore.hasAppliedEvent("new")).toBe(true);
     await db.destroy();
     await dbStorage.close();
   }, 30_000);

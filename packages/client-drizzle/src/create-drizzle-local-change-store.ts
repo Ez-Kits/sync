@@ -1,9 +1,10 @@
-import type {
-  DirtyRecord,
-  DirtyRecordKey,
-  AtomicLocalChangeStore,
-  LocalChangeScope,
-  StoredChangeBusEvent,
+import {
+  APPLIED_EVENT_RETENTION_MS,
+  type DirtyRecord,
+  type DirtyRecordKey,
+  type AtomicLocalChangeStore,
+  type LocalChangeScope,
+  type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
   and,
@@ -11,6 +12,7 @@ import {
   eq,
   getColumns,
   inArray,
+  lt,
   type Column,
   type InferInsertModel,
   type Table,
@@ -34,21 +36,37 @@ export type DrizzleDirtyRecordTable = Table & {
   updatedAt: Column;
 };
 
+/** The `id`s of appended events, kept after acknowledgement so retries can find them. */
+export type DrizzleAppliedEventTable = Table & {
+  eventId: Column;
+  /** The event's `createdAt`; records are pruned by it. */
+  appliedAt: Column;
+};
+
+/** One row of a {@link DrizzleAppliedEventTable}. */
+export interface DrizzleAppliedEvent {
+  eventId: string;
+  appliedAt: number;
+}
+
 export interface DrizzleLocalChangeStoreTables<
   TEvents extends DrizzleEventTable,
   TDirtyRecords extends DrizzleDirtyRecordTable,
+  TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
 > {
   events: TEvents;
   dirtyRecords: TDirtyRecords;
+  appliedEvents: TAppliedEvents;
 }
 
 export interface DrizzleLocalChangeStoreConfig<
   TDb,
   TEvents extends DrizzleEventTable,
   TDirtyRecords extends DrizzleDirtyRecordTable,
+  TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
 > {
   db: TDb;
-  tables: DrizzleLocalChangeStoreTables<TEvents, TDirtyRecords>;
+  tables: DrizzleLocalChangeStoreTables<TEvents, TDirtyRecords, TAppliedEvents>;
   /**
    * Create `tables` when missing and upgrade older versions of them; must be idempotent and
    * safe to run concurrently (see `ILocalChangeStore.initialize`).
@@ -60,10 +78,13 @@ export interface DrizzleLocalChangeStoreConfig<
 export type DrizzleSchemaTypeCheck<
   TEvents extends DrizzleEventTable,
   TDirtyRecords extends DrizzleDirtyRecordTable,
+  TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
 > =
   StoredChangeBusEvent extends InferInsertModel<TEvents>
     ? DirtyRecord extends InferInsertModel<TDirtyRecords>
-      ? []
+      ? DrizzleAppliedEvent extends InferInsertModel<TAppliedEvents>
+        ? []
+        : [schemaError: never]
       : [schemaError: never]
     : [schemaError: never];
 
@@ -75,20 +96,24 @@ export function createDrizzleLocalChangeStore<
   TDb,
   TEvents extends DrizzleEventTable,
   TDirtyRecords extends DrizzleDirtyRecordTable,
+  TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
 >(
-  config: DrizzleLocalChangeStoreConfig<TDb, TEvents, TDirtyRecords>,
-  ...typeCheck: DrizzleSchemaTypeCheck<TEvents, TDirtyRecords>
+  config: DrizzleLocalChangeStoreConfig<TDb, TEvents, TDirtyRecords, TAppliedEvents>,
+  ...typeCheck: DrizzleSchemaTypeCheck<TEvents, TDirtyRecords, TAppliedEvents>
 ): AtomicLocalChangeStore {
   void typeCheck;
   const { db, tables, initialize } = config;
   const events = tables.events;
   const dirty = tables.dirtyRecords;
+  const applied = tables.appliedEvents;
   const eventColumns = getColumns(events);
   const dirtyColumns = getColumns(dirty);
+  const appliedColumns = getColumns(applied);
 
   const dbFor = (transactionContext?: unknown): any => transactionContext ?? db;
   const eventColumn = (key: string) => eventColumns[key as keyof typeof eventColumns] as any;
   const dirtyColumn = (key: string) => dirtyColumns[key as keyof typeof dirtyColumns] as any;
+  const appliedColumn = (key: string) => appliedColumns[key as keyof typeof appliedColumns] as any;
   const scopeWhere = (column: (key: string) => any, scope: LocalChangeScope) =>
     typeof scope === "string"
       ? eq(column("collection"), scope)
@@ -117,7 +142,22 @@ export function createDrizzleLocalChangeStore<
         recordId,
         createdAt,
       }));
-      await dbFor(transactionContext).insert(events).values(values);
+      const target = dbFor(transactionContext);
+      await target.insert(events).values(values);
+      const newest = Math.max(...items.map((event) => event.createdAt));
+      await target
+        .delete(applied)
+        .where(lt(appliedColumn("appliedAt"), newest - APPLIED_EVENT_RETENTION_MS));
+      await target
+        .insert(applied)
+        .values(items.map((event) => ({ eventId: event.id, appliedAt: event.createdAt })));
+    },
+    async hasAppliedEvent(eventId: string, transactionContext) {
+      const rows = await dbFor(transactionContext)
+        .select({ eventId: appliedColumn("eventId") })
+        .from(applied)
+        .where(eq(appliedColumn("eventId"), eventId));
+      return rows.length > 0;
     },
     async getPendingEvents(scope, transactionContext) {
       const query = dbFor(transactionContext).select(eventFields).from(events);

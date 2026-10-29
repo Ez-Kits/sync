@@ -47,6 +47,10 @@ const dirtyRecords = sqliteTable("dirty_records", {
   state: text("state"),
   updatedAt: integer("updated_at"),
 });
+const appliedEvents = sqliteTable("applied_events", {
+  eventId: text("event_id").primaryKey(),
+  appliedAt: integer("applied_at").notNull(),
+});
 
 declare const db: unknown;
 declare const dbStorage: DBStorage;
@@ -173,7 +177,27 @@ describe("drizzle adapter", () => {
   });
 
   test("local-change tables must persist every stored field", () => {
-    createDrizzleLocalChangeStore({ db, tables: { events, dirtyRecords }, initialize });
+    createDrizzleLocalChangeStore({
+      db,
+      tables: { events, dirtyRecords, appliedEvents },
+      initialize,
+    });
+    createDrizzleLocalChangeStore({
+      db,
+      // @ts-expect-error retries need the applied-event table
+      tables: { events, dirtyRecords },
+      initialize,
+    });
+    const textAppliedEvents = sqliteTable("text_applied_events", {
+      eventId: text("event_id").primaryKey(),
+      appliedAt: text("applied_at").notNull(),
+    });
+    // @ts-expect-error applied records are pruned by a numeric `appliedAt`
+    createDrizzleLocalChangeStore({
+      db,
+      tables: { events, dirtyRecords, appliedEvents: textAppliedEvents },
+      initialize,
+    });
 
     const invalidEvents = sqliteTable("invalid_events", {
       id: text("id").primaryKey(),
@@ -182,7 +206,7 @@ describe("drizzle adapter", () => {
     createDrizzleLocalChangeStore({
       db,
       // @ts-expect-error event table omits persisted event columns
-      tables: { events: invalidEvents, dirtyRecords },
+      tables: { events: invalidEvents, dirtyRecords, appliedEvents },
       initialize,
     });
 
@@ -198,7 +222,7 @@ describe("drizzle adapter", () => {
     // @ts-expect-error arbitrary event payloads require a compatible JSON data column
     createDrizzleLocalChangeStore({
       db,
-      tables: { events: textDataEvents, dirtyRecords },
+      tables: { events: textDataEvents, dirtyRecords, appliedEvents },
       initialize,
     });
 
@@ -214,7 +238,7 @@ describe("drizzle adapter", () => {
     createDrizzleLocalChangeStore({
       db,
       // @ts-expect-error pending events are ordered by a `seq` column
-      tables: { events: unorderedEvents, dirtyRecords },
+      tables: { events: unorderedEvents, dirtyRecords, appliedEvents },
       initialize,
     });
 
@@ -225,7 +249,7 @@ describe("drizzle adapter", () => {
     // @ts-expect-error the database assigns `seq`; callers never supply it
     createDrizzleLocalChangeStore({
       db,
-      tables: { events: callerSequencedEvents, dirtyRecords },
+      tables: { events: callerSequencedEvents, dirtyRecords, appliedEvents },
       initialize,
     });
   });
