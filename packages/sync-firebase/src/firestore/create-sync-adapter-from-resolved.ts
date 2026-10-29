@@ -14,6 +14,7 @@ import {
   type WriteBatch,
 } from "firebase/firestore";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
+import { firestorePushError } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
@@ -175,11 +176,16 @@ export function createFirestoreSyncAdapterFromResolved<
           batches.push(current);
           current = { batch: writeBatch(db), events: [] };
         }
-        const ref = doc(db, documentPath, documentId);
-        if (options) {
-          current.batch.set(ref, payload, options);
-        } else {
-          current.batch.set(ref, payload);
+        try {
+          // An invalid path or value throws `invalid-argument` here, before any commit.
+          const ref = doc(db, documentPath, documentId);
+          if (options) {
+            current.batch.set(ref, payload, options);
+          } else {
+            current.batch.set(ref, payload);
+          }
+        } catch (error) {
+          throw firestorePushError(error);
         }
         current.events.push(event);
       };
@@ -220,9 +226,14 @@ export function createFirestoreSyncAdapterFromResolved<
       if (current.events.length > 0) batches.push(current);
 
       // Batches commit in order, and each is acknowledged before the next commits, so a
-      // failed batch leaves only its own and later events in the outbox.
+      // failed batch leaves only its own and later events in the outbox. A batch is atomic:
+      // when one write is refused for good, core narrows the push down to it.
       for (const { batch, events: batchEvents } of batches) {
-        await batch.commit();
+        try {
+          await batch.commit();
+        } catch (error) {
+          throw firestorePushError(error);
+        }
         await commitChanges({ events: batchEvents });
       }
     },

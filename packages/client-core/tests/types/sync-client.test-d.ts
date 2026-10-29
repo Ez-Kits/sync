@@ -1,6 +1,8 @@
 import { expectTypeOf, test } from "vite-plus/test";
 import {
   createSyncClient,
+  isPermanentPushError,
+  PushRejectedError,
   type ChangeBusEvent,
   type ChangeBusEventDataMapFromCollectionConfigMap,
   type DBRole,
@@ -92,4 +94,21 @@ test("clients take a DB adapter and expose the storage role", () => {
   expectTypeOf(client.role).toEqualTypeOf<DBRole>();
   expectTypeOf(client.subscribeRole).parameter(0).parameter(0).toEqualTypeOf<DBRole>();
   expectTypeOf(client.dispose).returns.toEqualTypeOf<Promise<void>>();
+});
+
+test("push rejections carry the typed event", () => {
+  createSyncClient({
+    collections,
+    dbAdapter: db,
+    checkpointStorage,
+    onPushRejected: ({ event, error, discard }) => {
+      expectTypeOf(event).toEqualTypeOf<ChangeBusEvent<DataMap>>();
+      expectTypeOf(error).toBeUnknown();
+      expectTypeOf(discard).toEqualTypeOf<() => Promise<void>>();
+    },
+  });
+  expectTypeOf(client.retryRejectedPushes).toEqualTypeOf<() => void>();
+  expectTypeOf(isPermanentPushError).parameter(0).toBeUnknown();
+  expectTypeOf<PushRejectedError>().toHaveProperty("permanent");
+  expectTypeOf<PushRejectedError>().toExtend<Error>();
 });

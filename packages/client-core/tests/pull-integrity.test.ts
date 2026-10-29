@@ -1,136 +1,5 @@
 import { expect, test, vi } from "vite-plus/test";
-import { ChangeBus } from "../src/change-bus";
-import type { StoredChangeBusEvent } from "../src/local-change-store";
-import { CollectionSyncHandler } from "../src/sync-handler/collection-sync-handler";
-import { GlobalSyncHandler } from "../src/sync-handler/global-sync-handler";
-import { createTestLocalChangeStore } from "./helpers/local-change-store";
-
-type Row = { id: number; title: string };
-type Scope = "global" | "collection";
-
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-const settle = async () => {
-  for (let i = 0; i < 4; i += 1) await tick();
-};
-
-/**
- * A handler over an in-memory table and outbox. The adapter records every pull stream it
- * opens; pushes acknowledge what they send, after `pushGate` when one is set.
- */
-function fixture(scope: Scope, overrides: Record<string, unknown> = {}) {
-  const rows = new Map<string, Row>();
-  const native = { transaction: "pull" };
-  const db = {
-    insert: vi.fn(async (_name: string, row: Row) => {
-      rows.set(String(row.id), row);
-    }),
-    update: vi.fn(async (_name: string, row: Row) => {
-      rows.set(String(row.id), { ...rows.get(String(row.id))!, ...row });
-    }),
-    delete: vi.fn(async (_name: string, id: number) => {
-      rows.delete(String(id));
-    }),
-    get: vi.fn(async (_name: string, id: number) => rows.get(String(id))),
-    getOptional: vi.fn(async (_name: string, id: number) => rows.get(String(id))),
-    getMany: vi.fn(async () => [...rows.values()]),
-    transaction: vi.fn(async (fn: (tx: any, context: any) => Promise<unknown>) =>
-      fn(db, { operations: db, native }),
-    ),
-  };
-  const checkpoints = new Map<string, unknown>();
-  const checkpointStorage = {
-    getCheckpoint: vi.fn(async (name: string) => checkpoints.get(name)),
-    saveCheckpoint: vi.fn(async (name: string, checkpoint: unknown) => {
-      checkpoints.set(name, checkpoint);
-    }),
-  };
-  const store = createTestLocalChangeStore();
-  const streams: Array<{ options: any; cleanup: ReturnType<typeof vi.fn> }> = [];
-  const pushed: any[][] = [];
-  let pushGate: Promise<void> | undefined;
-  const adapter = {
-    pull: vi.fn((options: any) => {
-      const cleanup = vi.fn();
-      streams.push({ options, cleanup });
-      return cleanup;
-    }),
-    push: vi.fn(async ({ events, commitChanges }: any) => {
-      pushed.push(events);
-      const gate = pushGate;
-      if (gate) await gate;
-      await commitChanges({ events });
-    }),
-  };
-  const changeBus = new ChangeBus<any>();
-  const published: any[][] = [];
-  changeBus.subscribe((events: any[]) => published.push(events), { stream: "remote" });
-  const onSyncError = vi.fn();
-  const onRemoteChangesCommitted = vi.fn();
-  const config = {
-    collections: [
-      {
-        name: "todos",
-        adapterConfig: {},
-        primaryField: "id",
-        syncAdapter: scope === "collection" ? adapter : undefined,
-      },
-    ],
-    syncAdapter: scope === "global" ? adapter : undefined,
-    db,
-    changeBus,
-    localChangeStore: store,
-    checkpointStorage,
-    onSyncError,
-    onRemoteChangesCommitted,
-    ...overrides,
-  };
-  const handler =
-    scope === "global"
-      ? new GlobalSyncHandler(config as never)
-      : new CollectionSyncHandler(config as never);
-  return {
-    rows,
-    native,
-    db,
-    checkpoints,
-    checkpointStorage,
-    store,
-    streams,
-    pushed,
-    adapter,
-    published,
-    onSyncError,
-    onRemoteChangesCommitted,
-    holdPushes() {
-      let release!: () => void;
-      pushGate = new Promise<void>((resolve) => (release = resolve));
-      return () => {
-        pushGate = undefined;
-        release();
-      };
-    },
-    start() {
-      if (handler instanceof GlobalSyncHandler) handler.start();
-      else handler.start("todos" as never);
-    },
-    stop() {
-      if (handler instanceof GlobalSyncHandler) handler.stop();
-      else handler.stop("todos" as never);
-    },
-    /** A committed local write: the row, its outbox event and its dirty record. */
-    async writeLocally(event: StoredChangeBusEvent) {
-      if (event.type === "delete") rows.delete(event.recordId);
-      else rows.set(event.recordId, event.data as Row);
-      await store.appendEvents([event]);
-      await store.upsertDirtyRecord({
-        collection: "todos",
-        recordId: event.recordId,
-        state: event.type === "delete" ? "deleted" : "dirty",
-        updatedAt: event.createdAt,
-      });
-    },
-  };
-}
+import { fixture, settle, type Row } from "./helpers/sync-fixture";
 
 const localEvent = (id: string, type: "create" | "update" | "delete", data?: Row) => ({
   id,
@@ -144,6 +13,12 @@ const remoteUpdate = (title: string) => ({
   type: "update" as const,
   collection: "todos",
   data: { id: 1, title },
+});
+/** The server-confirmed state of a pushed write, with a server-assigned field. */
+const echo = (title: string, updatedAt: number) => ({
+  type: "update" as const,
+  collection: "todos",
+  data: { id: 1, title, updatedAt },
 });
 
 for (const scope of ["global", "collection"] as const) {
@@ -355,6 +230,192 @@ for (const scope of ["global", "collection"] as const) {
     expect((await f.store.getPendingEvents()).map((event) => event.id)).toEqual(["e1"]);
     expect(f.published.at(-1)).toEqual([]);
     expect(f.onRemoteChangesCommitted).not.toHaveBeenCalled();
+    f.stop();
+  });
+
+  for (const resolver of [undefined, "local"] as const) {
+    test(`${scope}: the echo of a push pulled before its acknowledgement is applied by it (${resolver ?? "no resolver"})`, async () => {
+      const f = fixture(scope, resolver ? { conflictResolver: () => resolver } : {});
+      await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+      const release = f.holdPushes();
+      f.start();
+      await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+      expect(f.pushed).toHaveLength(1);
+      // The provider committed the write; the pull delivers its echo before the acknowledgement.
+      f.streams[0]!.options.commitChanges({
+        changes: [echo("local", 100)],
+        checkpoint: { todos: "c1" },
+      });
+      await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
+      expect(f.rows.get("1")).toEqual({ id: 1, title: "local" });
+      expect(f.onRemoteChangesCommitted).not.toHaveBeenCalled();
+
+      const transactions = f.db.transaction.mock.calls.length;
+      release();
+      await vi.waitFor(async () => expect(await f.store.getPendingEvents()).toEqual([]));
+      // Applied in the acknowledgement's own transaction, which left the record clean.
+      expect(f.db.transaction).toHaveBeenCalledTimes(transactions + 1);
+      expect(f.rows.get("1")).toEqual({ id: 1, title: "local", updatedAt: 100 });
+      expect(await f.store.getDirtyRecords()).toEqual([]);
+      expect(f.published.at(-1)).toEqual([echo("local", 100)]);
+      expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([echo("local", 100)]);
+      f.stop();
+    });
+  }
+
+  test(`${scope}: an older remote write skipped before the acknowledgement yields to the later echo`, async () => {
+    const f = fixture(scope);
+    await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+    const release = f.holdPushes();
+    f.start();
+    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+    const stream = f.streams[0]!.options;
+    stream.commitChanges({ changes: [remoteUpdate("older")], checkpoint: { todos: "c1" } });
+    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
+    expect(f.rows.get("1")?.title).toBe("local");
+
+    release();
+    await vi.waitFor(() => expect(f.rows.get("1")?.title).toBe("older"));
+    // The push landed after it on the server, so its echo follows and is applied as usual.
+    stream.commitChanges({ changes: [echo("local", 100)], checkpoint: { todos: "c2" } });
+    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
+    expect(f.rows.get("1")).toEqual({ id: 1, title: "local", updatedAt: 100 });
+    expect(f.onRemoteChangesCommitted.mock.calls).toEqual([
+      [[remoteUpdate("older")]],
+      [[echo("local", 100)]],
+    ]);
+    f.stop();
+  });
+
+  test(`${scope}: only the latest skipped remote event is applied by the acknowledgement`, async () => {
+    const f = fixture(scope);
+    await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+    const release = f.holdPushes();
+    f.start();
+    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+    const stream = f.streams[0]!.options;
+    stream.commitChanges({ changes: [remoteUpdate("older")], checkpoint: { todos: "c1" } });
+    stream.commitChanges({ changes: [echo("local", 100)], checkpoint: { todos: "c2" } });
+    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
+    expect(f.rows.get("1")?.title).toBe("local");
+
+    release();
+    await vi.waitFor(() =>
+      expect(f.rows.get("1")).toEqual({ id: 1, title: "local", updatedAt: 100 }),
+    );
+    expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([echo("local", 100)]);
+    f.stop();
+  });
+
+  test(`${scope}: a skipped remote event waits until no write of its record is pending`, async () => {
+    const f = fixture(scope);
+    await f.writeLocally(localEvent("e1", "update", { id: 1, title: "first" }));
+    await f.writeLocally(localEvent("e2", "update", { id: 1, title: "second" }));
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => (releaseSecond = resolve));
+    let firstAcked = false;
+    // Each event is its own provider write, acknowledged once written.
+    f.adapter.push.mockImplementation(async ({ events, commitChanges }: any) => {
+      for (const event of events) {
+        if (event.eventId === "e2") await secondGate;
+        await commitChanges({ events: [event] });
+        if (event.eventId === "e1") firstAcked = true;
+      }
+    });
+    f.start();
+    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+    await vi.waitFor(() => expect(firstAcked).toBe(true));
+    f.streams[0]!.options.commitChanges({ changes: [echo("first", 100)], checkpoint: {} });
+    await settle();
+    // e2 of the same record is still pending: the remote event stays skipped.
+    expect(f.rows.get("1")?.title).toBe("second");
+    expect(f.onRemoteChangesCommitted).not.toHaveBeenCalled();
+
+    releaseSecond();
+    await vi.waitFor(() =>
+      expect(f.rows.get("1")).toEqual({ id: 1, title: "first", updatedAt: 100 }),
+    );
+    expect(await f.store.getPendingEvents()).toEqual([]);
+    f.stop();
+  });
+
+  for (const decision of ["remote", "merge"] as const) {
+    test(`${scope}: a "${decision}" decision forgets the remote event skipped before it`, async () => {
+      const merged = { id: 1, title: "merged" };
+      const conflictResolver = vi
+        .fn()
+        .mockReturnValueOnce("local")
+        .mockReturnValueOnce(decision === "remote" ? "remote" : { data: merged });
+      const f = fixture(scope, { conflictResolver });
+      await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+      const release = f.holdPushes();
+      f.start();
+      await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+      const stream = f.streams[0]!.options;
+      stream.commitChanges({ changes: [remoteUpdate("first")], checkpoint: { todos: "c1" } });
+      stream.commitChanges({ changes: [remoteUpdate("second")], checkpoint: { todos: "c2" } });
+      await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
+      const expected = decision === "remote" ? { id: 1, title: "second" } : merged;
+      expect(f.rows.get("1")).toEqual(expected);
+
+      release();
+      await vi.waitFor(async () => expect(await f.store.getPendingEvents()).toEqual([]));
+      await settle();
+      // Acknowledging the in-flight e1 (and the merged event) must not bring back "first".
+      expect(f.rows.get("1")).toEqual(expected);
+      expect(f.onRemoteChangesCommitted).toHaveBeenCalledTimes(1);
+      f.stop();
+    });
+  }
+
+  test(`${scope}: a remote event applied normally forgets the one skipped before it`, async () => {
+    const f = fixture(scope);
+    await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+    const release = f.holdPushes();
+    f.start();
+    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+    const stream = f.streams[0]!.options;
+    stream.commitChanges({ changes: [remoteUpdate("first")], checkpoint: { todos: "c1" } });
+    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
+    // The pending write leaves the outbox without an acknowledgement of this handler.
+    await f.store.deleteEvents(["e1"]);
+    await f.store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
+    stream.commitChanges({ changes: [remoteUpdate("second")], checkpoint: { todos: "c2" } });
+    await vi.waitFor(() => expect(f.rows.get("1")?.title).toBe("second"));
+
+    release();
+    await settle();
+    expect(f.rows.get("1")?.title).toBe("second");
+    expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([remoteUpdate("second")]);
+    f.stop();
+  });
+
+  test(`${scope}: a skipped remote event survives a failed acknowledgement for its retry`, async () => {
+    const f = fixture(scope);
+    await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
+    const release = f.holdPushes();
+    f.start();
+    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
+    f.streams[0]!.options.commitChanges({
+      changes: [echo("local", 100)],
+      checkpoint: { todos: "c1" },
+    });
+    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
+
+    const failure = new Error("acknowledgement failed");
+    f.db.transaction.mockRejectedValueOnce(failure);
+    release();
+    await vi.waitFor(() => expect(f.onSyncError).toHaveBeenCalledWith(failure));
+    expect(f.rows.get("1")).toEqual({ id: 1, title: "local" });
+    expect(f.onRemoteChangesCommitted).not.toHaveBeenCalled();
+
+    // The push is retried and acknowledged; the remembered echo is applied then.
+    await vi.waitFor(() =>
+      expect(f.rows.get("1")).toEqual({ id: 1, title: "local", updatedAt: 100 }),
+    );
+    expect(f.pushed).toHaveLength(2);
+    expect(await f.store.getPendingEvents()).toEqual([]);
+    expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([echo("local", 100)]);
     f.stop();
   });
 }

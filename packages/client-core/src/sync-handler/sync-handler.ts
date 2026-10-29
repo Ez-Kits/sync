@@ -52,6 +52,12 @@ export class SyncHandler<
     this.collectionSyncHandler.stopAll();
   }
 
+  /** Retry the parked (rejected) events of the started handlers now, e.g. after sign-in. */
+  retryRejectedPushes(): void {
+    this.globalSyncHandler.retryRejectedPushes();
+    this.collectionSyncHandler.retryRejectedPushes();
+  }
+
   /**
    * Push outbox events written outside this context, such as by another tab.
    * Only handlers that are currently started schedule a push.

@@ -4,3 +4,4 @@ export * from "./global-sync-handler";
 export * from "./collection-sync-handler";
 export * from "./sync-handler";
 export * from "./types";
+export * from "./errors";

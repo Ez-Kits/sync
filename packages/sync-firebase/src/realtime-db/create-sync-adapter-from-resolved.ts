@@ -10,6 +10,7 @@ import {
   type Query,
 } from "firebase/database";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
+import { realtimeDBPushError, rejectedPush } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
@@ -131,6 +132,22 @@ function toMultipathUpdates(writes: Map<string, RecordWrite>): Record<string, un
 
 function createPendingUpdate<TEvent>(): PendingUpdate<TEvent> {
   return { writes: new Map(), ancestors: new Set(), events: [] };
+}
+
+async function writeUpdate(db: Database, updates: Record<string, unknown>): Promise<void> {
+  let written: Promise<void>;
+  try {
+    // The SDK validates keys and values (no `undefined`, no `.`/`#`/`$`/`[`/`]` in keys)
+    // synchronously, before sending: an update that throws here always will.
+    written = update(ref(db), updates);
+  } catch (error) {
+    throw rejectedPush("Realtime Database", error);
+  }
+  try {
+    await written;
+  } catch (error) {
+    throw realtimeDBPushError(error);
+  }
 }
 
 export function createRealtimeDBSyncAdapterFromResolved<
@@ -330,10 +347,11 @@ export function createRealtimeDBSyncAdapterFromResolved<
       if (current.events.length > 0) pendingUpdates.push(current);
 
       // Updates are written in order, and each is acknowledged once written, so a failure
-      // leaves only the remaining events in the outbox.
+      // leaves only the remaining events in the outbox. An update is atomic: when one write
+      // is refused for good, core narrows the push down to it.
       for (const pending of pendingUpdates) {
         const updates = toMultipathUpdates(pending.writes);
-        if (Object.keys(updates).length > 0) await update(ref(db), updates);
+        if (Object.keys(updates).length > 0) await writeUpdate(db, updates);
         await commitChanges({ events: pending.events });
       }
     },

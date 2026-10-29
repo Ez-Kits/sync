@@ -15,6 +15,17 @@ Stopping a pull removes its listeners: Realtime Database listeners are detached 
 
 Pull listener failures are reported to the core client and the listener is retried with capped backoff. Checkpoints advance only after incoming changes are committed locally.
 
+## Rejected writes
+
+Pushes classify Firebase errors so that one refused write cannot block sync. A write Firebase refuses as sent fails the push with core's `PushRejectedError` (`message` names the code, `cause` is the original Firebase error); core then pushes the remaining events in smaller pieces, so every other write still goes through, and parks the refused one: it stays in the outbox, later writes of its record wait behind it, and it is retried with a backoff and whenever sync starts. It is reported once through the client's `onPushRejected` (see the core README). Permanent:
+
+- Firestore `permission-denied` (security rules, including their validation), `invalid-argument` (invalid data or path, also when `WriteBatch.set` throws it before committing), `out-of-range` and `failed-precondition`.
+- Realtime Database `PERMISSION_DENIED` (rules, `.validate` included), and updates the SDK's own key and value validation throws synchronously.
+
+Everything else is retried with backoff: `unavailable`, `deadline-exceeded`, `cancelled`, `aborted`, `internal` and `unknown` are transient transport or backend conditions, `resource-exhausted` is a quota that refills, `unauthenticated` (and RTDB `EXPIRED_TOKEN` / `INVALID_TOKEN`) is fixed by signing in again, and unlisted codes are retried rather than risk dropping a write.
+
+Rules that require a signed-in user refuse writes from a signed-out client with `permission-denied`. This only parks those writes, nothing is lost: Firebase Auth restores the session asynchronously after page load, and if sync started first, the parked writes are pushed, in order, by the next retry or sync start. Call `client.retryRejectedPushes()` from `onAuthStateChanged` once a user is signed in to push them at once. A write that can never succeed (rules or data that will not change) stays parked until the application calls `rejection.discard()` from `onPushRejected`, which removes it from the outbox; the local row keeps its value, so revert it (for example re-read the document with `getDoc` / `get` and write the remote state back locally) or let the user correct it.
+
 ## API naming migration
 
 The old sync-options API names are removed. Use `SyncAdapter`, set `syncAdapter` on a client or collection, and use the `createFirestoreSyncAdapter` / `createRealtimeDBSyncAdapter` factories. Per-collection builders are named `defineFirestoreCollectionSyncAdapterConfig` and `defineRealtimeDBCollectionSyncAdapterConfig`.

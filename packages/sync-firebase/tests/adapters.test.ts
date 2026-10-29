@@ -6,6 +6,8 @@ const sdk = vi.hoisted(() => ({
   firestoreUnsubscribes: [] as Array<ReturnType<typeof vi.fn>>,
   firestoreSets: [] as unknown[][],
   firestoreCommits: [] as Array<ReturnType<typeof vi.fn>>,
+  /** Ids of the documents written by successful commits, in commit order. */
+  firestoreCommitted: [] as string[],
   rtdbCallbacks: {} as Record<string, Array<(snapshot: any) => void>>,
   rtdbCancelCallbacks: {} as Record<string, Array<(error: Error) => void>>,
   rtdbUnsubscribes: {} as Record<string, Array<ReturnType<typeof vi.fn>>>,
@@ -15,7 +17,18 @@ const sdk = vi.hoisted(() => ({
   failCommit: false,
   /** Index (in `firestoreCommits`) of the batch whose commit fails. */
   failBatchAt: -1,
+  /** Rejects the next Firestore commit or Realtime Database update. */
+  writeError: undefined as unknown,
+  /** Thrown synchronously by `WriteBatch.set` and `update`, as SDK validation does. */
+  validationError: undefined as unknown,
+  /** Document id whose writes the security rules refuse: its whole batch fails. */
+  deniedDocument: undefined as string | undefined,
 }));
+
+/** An SDK error as Firebase throws it: a `FirebaseError` with its `code`. */
+function firebaseError(code: string, message = code): Error {
+  return Object.assign(new Error(message), { name: "FirebaseError", code });
+}
 
 /** Write `value` at a slash path of `tree`, as a multipath `update` does (null removes it). */
 function setTreePath(tree: Record<string, unknown>, path: string, value: unknown): void {
@@ -49,12 +62,20 @@ vi.mock("firebase/firestore", () => ({
   },
   writeBatch: () => {
     const index = sdk.firestoreCommits.length;
+    const ids: string[] = [];
     const batch = {
-      set: vi.fn((ref: unknown, data: unknown, options?: unknown) =>
-        sdk.firestoreSets.push([ref, data, options]),
-      ),
+      set: vi.fn((ref: { id: string }, data: unknown, options?: unknown) => {
+        if (sdk.validationError) throw sdk.validationError;
+        sdk.firestoreSets.push([ref, data, options]);
+        ids.push(ref.id);
+      }),
       commit: vi.fn(async () => {
+        if (sdk.writeError) throw sdk.writeError;
+        if (sdk.deniedDocument !== undefined && ids.includes(sdk.deniedDocument)) {
+          throw firebaseError("permission-denied", "Missing or insufficient permissions.");
+        }
         if (sdk.failCommit || sdk.failBatchAt === index) throw new Error("commit failed");
+        sdk.firestoreCommitted.push(...ids);
       }),
     };
     sdk.firestoreCommits.push(batch.commit);
@@ -81,24 +102,32 @@ vi.mock("firebase/database", () => {
     onChildAdded: listen("added"),
     onChildChanged: listen("changed"),
     onChildRemoved: listen("removed"),
-    update: async (target: unknown, updates: Record<string, unknown>) => {
-      sdk.updates.push([target, updates]);
-      // Like the SDK, reject a multipath update whose paths overlap.
-      const paths = Object.keys(updates);
-      for (const path of paths) {
-        const nested = paths.find((other) => other.startsWith(`${path}/`));
-        if (nested) {
-          throw new Error(
-            `update() contains a path ${path} that is ancestor of another path ${nested}`,
-          );
-        }
-      }
-      if (sdk.failCommit) throw new Error("update failed");
-      for (const [path, value] of Object.entries(updates)) setTreePath(sdk.rtdbTree, path, value);
+    update: (target: unknown, updates: Record<string, unknown>) => {
+      // Like the SDK, invalid keys or values throw before a promise is returned.
+      if (sdk.validationError) throw sdk.validationError;
+      return writeUpdate(target, updates);
     },
   };
+
+  async function writeUpdate(target: unknown, updates: Record<string, unknown>) {
+    sdk.updates.push([target, updates]);
+    // Like the SDK, reject a multipath update whose paths overlap.
+    const paths = Object.keys(updates);
+    for (const path of paths) {
+      const nested = paths.find((other) => other.startsWith(`${path}/`));
+      if (nested) {
+        throw new Error(
+          `update() contains a path ${path} that is ancestor of another path ${nested}`,
+        );
+      }
+    }
+    if (sdk.writeError) throw sdk.writeError;
+    if (sdk.failCommit) throw new Error("update failed");
+    for (const [path, value] of Object.entries(updates)) setTreePath(sdk.rtdbTree, path, value);
+  }
 });
 
+import { ChangeBus, GlobalSyncHandler, PushRejectedError } from "@ez-kits/sync-client-core";
 import { createFirestoreCollectionSyncAdapter, createFirestoreSyncAdapter } from "../src/firestore";
 import { defineFirestoreCollectionSyncAdapterConfig } from "../src/firestore/define-collection-sync-adapter-config";
 import {
@@ -122,6 +151,7 @@ beforeEach(() => {
   sdk.firestoreUnsubscribes.length = 0;
   sdk.firestoreSets.length = 0;
   sdk.firestoreCommits.length = 0;
+  sdk.firestoreCommitted.length = 0;
   sdk.rtdbCallbacks = {};
   sdk.rtdbCancelCallbacks = {};
   sdk.rtdbUnsubscribes = {};
@@ -129,6 +159,9 @@ beforeEach(() => {
   sdk.rtdbTree = {};
   sdk.failCommit = false;
   sdk.failBatchAt = -1;
+  sdk.writeError = undefined;
+  sdk.validationError = undefined;
+  sdk.deniedDocument = undefined;
 });
 
 test("Firebase pull adapters report listener failures to core", () => {
@@ -918,4 +951,185 @@ test("Firestore push acknowledges each committed batch, so a retry after a faile
     events.slice(500, 1000),
     events.slice(1000),
   ]);
+});
+
+const firestoreTodos = () =>
+  createFirestoreCollectionSyncAdapter({
+    db: {} as never,
+    collectionName: "todos",
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    resolveDocumentId: (event: any) => String(event.data.id),
+  } as never);
+
+const todoCreate = (id: string) => ({ type: "create", collection: "todos", data: { id } });
+
+async function pushFailure(adapter: { push: (options: any) => unknown }) {
+  const commitChanges = vi.fn(async () => undefined);
+  try {
+    await adapter.push({ events: [todoCreate("1")], commitChanges });
+  } catch (error) {
+    expect(commitChanges).not.toHaveBeenCalled();
+    return error;
+  }
+  throw new Error("push succeeded");
+}
+
+test("Firestore push rejections from rules and validation are permanent; other failures retriable", async () => {
+  for (const code of [
+    "permission-denied",
+    "invalid-argument",
+    "out-of-range",
+    "failed-precondition",
+  ]) {
+    const cause = firebaseError(code, `${code}: refused`);
+    sdk.writeError = cause;
+    const failure = await pushFailure(firestoreTodos());
+    expect(failure).toBeInstanceOf(PushRejectedError);
+    expect(failure).toMatchObject({
+      permanent: true,
+      cause,
+      message: `Firestore rejected the write (${code}).`,
+    });
+  }
+  for (const code of [
+    "unauthenticated",
+    "unavailable",
+    "deadline-exceeded",
+    "resource-exhausted",
+    "aborted",
+    "internal",
+    "unknown",
+    "cancelled",
+  ]) {
+    const cause = firebaseError(code);
+    sdk.writeError = cause;
+    expect(await pushFailure(firestoreTodos())).toBe(cause);
+  }
+});
+
+test("Firestore push rejects invalid data, which the SDK throws before committing, as permanent", async () => {
+  const cause = firebaseError("invalid-argument", "Unsupported field value: undefined");
+  sdk.validationError = cause;
+  const failure = await pushFailure(firestoreTodos());
+  expect(failure).toBeInstanceOf(PushRejectedError);
+  expect(failure).toMatchObject({ cause });
+  expect(sdk.firestoreCommits[0]).not.toHaveBeenCalled();
+
+  // An error without a Firebase code is not a refusal Firestore classified: it is retried.
+  const unexpected = new Error("serializer bug");
+  sdk.validationError = unexpected;
+  expect(await pushFailure(firestoreTodos())).toBe(unexpected);
+});
+
+test("Realtime Database push rejections from rules and SDK validation are permanent; others retriable", async () => {
+  // As the SDK reports a refused write: the server status, upper-cased, in `code`.
+  const denied = Object.assign(new Error("PERMISSION_DENIED: Permission denied"), {
+    code: "PERMISSION_DENIED",
+  });
+  sdk.writeError = denied;
+  const failure = await pushFailure(realtimeTodos());
+  expect(failure).toBeInstanceOf(PushRejectedError);
+  expect(failure).toMatchObject({
+    cause: denied,
+    message: "Realtime Database rejected the write (PERMISSION_DENIED).",
+  });
+
+  for (const code of ["DISCONNECTED", "EXPIRED_TOKEN", "INVALID_TOKEN", "UNAVAILABLE"]) {
+    const cause = Object.assign(new Error(code), { code });
+    sdk.writeError = cause;
+    expect(await pushFailure(realtimeTodos())).toBe(cause);
+  }
+  sdk.writeError = undefined;
+  const updatesSent = sdk.updates.length;
+
+  // The SDK validates keys and values synchronously; such an update can never be written.
+  const invalid = new Error("update failed: values argument contains undefined in property 'x'");
+  sdk.validationError = invalid;
+  const rejected = await pushFailure(realtimeTodos());
+  expect(rejected).toBeInstanceOf(PushRejectedError);
+  expect(rejected).toMatchObject({
+    cause: invalid,
+    message: "Realtime Database rejected the write.",
+  });
+  expect(sdk.updates).toHaveLength(updatesSent);
+});
+
+test("one write refused by Firestore rules is parked without blocking its batch or later writes", async () => {
+  const outbox = new Map<string, any>();
+  const dirty = new Map<string, any>();
+  const store = {
+    initialize: async () => {},
+    appendEvents: async (events: any[]) => {
+      for (const event of events) outbox.set(event.id, event);
+    },
+    hasAppliedEvent: async () => false,
+    getPendingEvents: async (scope?: any) =>
+      [...outbox.values()].filter(
+        (event) =>
+          typeof scope !== "object" ||
+          (event.collection === scope.collection && event.recordId === scope.recordId),
+      ),
+    deleteEvents: async (ids: string[]) => {
+      for (const id of ids) outbox.delete(id);
+    },
+    upsertDirtyRecord: async (record: any) => {
+      dirty.set(record.recordId, record);
+    },
+    removeDirtyRecords: async (keys: any[]) => {
+      for (const key of keys) dirty.delete(key.recordId);
+    },
+    getDirtyRecords: async (scope?: any) =>
+      [...dirty.values()].filter(
+        (record) => typeof scope !== "object" || record.recordId === scope.recordId,
+      ),
+  };
+  const db: any = {
+    transaction: async (fn: any) => fn(db, { operations: db, native: undefined }),
+  };
+  // 600 offline creates: two Firestore batches, the first holding the refused document.
+  const ids = Array.from({ length: 600 }, (_, i) => (i === 250 ? "denied" : String(i)));
+  for (const [i, id] of ids.entries()) {
+    await store.appendEvents([
+      {
+        id: `e${i}`,
+        type: "create",
+        collection: "todos",
+        recordId: id,
+        data: { id },
+        createdAt: i,
+      },
+    ]);
+    await store.upsertDirtyRecord({ collection: "todos", recordId: id, state: "dirty" });
+  }
+  sdk.deniedDocument = "denied";
+  const onPushRejected = vi.fn();
+  const handler = new GlobalSyncHandler({
+    collections: [{ name: "todos", primaryField: "id", adapterConfig: {} }],
+    syncAdapter: firestoreTodos(),
+    db,
+    changeBus: new ChangeBus<any>(),
+    checkpointStorage: { getCheckpoint: async () => undefined, saveCheckpoint: async () => {} },
+    localChangeStore: store,
+    onPushRejected,
+  } as never);
+  handler.start();
+  await vi.waitFor(() => expect(outbox.size).toBe(1));
+
+  expect(onPushRejected).toHaveBeenCalledOnce();
+  const [rejection] = onPushRejected.mock.calls[0]!;
+  expect(rejection).toMatchObject({
+    event: { type: "create", data: { id: "denied" }, eventId: "e250" },
+    error: { permanent: true, cause: { code: "permission-denied" } },
+  });
+  // Parked, not lost: the refused write and its dirty record stay.
+  expect([...outbox.keys()]).toEqual(["e250"]);
+  expect([...dirty.keys()]).toEqual(["denied"]);
+  // Every other document is committed exactly once, in outbox order.
+  expect(sdk.firestoreCommitted).toEqual(ids.filter((id) => id !== "denied"));
+
+  await rejection.discard();
+  expect(outbox.size).toBe(0);
+  expect(dirty.size).toBe(0);
+  handler.stop();
 });

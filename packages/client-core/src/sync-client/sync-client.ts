@@ -232,6 +232,10 @@ export class SyncClientImpl<
     this.setStatus("stopped");
   };
 
+  retryRejectedPushes = () => {
+    this.syncHandler?.retryRejectedPushes();
+  };
+
   dispose = async () => {
     this.stopSync();
     for (const cleanup of this.cleanups) cleanup();
@@ -334,6 +338,13 @@ export class SyncClientImpl<
       onSyncSuccess: () => this.setStatus("syncing"),
       conflictResolver: this.config.resolveConflict,
       onRemoteChangesCommitted: (changes) => this.tabs.broadcastChanges(changes, "pull"),
+      onPushRejected: (rejection) => {
+        try {
+          this.config.onPushRejected?.(rejection);
+        } catch {
+          // An application observer must not fail the push that reported the rejection.
+        }
+      },
       canCommit: () => this.syncHandler === handler && this.dbStorage.role === "leader",
     });
     return handler;

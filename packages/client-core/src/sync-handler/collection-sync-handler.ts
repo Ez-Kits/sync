@@ -52,12 +52,11 @@ export class CollectionSyncHandler<
         const unsubscribe = this.startPushLoop(collectionName);
         if (unsubscribe) this.pushUnsubscribes.set(collectionName, unsubscribe);
 
-        void this.flushPendingPushEvents(
-          collectionName,
-          syncAdapter,
-          String(collectionName),
-          pushController.signal,
-        ).catch((error) => this.config.onSyncError?.(error));
+        // Starting sync retries the collection's parked events at once.
+        this.retryParkedOnNextPush(String(collectionName));
+        void this.flushPendingPushEvents(collectionName, syncAdapter, pushController.signal).catch(
+          (error) => this.config.onSyncError?.(error),
+        );
 
         if (this.startTokens.get(collectionName) !== startToken) return;
 
@@ -108,6 +107,18 @@ export class CollectionSyncHandler<
     }
   }
 
+  /** Retry the parked events of every started collection now. */
+  retryRejectedPushes(): void {
+    for (const collectionName of this.pushControllers.keys()) {
+      this.retryParkedOnNextPush(String(collectionName));
+      this.schedulePush(collectionName);
+    }
+  }
+
+  protected requestPush(queueKey: string): void {
+    this.schedulePush(queueKey as CollectionNames<C>);
+  }
+
   private startPullLoop<N extends CollectionNames<C>>(
     collectionName: N,
     syncAdapter: SyncAdapter<SyncHandlerDataMap<C>, N, TCheckpoint>,
@@ -152,13 +163,13 @@ export class CollectionSyncHandler<
     const pushController = this.pushControllers.get(collectionName);
     if (!syncAdapter || !pushController) return;
 
+    const queueKey = String(collectionName);
     void this.enqueuePush(
-      String(collectionName),
+      queueKey,
       () =>
-        this.collectPendingPushEvents(collectionName).then((events) => {
-          if (events.length === 0) return;
-          return this.pushAndAcknowledge(syncAdapter, events);
-        }),
+        this.collectPendingPushEvents(collectionName).then((events) =>
+          this.pushPending(queueKey, syncAdapter, events, pushController.signal),
+        ),
       pushController.signal,
     );
   }

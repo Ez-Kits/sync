@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
 import { createSyncClient } from "../src/sync-client/create-sync-client";
 import { SyncClientImpl } from "../src/sync-client/sync-client";
+import { PushRejectedError } from "../src/sync-handler";
 import { syncChannelName } from "../src/sync-client/tab-channel";
 import {
   atomicMemoryStore,
@@ -125,6 +126,51 @@ test("sync client maps handler success and failures into public status callbacks
   });
   await settle();
   expect(statuses).toContain("error");
+  await syncClient.dispose();
+});
+
+test("sync client parks rejected pushes until retried or discarded, isolating its observer", async () => {
+  const db = makeDb();
+  const rejection = new PushRejectedError("permission-denied");
+  const adapter = recordingAdapter();
+  let allowed = new Set(["allowed"]);
+  adapter.push.mockImplementation(async ({ events, commitChanges }: any) => {
+    if (events.some((event: any) => !allowed.has(event.data.id))) throw rejection;
+    await commitChanges({ events });
+  });
+  const onPushRejected = vi.fn((_rejection: any) => {
+    throw new Error("observer failed");
+  });
+  const syncClient = client(db, { syncAdapter: adapter, onPushRejected });
+  const statuses: unknown[] = [];
+  syncClient.subscribeStatus((event) => statuses.push(event.error ?? event.status));
+  syncClient.retryRejectedPushes();
+  syncClient.startSync();
+  await settle();
+  await syncClient.collections.todos.insert({ id: "denied" } as never);
+  await syncClient.collections.todos.insert({ id: "allowed" } as never);
+  await syncClient.collections.todos.insert({ id: "later" } as never);
+  await vi.waitFor(() => expect(onPushRejected).toHaveBeenCalledTimes(2));
+  expect(onPushRejected.mock.calls.map(([{ event }]) => event.data.id)).toEqual([
+    "denied",
+    "later",
+  ]);
+  expect(onPushRejected).toHaveBeenCalledWith({
+    event: expect.objectContaining({ type: "create", data: { id: "denied" } }),
+    error: rejection,
+    discard: expect.any(Function),
+  });
+  expect(statuses).toContain(rejection);
+  const pending = async () =>
+    (await db.localChangeStore.getPendingEvents()).map(({ data }: any) => data.id);
+  await vi.waitFor(async () => expect(await pending()).toEqual(["denied", "later"]));
+
+  // Allowed now (e.g. after sign-in): retried without waiting for the backoff.
+  allowed = new Set(["allowed", "later"]);
+  syncClient.retryRejectedPushes();
+  await vi.waitFor(async () => expect(await pending()).toEqual(["denied"]));
+  await onPushRejected.mock.calls[0]![0].discard();
+  expect(await pending()).toEqual([]);
   await syncClient.dispose();
 });
 
