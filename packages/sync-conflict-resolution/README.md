@@ -7,8 +7,7 @@ import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
 
 const client = createSyncClient({
   collections,
-  storage,
-  checkpointStorage,
+  dbAdapter,
   resolveConflict: lastWriteWins({
     getLocalVersion: (local) => local?.updatedAt,
     getRemoteVersion: (remote) => (remote.type === "delete" ? undefined : remote.data.updatedAt),

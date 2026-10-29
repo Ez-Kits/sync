@@ -50,7 +50,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       return this.readCheckpointMap();
     }
     save(checkpoints: any) {
-      return this.saveCheckpointMap(checkpoints);
+      return this.saveCheckpointMap(checkpoints, { transaction: "pull" });
     }
     push(key: string, fn: () => void | Promise<void>, signal?: AbortSignal) {
       return this.enqueuePush(key, fn, signal);

@@ -3,7 +3,7 @@ import type {
   ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
 } from "../change-bus";
-import { isTransactionalCheckpointStorage } from "../checkpoint-storage";
+import { createCheckpointStorage, type CheckpointStorage } from "../checkpoint-storage";
 import {
   CollectionRuntime,
   type CollectionConfigMap,
@@ -63,6 +63,7 @@ export class SyncClientImpl<
 > implements SyncClient<C, DB, TCheckpoint> {
   readonly collections: TCollectionRuntimeRecord<C>;
   private readonly dbAdapter: DB;
+  private readonly checkpoints: CheckpointStorage<CollectionNames<C>, TCheckpoint>;
   private readonly dbStorage: DBStorage;
   private readonly tabs: SyncTabChannel;
   private appliedRole: DBRole | undefined;
@@ -83,17 +84,12 @@ export class SyncClientImpl<
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
     assertDBAdapter(config.dbAdapter);
-    const { checkpointStorage } = config;
-    if (
-      isTransactionalCheckpointStorage(checkpointStorage) &&
-      checkpointStorage.localChangeStore !== config.dbAdapter.localChangeStore
-    ) {
-      // Its transactions would not be the adapter's: the checkpoint could not commit with its rows.
-      throw new Error(
-        "The DB checkpoint storage must use the local-change store of the sync client's adapter.",
-      );
-    }
     this.dbAdapter = config.dbAdapter;
+    // In the adapter's own store, so a pulled checkpoint commits in the transaction of its rows.
+    this.checkpoints = createCheckpointStorage(
+      config.dbAdapter.localChangeStore,
+      config.checkpoint,
+    );
     this.dbStorage = config.dbAdapter.dbStorage;
     this.tabs = new SyncTabChannel(this.dbStorage.key);
 
@@ -217,11 +213,16 @@ export class SyncClientImpl<
   };
 
   getCheckpoint = async <N extends CollectionNames<C>>(collection: N) => {
-    return this.config.checkpointStorage.getCheckpoint(collection);
+    await this.initialized;
+    return this.checkpoints.getCheckpoint(collection);
   };
 
-  saveCheckpoint = async <N extends CollectionNames<C>>(collection: N, checkpoint: TCheckpoint) => {
-    await this.config.checkpointStorage.saveCheckpoint(collection, checkpoint);
+  saveCheckpoint = async <N extends CollectionNames<C>>(
+    collection: N,
+    checkpoint: TCheckpoint | undefined,
+  ) => {
+    await this.initialized;
+    await this.checkpoints.saveCheckpoint(collection, checkpoint);
   };
 
   startSync = () => {
@@ -342,7 +343,7 @@ export class SyncClientImpl<
       collections: this.config.collections,
       db: this.dbAdapter,
       changeBus: this.changeBus,
-      checkpointStorage: this.config.checkpointStorage,
+      checkpointStorage: this.checkpoints,
       localChangeStore: this.dbAdapter.localChangeStore,
       syncAdapter: this.config.syncAdapter,
       onSyncError: (error) => this.setStatus("error", error),

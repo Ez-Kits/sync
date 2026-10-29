@@ -1,9 +1,4 @@
-import type {
-  BaseDBAdapter,
-  CollectionConfig,
-  ICheckpointStorage,
-  SyncClient,
-} from "@ez-kits/sync-client-core";
+import type { BaseDBAdapter, CollectionConfig, SyncClient } from "@ez-kits/sync-client-core";
 import type { ComponentType, ReactNode } from "react";
 import { expectTypeOf, test } from "vite-plus/test";
 import { createSyncClientReact, type UseLiveQueryResult } from "../../src";
@@ -26,17 +21,14 @@ type DB = BaseDBAdapter<Collections, QueryBuilder, { todos: "todos-table"; tags:
 
 declare const collections: Collections;
 declare const dbAdapter: DB;
-declare const checkpointStorage: ICheckpointStorage<"todos" | "tags", Checkpoint>;
-
-const react = createSyncClientReact({ collections, dbAdapter, checkpointStorage });
+const react = createSyncClientReact({ collections, dbAdapter });
 
 test("createSyncClientReact keeps the client fully typed", () => {
   expectTypeOf(react).not.toBeAny();
   expectTypeOf(react.useLiveQuery).not.toBeAny();
-  expectTypeOf(react.syncClient).toEqualTypeOf<SyncClient<Collections, DB, Checkpoint>>();
-  expectTypeOf(react.useSyncClient).returns.toEqualTypeOf<
-    SyncClient<Collections, DB, Checkpoint>
-  >();
+  // Without a typed serializer the checkpoint type comes from the collections.
+  expectTypeOf(react.syncClient).toEqualTypeOf<SyncClient<Collections, DB>>();
+  expectTypeOf(react.useSyncClient).returns.toEqualTypeOf<SyncClient<Collections, DB>>();
   expectTypeOf(react.SyncClientProvider).toEqualTypeOf<ComponentType<{ children: ReactNode }>>();
 });
 
@@ -66,6 +58,20 @@ test("options are validated like createSyncClient", () => {
     collections,
     // @ts-expect-error the adapter must implement the DB adapter contract
     dbAdapter: { queryBuilder: dbAdapter.queryBuilder },
-    checkpointStorage,
   });
+  createSyncClientReact({
+    collections,
+    dbAdapter,
+    // @ts-expect-error checkpoints always live in the adapter's local-change store
+    checkpointStorage: { getCheckpoint: async () => undefined, saveCheckpoint: async () => {} },
+  });
+  const serialized = createSyncClientReact({
+    collections,
+    dbAdapter,
+    checkpoint: {
+      serialize: (checkpoint: Checkpoint) => checkpoint.cursor,
+      deserialize: (value: string): Checkpoint => ({ cursor: value }),
+    },
+  });
+  expectTypeOf(serialized.syncClient).toEqualTypeOf<SyncClient<Collections, DB, Checkpoint>>();
 });

@@ -34,6 +34,8 @@ The old sync-options API names are removed. Use `SyncAdapter`, set `syncAdapter`
 
 Checkpoint values and queries are application/provider-specific. Firestore clients should order by a stable cursor and define tie-breaking for equal values. If records can be updated without advancing that cursor, the query can miss changes; maintain an updated version field on every write or choose a cursor strategy that covers updates. RTDB clients should provide a pull query builder when resuming from a checkpoint; the default listener starts at the configured collection path and receives its current children.
 
+The sync client stores checkpoints as strings in the local database, next to the synced rows (JSON by default). A Firestore checkpoint that holds a `Timestamp` does not survive `JSON.parse`, so pass `checkpoint: { serialize, deserialize }` to `createSyncClient` to rebuild it, for example from its `seconds` and `nanoseconds`. Losing or resetting the local database removes its checkpoints, and the next pull starts from scratch.
+
 Deletes use tombstones by default (`deleted: true` with `deletedAt`) so listeners can propagate removals. Configure `serializeDelete`, `isDeleted`, and `deserializeDeleteId` to match the security rules and data model. Physical removals observed by listeners are also translated into local deletes.
 
 ## Security and deployment

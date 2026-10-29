@@ -22,9 +22,10 @@ function fixture(adapter: any, overrides: Record<string, unknown> = {}) {
     getOptional: vi.fn(async () => undefined),
     getMany: vi.fn(async () => []),
     transaction: vi.fn(async (fn: (tx: any, context: any) => Promise<unknown>) =>
-      fn(db, { operations: db, native: undefined }),
+      fn(db, { operations: db, native }),
     ),
   };
+  const native = { transaction: "pull" };
   const changeBus = new ChangeBus<any>();
   const localChangeStore = createTestLocalChangeStore();
   const checkpointStorage = {
@@ -46,6 +47,7 @@ function fixture(adapter: any, overrides: Record<string, unknown> = {}) {
       ...overrides,
     },
     db,
+    native,
     changeBus,
     localChangeStore,
     checkpointStorage,
@@ -98,7 +100,7 @@ test("collection handler flushes pending events, pulls checkpoints, commits remo
   await tick();
   await tick();
   expect(f.db.insert).toHaveBeenCalledWith("todos", { id: 2 });
-  expect(f.checkpointStorage.saveCheckpoint).toHaveBeenCalledWith("todos", "cp");
+  expect(f.checkpointStorage.saveCheckpoint).toHaveBeenCalledWith("todos", "cp", f.native);
   await f.localChangeStore.appendEvents([
     {
       id: "live",
@@ -345,7 +347,7 @@ test("global handler coordinates pull and push lifecycle and the wrapper keeps s
   await tick();
   await tick();
   expect(f.db.delete).toHaveBeenCalledWith("todos", 2);
-  expect(f.checkpointStorage.saveCheckpoint).toHaveBeenCalledWith("todos", "next");
+  expect(f.checkpointStorage.saveCheckpoint).toHaveBeenCalledWith("todos", "next", f.native);
   global.stop();
   global.stop();
   expect(cleanup).toHaveBeenCalledOnce();

@@ -4,7 +4,6 @@ import type {
   ChangeBusEventDataMapFromCollectionConfigMap,
   ChangeBusSubscribeOptions,
 } from "../change-bus";
-import type { ICheckpointStorage } from "../checkpoint-storage";
 import type { DBRole } from "../db-storage";
 import type {
   CollectionConfigMap,
@@ -34,13 +33,20 @@ export interface SyncClientConfig<
     TCheckpoint
   >;
   /**
-   * Where pull checkpoints are kept. Prefer `createDBCheckpointStorage` over
-   * `dbAdapter.localChangeStore`: checkpoints then commit in the transaction of the rows they
-   * describe and are lost with them. A storage kept elsewhere (such as localStorage) is saved
-   * after each pull commits, and can outlive a database that is lost or reset, so the next
-   * pull would skip every remote change before the surviving checkpoint.
+   * How pull checkpoints are turned into strings and back. Checkpoints are always stored in
+   * the database of `dbAdapter`, next to the synced rows and the outbox: each one is saved in
+   * the transaction that commits the pulled rows it describes, so both commit or roll back
+   * together. A database that is lost or reset loses its checkpoints with its rows, and the
+   * next pull starts from scratch and fetches everything again.
+   *
+   * Defaults to `JSON.stringify` / `JSON.parse`, which only round-trips plain JSON values.
+   * A checkpoint that holds anything else, such as a Firestore `Timestamp` or a `Date`, needs
+   * a serializer that rebuilds it, otherwise the next pull resumes from a plain object.
    */
-  checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
+  checkpoint?: {
+    serialize: (checkpoint: TCheckpoint) => string;
+    deserialize: (value: string) => TCheckpoint;
+  };
   /** Optional lifecycle notifications. Sync errors never include document payloads. */
   onSyncStatus?: (event: SyncStatusEvent) => void;
   /**
@@ -86,10 +92,19 @@ export interface SyncClient<
   subscribeRole: (listener: (role: DBRole) => void) => () => void;
   /** Subscribe to lifecycle notifications; the current status is emitted immediately. */
   subscribeStatus: (listener: (event: SyncStatusEvent) => void) => () => void;
+  /**
+   * The last committed pull checkpoint of a collection, read from the database (deserialized
+   * with `checkpoint.deserialize`). Waits for the storage to be initialized.
+   */
   getCheckpoint: <N extends CollectionNames<C>>(collection: N) => Promise<TCheckpoint | undefined>;
+  /**
+   * Replace a collection's checkpoint in the database; `undefined` removes it, so the next pull
+   * of that collection starts from scratch. Takes effect when the collection's pull stream
+   * (re)subscribes. Waits for the storage to be initialized.
+   */
   saveCheckpoint: <N extends CollectionNames<C>>(
     collection: N,
-    checkpoint: TCheckpoint,
+    checkpoint: TCheckpoint | undefined,
   ) => Promise<void>;
 }
 

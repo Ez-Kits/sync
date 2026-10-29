@@ -1,34 +1,12 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
 import { ChangeBusStreamChannel } from "../src/change-bus/change-bus-stream-channel";
-import { createLocalStorageCheckpointStorage } from "../src/checkpoint-storage/local-storage";
 
 type Event = { todos: { create: { id: string }; update: { id: string }; delete: string } };
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
-
-test("checkpoint storage serializes per collection, deserializes, and removes empty serialization", async () => {
-  const entries = new Map<string, string>();
-  vi.stubGlobal("localStorage", {
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => entries.set(key, value),
-    removeItem: (key: string) => entries.delete(key),
-  });
-  const storage = createLocalStorageCheckpointStorage<string, number>({
-    key: "sync",
-    serializer: (n) => (n > 0 ? String(n) : undefined),
-    deserializer: (raw) => Number(raw),
-  });
-  expect(await storage.getCheckpoint("todos")).toBeUndefined();
-  await storage.saveCheckpoint("todos", 8);
-  await storage.saveCheckpoint("users", 4);
-  expect(await storage.getCheckpoint("todos")).toBe(8);
-  expect(await storage.getCheckpoint("users")).toBe(4);
-  await storage.saveCheckpoint("todos", 0);
-  expect(await storage.getCheckpoint("todos")).toBeUndefined();
 });
 
 test("change bus batches, filters collections and streams, deduplicates subscriptions, and unsubscribes", async () => {

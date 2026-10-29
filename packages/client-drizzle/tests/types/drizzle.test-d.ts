@@ -164,10 +164,6 @@ describe("drizzle adapter", () => {
     const client = createSyncClient({
       collections,
       dbAdapter,
-      checkpointStorage: {
-        getCheckpoint: async () => undefined,
-        saveCheckpoint: async () => {},
-      },
     });
     expectTypeOf<CollectionNames<typeof collections>>().toEqualTypeOf<"todos" | "users">();
     expectTypeOf(client.collections.users.get("u1")).resolves.toEqualTypeOf<{

@@ -2,6 +2,7 @@ import type {
   BaseDBAdapter,
   CollectionConfigMap,
   CollectionNames,
+  InferCheckpointMap,
 } from "@ez-kits/sync-client-core";
 import { createSyncClient } from "@ez-kits/sync-client-core";
 import {
@@ -27,7 +28,7 @@ export type * from "./types.ts";
 export function createSyncClientReact<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
-  TCheckpoint,
+  TCheckpoint = InferCheckpointMap<C>,
 >(
   options: CreateSyncClientReactOptions<C, DB, TCheckpoint>,
 ): CreateSyncClientReactResult<C, DB, TCheckpoint> {

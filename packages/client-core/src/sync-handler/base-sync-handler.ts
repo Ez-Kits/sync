@@ -3,11 +3,7 @@ import type {
   ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
 } from "../change-bus";
-import {
-  isTransactionalCheckpointStorage,
-  type ICheckpointStorage,
-  type TransactionalCheckpointStorage,
-} from "../checkpoint-storage";
+import type { CheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
 import type {
   BaseDBAdapter,
@@ -30,11 +26,8 @@ export interface BaseSyncHandlerConfig<
   collections: C;
   db: DB;
   changeBus: ChangeBus<SyncHandlerDataMap<C>>;
-  /**
-   * A transactional storage (`createDBCheckpointStorage`) over `localChangeStore` is saved
-   * inside each pull transaction; any other storage after the transaction commits.
-   */
-  checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
+  /** Checkpoints kept in `localChangeStore`; each pulled one is saved in its pull transaction. */
+  checkpointStorage: CheckpointStorage<CollectionNames<C>, TCheckpoint>;
   localChangeStore: ILocalChangeStore;
   onSyncError?: (error: unknown) => void;
   onSyncSuccess?: () => void;
@@ -236,10 +229,9 @@ export abstract class BaseSyncHandler<
   }
 
   /**
-   * Apply one pulled batch in a single transaction, announce what it applied and save its
-   * checkpoint: in that transaction when the checkpoint storage is transactional (then a
-   * batch without changes still opens one), after it commits otherwise. Resolves `true`
-   * when conflict resolution queued an outbox event to push.
+   * Apply one pulled batch and save its checkpoint in a single transaction (a batch without
+   * changes still opens one, for its checkpoint), then announce what it applied. Resolves
+   * `true` when conflict resolution queued an outbox event to push.
    */
   protected async commitPulledChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
@@ -251,30 +243,26 @@ export abstract class BaseSyncHandler<
   ): Promise<boolean> {
     let applied: ChangeBusEvent<SyncHandlerDataMap<C>>[] = [];
     let needsPush = false;
-    const transactionalStorage = this.transactionalCheckpointStorage();
-    if (changes.length > 0 || transactionalStorage) {
-      await this.config.db.transaction(async (tx, context) => {
-        applied = [];
-        needsPush = false;
-        const skipped = await this.config.localChangeStore.getSkippedRemoteEvents(
-          undefined,
-          context.native,
-        );
-        const skippedKeys = new Set(skipped.map(recordKeyString));
-        for (const event of changes) {
-          const resolved = await this.resolveRemoteEvent(event, context, skippedKeys);
-          needsPush ||= resolved.needsPush;
-          if (!resolved.event) continue;
-          await apply(resolved.event, tx);
-          applied.push(resolved.event);
-        }
-        if (transactionalStorage) await this.saveCheckpointMap(checkpoint, context.native);
-      });
-    }
+    await this.config.db.transaction(async (tx, context) => {
+      applied = [];
+      needsPush = false;
+      const skipped = await this.config.localChangeStore.getSkippedRemoteEvents(
+        undefined,
+        context.native,
+      );
+      const skippedKeys = new Set(skipped.map(recordKeyString));
+      for (const event of changes) {
+        const resolved = await this.resolveRemoteEvent(event, context, skippedKeys);
+        needsPush ||= resolved.needsPush;
+        if (!resolved.event) continue;
+        await apply(resolved.event, tx);
+        applied.push(resolved.event);
+      }
+      await this.saveCheckpointMap(checkpoint, context.native);
+    });
 
     this.config.changeBus.publishRemoteBatch(applied);
     if (applied.length > 0) this.config.onRemoteChangesCommitted?.(applied);
-    if (!transactionalStorage) await this.saveCheckpointMap(checkpoint);
     this.config.onSyncSuccess?.();
     return needsPush;
   }
@@ -742,38 +730,21 @@ export abstract class BaseSyncHandler<
     return checkpointMap;
   }
 
-  /** Save each defined checkpoint; in the given transaction for a transactional storage. */
+  /** Save each defined checkpoint in the given pull transaction. */
   protected async saveCheckpointMap(
     checkpointMap: Partial<Record<CollectionNames<C>, TCheckpoint>>,
-    transactionContext?: unknown,
+    transactionContext: unknown,
   ): Promise<void> {
-    const storage = this.config.checkpointStorage;
     for (const collection of this.config.collections) {
       const collectionName = collection.name as CollectionNames<C>;
       const checkpoint = checkpointMap[collectionName];
       if (checkpoint === undefined) continue;
-      if (transactionContext === undefined) {
-        await storage.saveCheckpoint(collectionName, checkpoint);
-      } else {
-        await (
-          storage as TransactionalCheckpointStorage<CollectionNames<C>, TCheckpoint>
-        ).saveCheckpoint(collectionName, checkpoint, transactionContext);
-      }
+      await this.config.checkpointStorage.saveCheckpoint(
+        collectionName,
+        checkpoint,
+        transactionContext,
+      );
     }
-  }
-
-  /**
-   * The checkpoint storage when it joins the pull transaction: transactional and over this
-   * handler's local-change store, whose transactions are the adapter's.
-   */
-  private transactionalCheckpointStorage():
-    | TransactionalCheckpointStorage<CollectionNames<C>, TCheckpoint>
-    | undefined {
-    const storage = this.config.checkpointStorage;
-    return isTransactionalCheckpointStorage(storage) &&
-      storage.localChangeStore === this.config.localChangeStore
-      ? storage
-      : undefined;
   }
 
   private dirtyRecordKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): DirtyRecordKey {

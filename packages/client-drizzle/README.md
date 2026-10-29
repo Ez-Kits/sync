@@ -3,7 +3,7 @@
 Drizzle ORM adapter for EzSync. It bridges a `DBStorage` (sql.js, SQLite WASM, PGlite, ...) to Drizzle: collection CRUD, a type-safe Drizzle database for live queries, transactional application of pulled remote changes, and the outbox. It supports scalar and composite primary keys when the collection configuration and Drizzle schema agree.
 
 ```ts
-import { createDBCheckpointStorage, createSyncClient } from "@ez-kits/sync-client-core";
+import { createSyncClient } from "@ez-kits/sync-client-core";
 import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
 import { createSqlJsStorage } from "@ez-kits/sync-storage-sqljs";
 
@@ -14,14 +14,9 @@ const dbStorage = createSqlJsStorage({
 });
 
 const dbAdapter = createDrizzleSqliteDBAdapter({ dbStorage, collections });
-// Checkpoints in the database, saved in the transaction of the rows they describe.
-const checkpointStorage = createDBCheckpointStorage({
-  localChangeStore: dbAdapter.localChangeStore,
-  serializer: JSON.stringify,
-  deserializer: JSON.parse,
-});
-
-const client = createSyncClient({ collections, dbAdapter, checkpointStorage });
+// Pull checkpoints are stored in this database, in the transaction of the rows they describe
+// (JSON by default; pass `checkpoint: { serialize, deserialize }` for non-JSON values).
+const client = createSyncClient({ collections, dbAdapter });
 
 client.liveQuery({
   collections: ["todos"],
@@ -60,7 +55,7 @@ createDrizzleSqliteDBAdapter({ dbStorage, collections, relations });
 
 The outbox and dirty records live in predefined tables, `ez_sync_events` and `ez_sync_dirty_records` (`sqliteLocalChangeTables` from `./sqlite`, `pgLocalChangeTables` from `./pg`). Pending events are read in the order of `seq`, a key the database assigns on insert (`INTEGER PRIMARY KEY AUTOINCREMENT` on SQLite, a `BIGINT` identity on Postgres), so they follow commit order; event `id`s stay unique. A custom events table for `createDrizzleLocalChangeStore` needs such a `seq` column too. A third table, `ez_sync_applied_events (eventId, appliedAt)`, records the `id` of every appended event in the same transaction and keeps it after the event is acknowledged, so a retried local mutation can tell it already landed (`hasAppliedEvent`). Records older than `APPLIED_EVENT_RETENTION_MS` (24 hours), counted back from the newest appended event, are pruned as events are appended. Custom stores pass it as `tables.appliedEvents`, with a text primary key `eventId` and a numeric `appliedAt`. Schema version 3 adds it: `initialize()` creates it in databases of version 2.
 
-Two more tables keep the sync state that must live and die with the rows. `ez_sync_checkpoints (collection, value)` holds the serialized checkpoints of `createDBCheckpointStorage` (recommended over localStorage: they are saved in the pull transaction, and lost with the database). `ez_sync_skipped_remote_events (collection, recordId, event)` holds, per record, the latest pulled event skipped because the record had pending writes, as JSON, until the acknowledgement that applies it. Custom stores pass them as `tables.checkpoints` (text `collection` primary key, text `value`) and `tables.skippedRemoteEvents` (text `collection` and `recordId` as the primary key, a JSON `event`). Schema version 4 adds them: `initialize()` creates them in databases of version 3. Switching an existing app to the DB checkpoint storage makes the next pull start without a checkpoint, once.
+Two more tables keep the sync state that must live and die with the rows. `ez_sync_checkpoints (collection, value)` holds the sync client's serialized pull checkpoints (saved in the pull transaction, and lost with the database). `ez_sync_skipped_remote_events (collection, recordId, event)` holds, per record, the latest pulled event skipped because the record had pending writes, as JSON, until the acknowledgement that applies it. Custom stores pass them as `tables.checkpoints` (text `collection` primary key, text `value`) and `tables.skippedRemoteEvents` (text `collection` and `recordId` as the primary key, a JSON `event`). Schema version 4 adds them: `initialize()` creates them in databases of version 3. An app upgraded from localStorage checkpoints pulls everything again once.
 
 The adapter creates the tables itself: its local-change store's `initialize()` creates them in one storage transaction and records the schema version in `ez_sync_meta`. Tables an older version created (without `seq`) are rebuilt in that transaction, numbering the pending events in their old `createdAt, id` order. The sync client calls it before anything touches the database. Keep only your own tables in your migrations.
 

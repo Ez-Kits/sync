@@ -1,4 +1,3 @@
-import { createLocalStorageCheckpointStorage } from "@ez-kits/sync-client-core";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
 import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
@@ -125,9 +124,9 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
     dbAdapter,
-    checkpointStorage: createLocalStorageCheckpointStorage<string, TodoCheckpoint>({
-      key: "ez-sync-todo-typeorm-checkpoint",
-      serializer: (checkpoint) =>
+    // Checkpoints are stored in the database; a Firestore `Timestamp` is not plain JSON.
+    checkpoint: {
+      serialize: (checkpoint: TodoCheckpoint) =>
         JSON.stringify({
           updatedAt: {
             seconds: checkpoint.updatedAt.seconds,
@@ -135,7 +134,7 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
           },
           id: checkpoint.id,
         }),
-      deserializer: (value) => {
+      deserialize: (value: string): TodoCheckpoint => {
         const parsed = JSON.parse(value) as {
           updatedAt: { seconds: number; nanoseconds: number };
           id: string;
@@ -145,7 +144,7 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
           id: parsed.id,
         };
       },
-    }),
+    },
     resolveConflict: lastWriteWins({
       getLocalVersion(local) {
         if (!local) return undefined;

@@ -1,9 +1,6 @@
 import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
 import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
-import {
-  createLocalDBStorage,
-  createLocalStorageCheckpointStorage,
-} from "@ez-kits/sync-client-core";
+import { createLocalDBStorage } from "@ez-kits/sync-client-core";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
 import { defineRelations } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -70,11 +67,6 @@ const { useLiveQuery } = createSyncClientReact({
     dbStorage,
     collections: [collection],
     relations,
-  }),
-  checkpointStorage: createLocalStorageCheckpointStorage({
-    key: "checkpoint",
-    serializer: (checkpoint: string) => JSON.stringify(checkpoint),
-    deserializer: (value: string) => JSON.parse(value) as string,
   }),
 });
 

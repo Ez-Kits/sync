@@ -4,7 +4,7 @@ Provider-neutral client sync primitives for local-first applications. Core defin
 
 ## Client lifecycle
 
-Create a client with collections, a DB adapter, checkpoint storage, and an optional provider sync adapter. Call `startSync()` after app initialization and `stopSync()` when the client is no longer active. Network events pause and resume browser sync automatically. Subscribe to status with `subscribeStatus()` or pass `onSyncStatus` to receive `starting`, `syncing`, `idle`, `offline`, `stopped`, and `error` updates.
+Create a client with collections, a DB adapter, and an optional provider sync adapter. Call `startSync()` after app initialization and `stopSync()` when the client is no longer active. Network events pause and resume browser sync automatically. Subscribe to status with `subscribeStatus()` or pass `onSyncStatus` to receive `starting`, `syncing`, `idle`, `offline`, `stopped`, and `error` updates.
 
 Implement a `SyncAdapter` with provider `pull` and `push` methods. `pull` and `push` may return promises; push should resolve only after the provider has durably accepted the supplied events and invoke `commitChanges` only after success. `commitChanges` returns a promise that settles once the acknowledged events have left the outbox; await it before `push` resolves. Core serializes push batches, starts the next one only after every acknowledgement of the previous one has finished (awaited by the adapter or not), and retries failures, including a failed acknowledgement, with bounded exponential delays through `onSyncError`. Failed events are not acknowledged and remain in the outbox for a later sync start or subsequent push.
 
@@ -26,30 +26,32 @@ sync client ──> DB adapter (ORM bridge) ──> DBStorage (contract) ──>
 
 - A **`DBStorage`** wraps one database engine: `exec(query)`, `transaction(fn)`, its `dialect` (`sqlite` or `postgres`), and its `role`. Engine packages implement it: `@ez-kits/sync-storage-sqljs`, `@ez-kits/sync-storage-sqlite-wasm`, and `@ez-kits/sync-storage-pglite`.
 - A **DB adapter** turns the storage into a driver for its ORM (for example `createDrizzleSqliteDBAdapter({ dbStorage, collections })` from `@ez-kits/sync-client-drizzle-adapter/sqlite`). It implements collection CRUD, keeps the outbox (`localChangeStore`) in the same database, and runs its transactions on `dbStorage.transaction`.
-- The **sync client** takes the adapter: `createSyncClient({ collections, dbAdapter, checkpointStorage })`.
+- The **sync client** takes the adapter: `createSyncClient({ collections, dbAdapter })`.
 
-## Checkpoint storage
+## Checkpoints
 
-Pull checkpoints belong in the database they describe. Use `createDBCheckpointStorage` over the adapter's local-change store:
+Pull checkpoints are stored in the database they describe: the sync client keeps them in its adapter's local-change store (the `ez_sync_checkpoints` table, next to the outbox and the synced rows), and saves each pulled checkpoint inside the transaction that commits the pulled rows. Both commit or roll back together. A database that is lost or reset (an in-memory sql.js storage, a failed or cleared IndexedDB snapshot, a database deleted on logout, a new storage key) loses its checkpoints with its rows, so the next pull starts over and fetches everything again. There is no checkpoint storage to configure.
+
+Each checkpoint is stored as a string. By default the client uses `JSON.stringify` / `JSON.parse`, which only round-trips plain JSON values. A checkpoint that holds anything else, such as a Firestore `Timestamp` or a `Date`, needs a serializer that rebuilds it:
 
 ```ts
-const checkpointStorage = createDBCheckpointStorage({
-  localChangeStore: dbAdapter.localChangeStore,
-  // Same contract as `createLocalStorageCheckpointStorage`: checkpoints may hold values JSON
-  // cannot represent (a Firestore `Timestamp`), and `undefined` removes the stored one.
-  serializer: (checkpoint) =>
-    JSON.stringify({ ...checkpoint, updatedAt: checkpoint.updatedAt.toMillis() }),
-  deserializer: (value) => {
-    const { updatedAt, id } = JSON.parse(value);
-    return { updatedAt: Timestamp.fromMillis(updatedAt), id };
+const client = createSyncClient({
+  collections,
+  dbAdapter,
+  checkpoint: {
+    serialize: (checkpoint: TodoCheckpoint) =>
+      JSON.stringify({ ...checkpoint, updatedAt: checkpoint.updatedAt.toMillis() }),
+    deserialize: (value: string): TodoCheckpoint => {
+      const { updatedAt, id } = JSON.parse(value);
+      return { updatedAt: Timestamp.fromMillis(updatedAt), id };
+    },
   },
 });
-const client = createSyncClient({ collections, dbAdapter, checkpointStorage });
 ```
 
-Its checkpoints are stored in the `ez_sync_checkpoints` table, next to the outbox, and each pulled checkpoint is saved inside the transaction that commits the pulled rows: both commit or roll back together, and a database that is lost or reset (an in-memory sql.js storage, a failed or cleared IndexedDB snapshot, a database deleted on logout, a new storage key) loses its checkpoints with its rows, so the next pull starts over and fetches everything again. The sync client rejects a DB checkpoint storage over another store than its adapter's. `client.getCheckpoint` / `saveCheckpoint` read and write it on their own, outside any transaction.
+`client.getCheckpoint(collection)` reads a collection's last committed checkpoint and `client.saveCheckpoint(collection, checkpoint)` replaces it, both through the configured serialization and on their own, outside any pull transaction; `saveCheckpoint(collection, undefined)` removes it, so the collection's next pull starts from scratch. A new value takes effect when the collection's pull stream (re)subscribes. Both wait for the storage to be initialized, like collection operations.
 
-`createLocalStorageCheckpointStorage({ key, serializer, deserializer })`, or any other `ICheckpointStorage`, is saved after the pull transaction commits. It can outlive the database: a pull that resumes from a surviving checkpoint never fetches the remote changes before it, and the reset database misses them for good. Prefer the DB storage. It never reads checkpoints another storage saved, so switching to it makes the next pull of each collection start without a checkpoint, once, a full re-pull that the outbox and conflict handling make safe.
+Upgrading from a version that took a `checkpointStorage` option: remove it (and `createLocalStorageCheckpointStorage` / `createDBCheckpointStorage`), and move a custom `serializer` / `deserializer` to `checkpoint: { serialize, deserialize }`. Checkpoints that were kept in localStorage are not read (the old keys are simply ignored), so each collection does one full re-pull after the upgrade, which the outbox and conflict handling make safe.
 
 `createLocalDBStorage({ dialect, open })` runs an engine in this context, which always leads. Use it for Node, tests, single-context apps, and engines that are already shared across tabs.
 

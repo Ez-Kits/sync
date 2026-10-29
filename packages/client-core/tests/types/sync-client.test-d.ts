@@ -10,7 +10,6 @@ import {
   type SyncStatusEvent,
 } from "../../src";
 import {
-  checkpointStorage,
   collections,
   db,
   type Checkpoint,
@@ -24,7 +23,7 @@ import {
 
 type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<Collections>;
 
-const client = createSyncClient({ collections, dbAdapter: db, checkpointStorage });
+const client = createSyncClient({ collections, dbAdapter: db });
 
 test("createSyncClient infers collections, adapter and checkpoint", () => {
   expectTypeOf(client).toEqualTypeOf<SyncClient<Collections, DB, Checkpoint>>();
@@ -82,12 +81,10 @@ test("clients take a DB adapter and expose the storage role", () => {
     collections,
     // @ts-expect-error clients take the adapter, not the raw storage
     dbAdapter: { queryBuilder: 1 },
-    checkpointStorage,
   });
   createSyncClient({
     collections,
     dbAdapter: db,
-    checkpointStorage,
     // @ts-expect-error tab coordination is configured on the DB storage
     coordinationKey: "todos",
   });
@@ -100,7 +97,6 @@ test("push rejections carry the typed event", () => {
   createSyncClient({
     collections,
     dbAdapter: db,
-    checkpointStorage,
     onPushRejected: ({ event, error, discard }) => {
       expectTypeOf(event).toEqualTypeOf<ChangeBusEvent<DataMap>>();
       expectTypeOf(error).toBeUnknown();

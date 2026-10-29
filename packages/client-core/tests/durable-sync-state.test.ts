@@ -1,21 +1,15 @@
 import { expect, test, vi } from "vite-plus/test";
-import {
-  createDBCheckpointStorage,
-  createLocalStorageCheckpointStorage,
-  isTransactionalCheckpointStorage,
-} from "../src/checkpoint-storage";
-import { createSyncClient } from "../src/sync-client";
+import { createCheckpointStorage } from "../src/checkpoint-storage";
 import { createTestLocalChangeStore } from "./helpers/local-change-store";
-import { clientConfig, makeDb } from "./helpers/storage";
 import { fixture, settle, type Row } from "./helpers/sync-fixture";
 
 /** A checkpoint that is not plain JSON, like a Firestore `Timestamp`. */
 class Stamp {
   constructor(readonly millis: number) {}
 }
-const stampSerialization = {
-  serializer: (stamp: Stamp) => (stamp.millis > 0 ? String(stamp.millis) : undefined),
-  deserializer: (value: string) => new Stamp(Number(value)),
+const stampSerializer = {
+  serialize: (stamp: Stamp) => String(stamp.millis),
+  deserialize: (value: string) => new Stamp(Number(value)),
 };
 
 const localEvent = (id: string, data: Row) => ({
@@ -32,64 +26,14 @@ const echo = (title: string, updatedAt: number) => ({
   data: { id: 1, title, updatedAt },
 });
 
-test("the DB checkpoint storage serializes into the local-change store, in a given transaction", async () => {
-  const localChangeStore = createTestLocalChangeStore();
-  const save = vi.spyOn(localChangeStore, "saveCheckpoint");
-  const get = vi.spyOn(localChangeStore, "getCheckpoint");
-  const storage = createDBCheckpointStorage<string, Stamp>({
-    localChangeStore,
-    ...stampSerialization,
-  });
-  expect(isTransactionalCheckpointStorage(storage)).toBe(true);
-  expect(storage.localChangeStore).toBe(localChangeStore);
-  expect(await storage.getCheckpoint("todos")).toBeUndefined();
-
-  const native = { transaction: "pull" };
-  await storage.saveCheckpoint("todos", new Stamp(8), native);
-  await storage.saveCheckpoint("users", new Stamp(4));
-  expect(save.mock.calls).toEqual([
-    ["todos", "8", native],
-    ["users", "4", undefined],
-  ]);
-  // The stored value round-trips through the deserializer, back to its class.
-  const read = await storage.getCheckpoint("todos", native);
-  expect(read).toBeInstanceOf(Stamp);
-  expect(read).toEqual(new Stamp(8));
-  expect(get).toHaveBeenLastCalledWith("todos", native);
-  expect(await storage.getCheckpoint("users")).toEqual(new Stamp(4));
-
-  // An empty serialization removes the checkpoint.
-  await storage.saveCheckpoint("todos", new Stamp(0));
-  expect(await localChangeStore.getCheckpoint("todos")).toBeUndefined();
-  expect(await storage.getCheckpoint("todos")).toBeUndefined();
-});
-
-test("only storages bound to a local-change store are transactional", () => {
-  expect(
-    isTransactionalCheckpointStorage({
-      getCheckpoint: async () => undefined,
-      saveCheckpoint: async () => {},
-    }),
-  ).toBe(false);
-  expect(
-    isTransactionalCheckpointStorage(
-      createLocalStorageCheckpointStorage({
-        key: "sync",
-        serializer: String,
-        deserializer: Number,
-      }),
-    ),
-  ).toBe(false);
-});
-
 for (const scope of ["global", "collection"] as const) {
   /** A handler whose checkpoints live in its own local-change store. */
   const dbFixture = () => {
     const localChangeStore = createTestLocalChangeStore();
-    const checkpointStorage = createDBCheckpointStorage<string, Stamp>({
+    const checkpointStorage = createCheckpointStorage<string, Stamp>(
       localChangeStore,
-      ...stampSerialization,
-    });
+      stampSerializer,
+    );
     return fixture(scope, { localChangeStore, checkpointStorage });
   };
 
@@ -180,55 +124,28 @@ for (const scope of ["global", "collection"] as const) {
     g.stop();
   });
 
-  test(`${scope}: a non-transactional checkpoint storage saves after the pull commits`, async () => {
-    const f = fixture(scope);
-    let inTransaction = false;
+  test(`${scope}: a checkpoint written in a rolled back pull transaction is not kept`, async () => {
+    const f = dbFixture();
+    await f.store.saveCheckpoint("todos", "1");
     const transaction = f.db.transaction.getMockImplementation()!;
-    f.db.transaction.mockImplementation(async (fn) => {
-      inTransaction = true;
-      try {
-        return await transaction(fn);
-      } finally {
-        inTransaction = false;
-      }
-    });
-    const saved: boolean[] = [];
-    f.checkpointStorage.saveCheckpoint.mockImplementation(async (name, checkpoint) => {
-      saved.push(inTransaction);
-      f.checkpoints.set(name, checkpoint);
+    const failure = new Error("commit failed");
+    const written: Array<string | undefined> = [];
+    // The commit fails after the batch ran: the transaction restores what it found.
+    f.db.transaction.mockImplementationOnce(async (fn) => {
+      const before = await f.store.getCheckpoint("todos");
+      await transaction(fn);
+      written.push(await f.store.getCheckpoint("todos"));
+      await f.store.saveCheckpoint("todos", before);
+      throw failure;
     });
     f.start();
     await vi.waitFor(() => expect(f.streams).toHaveLength(1));
-    f.streams[0]!.options.commitChanges({
-      changes: [{ type: "create", collection: "todos", data: { id: 1, title: "one" } }],
-      checkpoint: { todos: "c1" },
-    });
-    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
-    // Exactly the two arguments of `ICheckpointStorage.saveCheckpoint`, after the commit.
-    expect(f.checkpointStorage.saveCheckpoint.mock.calls).toEqual([["todos", "c1"]]);
-    expect(saved).toEqual([false]);
-    // A batch without changes opens no transaction.
-    f.streams[0]!.options.commitChanges({ changes: [], checkpoint: { todos: "c2" } });
-    await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
-    expect(f.db.transaction).toHaveBeenCalledOnce();
-    f.stop();
-  });
-
-  test(`${scope}: a DB checkpoint storage of another store is saved after the commit`, async () => {
-    const other = createTestLocalChangeStore();
-    const checkpointStorage = createDBCheckpointStorage<string, Stamp>({
-      localChangeStore: other,
-      ...stampSerialization,
-    });
-    const save = vi.spyOn(other, "saveCheckpoint");
-    const f = fixture(scope, { checkpointStorage });
-    f.start();
-    await vi.waitFor(() => expect(f.streams).toHaveLength(1));
-    f.streams[0]!.options.commitChanges({ changes: [], checkpoint: { todos: new Stamp(3) } });
-    await vi.waitFor(async () => expect(await other.getCheckpoint("todos")).toBe("3"));
-    // Its transactions belong to another database: none is joined.
-    expect(save).toHaveBeenCalledExactlyOnceWith("todos", "3", undefined);
-    expect(f.db.transaction).not.toHaveBeenCalled();
+    f.streams[0]!.options.commitChanges({ changes: [], checkpoint: { todos: new Stamp(5) } });
+    await vi.waitFor(() => expect(f.onSyncError).toHaveBeenCalledWith(failure));
+    expect(written).toEqual(["5"]);
+    expect(await f.store.getCheckpoint("todos")).toBe("1");
+    await vi.waitFor(() => expect(f.streams).toHaveLength(2));
+    expect(f.streams[1]!.options.checkpoint).toEqual({ todos: new Stamp(1) });
     f.stop();
   });
 
@@ -292,22 +209,3 @@ for (const scope of ["global", "collection"] as const) {
     f.stop();
   });
 }
-
-test("sync clients refuse a DB checkpoint storage of another adapter's store", () => {
-  const db = makeDb();
-  const checkpointStorage = createDBCheckpointStorage({
-    localChangeStore: createTestLocalChangeStore(),
-    serializer: String,
-    deserializer: Number,
-  });
-  expect(() => createSyncClient(clientConfig(db, { checkpointStorage }))).toThrow(
-    "The DB checkpoint storage must use the local-change store of the sync client's adapter.",
-  );
-  const own = createDBCheckpointStorage({
-    localChangeStore: db.localChangeStore,
-    serializer: String,
-    deserializer: Number,
-  });
-  const client = createSyncClient(clientConfig(db, { checkpointStorage: own }));
-  void client.dispose();
-});
