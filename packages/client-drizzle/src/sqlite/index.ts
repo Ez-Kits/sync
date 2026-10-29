@@ -5,6 +5,7 @@ import { sqlJsCodecs } from "drizzle-orm/sql-js/codecs";
 import {
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -27,8 +28,9 @@ import type { DrizzleDBAdapter } from "../types";
 // Columns are named explicitly so a `casing` option cannot rename them.
 
 /**
- * Outbox, dirty-record and applied-event tables of SQLite storages, created by the adapter
- * itself. `seq` is assigned on insert, so pending events follow commit order.
+ * Outbox, dirty-record, applied-event, checkpoint and skipped-event tables of SQLite storages,
+ * created by the adapter itself. `seq` is assigned on insert, so pending events follow commit
+ * order.
  */
 export const sqliteLocalChangeTables = {
   events: sqliteTable(
@@ -65,6 +67,19 @@ export const sqliteLocalChangeTables = {
     },
     (table) => [index("ez_sync_applied_events_applied_at").on(table.appliedAt)],
   ),
+  checkpoints: sqliteTable("ez_sync_checkpoints", {
+    collection: text("collection").primaryKey(),
+    value: text("value").notNull(),
+  }),
+  skippedRemoteEvents: sqliteTable(
+    "ez_sync_skipped_remote_events",
+    {
+      collection: text("collection").notNull(),
+      recordId: text("recordId").notNull(),
+      event: text("event", { mode: "json" }).notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.collection, table.recordId] })],
+  ),
 };
 
 const SQLITE_EVENTS_TABLE_DDL = `
@@ -100,6 +115,16 @@ CREATE TABLE IF NOT EXISTS ez_sync_applied_events (
 );
 CREATE INDEX IF NOT EXISTS ez_sync_applied_events_applied_at
   ON ez_sync_applied_events (appliedAt);
+CREATE TABLE IF NOT EXISTS ez_sync_checkpoints (
+  collection TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ez_sync_skipped_remote_events (
+  collection TEXT NOT NULL,
+  recordId TEXT NOT NULL,
+  event TEXT NOT NULL,
+  PRIMARY KEY (collection, recordId)
+);
 `,
   upgradeFromV1: `
 CREATE TEMP TABLE ez_sync_events_v1 AS SELECT * FROM ez_sync_events;

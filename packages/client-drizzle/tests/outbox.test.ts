@@ -141,7 +141,7 @@ for (const dialect of dialects) {
     await Promise.all([localChangeStore.initialize(), localChangeStore.initialize()]);
     expect(await rowsOf(dbStorage, dialect.seqColumn)).toEqual([{ name: "seq" }]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 3 },
+      { key: "schema_version", value: 4 },
     ]);
     const pending = await localChangeStore.getPendingEvents();
     expect(pending.map(({ id }) => id)).toEqual(["first-a", "first-b", "second", "late"]);
@@ -164,7 +164,7 @@ for (const dialect of dialects) {
     expect(execSpy).toHaveBeenCalledOnce();
     expect(await rowsOf(dbStorage, "SELECT * FROM ez_sync_events ORDER BY seq")).toEqual(snapshot);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 3 },
+      { key: "schema_version", value: 4 },
     ]);
     await dbStorage.close();
   }, 30_000);
@@ -180,7 +180,7 @@ for (const dialect of dialects) {
 
     await dialect.adapter(dbStorage).localChangeStore.initialize();
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 3 },
+      { key: "schema_version", value: 4 },
     ]);
     expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
     await localChangeStore.appendEvents([event("after", 2)]);

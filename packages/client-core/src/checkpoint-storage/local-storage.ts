@@ -1,9 +1,14 @@
-import type { ICheckpointStorage } from "./types";
+import type { CheckpointSerialization, ICheckpointStorage } from "./types";
 
-export interface LocalStorageCheckpointStorageConfig<TCheckpoint> {
+/**
+ * Configuration of {@link createLocalStorageCheckpointStorage}. Prefer
+ * `createDBCheckpointStorage`: localStorage outlives a database that is lost or reset, and a
+ * checkpoint that survives its rows makes the next pull skip every change before it.
+ */
+export interface LocalStorageCheckpointStorageConfig<
+  TCheckpoint,
+> extends CheckpointSerialization<TCheckpoint> {
   key: string;
-  serializer: (checkpoint: TCheckpoint) => string | undefined;
-  deserializer: (value: string) => TCheckpoint | undefined;
 }
 
 export function createLocalStorageCheckpointStorage<TCollectionName, TCheckpoint>(

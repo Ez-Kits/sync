@@ -4,8 +4,10 @@ import { createTypeOrmLocalChangeStore } from "../src/core/local-change-store";
 import { sqliteLocalChangeEntities } from "../src/sqlite";
 
 test("initialize opens the data source and creates the predefined outbox tables once", async () => {
-  const { events, dirtyRecords, appliedEvents } = sqliteLocalChangeEntities;
-  const db = new DataSource({ type: "sqljs", entities: [events, dirtyRecords, appliedEvents] });
+  const db = new DataSource({
+    type: "sqljs",
+    entities: Object.values(sqliteLocalChangeEntities),
+  });
   const store = createTypeOrmLocalChangeStore(db, sqliteLocalChangeEntities);
   // Opens the data source too.
   await store.initialize();
@@ -15,9 +17,11 @@ test("initialize opens the data source and creates the predefined outbox tables 
   );
   expect(tables.map((row: { name: string }) => row.name)).toEqual([
     "ez_sync_applied_events",
+    "ez_sync_checkpoints",
     "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
+    "ez_sync_skipped_remote_events",
     "sqlite_sequence",
   ]);
 

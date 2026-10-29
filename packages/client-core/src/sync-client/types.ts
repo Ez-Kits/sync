@@ -33,6 +33,13 @@ export interface SyncClientConfig<
     CollectionNames<C>,
     TCheckpoint
   >;
+  /**
+   * Where pull checkpoints are kept. Prefer `createDBCheckpointStorage` over
+   * `dbAdapter.localChangeStore`: checkpoints then commit in the transaction of the rows they
+   * describe and are lost with them. A storage kept elsewhere (such as localStorage) is saved
+   * after each pull commits, and can outlive a database that is lost or reset, so the next
+   * pull would skip every remote change before the surviving checkpoint.
+   */
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
   /** Optional lifecycle notifications. Sync errors never include document payloads. */
   onSyncStatus?: (event: SyncStatusEvent) => void;

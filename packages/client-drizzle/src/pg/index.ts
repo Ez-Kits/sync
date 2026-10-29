@@ -5,6 +5,7 @@ import {
   index,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   uniqueIndex,
   type DrizzlePgConfig,
@@ -24,8 +25,9 @@ import type { DrizzleDBAdapter } from "../types";
 // Columns are named explicitly so a `casing` option cannot rename them.
 
 /**
- * Outbox, dirty-record and applied-event tables of Postgres storages, created by the
- * adapter itself. `seq` is assigned on insert, so pending events follow commit order.
+ * Outbox, dirty-record, applied-event, checkpoint and skipped-event tables of Postgres
+ * storages, created by the adapter itself. `seq` is assigned on insert, so pending events
+ * follow commit order.
  */
 export const pgLocalChangeTables = {
   events: pgTable(
@@ -61,6 +63,19 @@ export const pgLocalChangeTables = {
       appliedAt: bigint("appliedAt", { mode: "number" }).notNull(),
     },
     (table) => [index("ez_sync_applied_events_applied_at").on(table.appliedAt)],
+  ),
+  checkpoints: pgTable("ez_sync_checkpoints", {
+    collection: text("collection").primaryKey(),
+    value: text("value").notNull(),
+  }),
+  skippedRemoteEvents: pgTable(
+    "ez_sync_skipped_remote_events",
+    {
+      collection: text("collection").notNull(),
+      recordId: text("recordId").notNull(),
+      event: jsonb("event").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.collection, table.recordId] })],
   ),
 };
 
@@ -98,6 +113,16 @@ CREATE TABLE IF NOT EXISTS ez_sync_applied_events (
 );
 CREATE INDEX IF NOT EXISTS ez_sync_applied_events_applied_at
   ON ez_sync_applied_events ("appliedAt");
+CREATE TABLE IF NOT EXISTS ez_sync_checkpoints (
+  collection TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ez_sync_skipped_remote_events (
+  collection TEXT NOT NULL,
+  "recordId" TEXT NOT NULL,
+  event JSONB NOT NULL,
+  PRIMARY KEY (collection, "recordId")
+);
 `,
   // The copy sets `seq` itself, so the identity restarts after the copied rows.
   upgradeFromV1: `

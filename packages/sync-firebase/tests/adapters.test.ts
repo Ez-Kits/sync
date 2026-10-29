@@ -1083,6 +1083,12 @@ test("one write refused by Firestore rules is parked without blocking its batch 
       [...dirty.values()].filter(
         (record) => typeof scope !== "object" || record.recordId === scope.recordId,
       ),
+    getCheckpoint: async () => undefined,
+    saveCheckpoint: async () => {},
+    // No remote event is skipped: nothing is pulled.
+    getSkippedRemoteEvents: async () => [],
+    upsertSkippedRemoteEvent: async () => {},
+    removeSkippedRemoteEvents: async () => {},
   };
   const db: any = {
     transaction: async (fn: any) => fn(db, { operations: db, native: undefined }),

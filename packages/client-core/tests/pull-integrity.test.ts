@@ -298,6 +298,10 @@ for (const scope of ["global", "collection"] as const) {
     stream.commitChanges({ changes: [echo("local", 100)], checkpoint: { todos: "c2" } });
     await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
     expect(f.rows.get("1")?.title).toBe("local");
+    // The later skipped event replaced the earlier one.
+    expect(await f.store.getSkippedRemoteEvents()).toEqual([
+      { collection: "todos", recordId: "1", event: echo("local", 100) },
+    ]);
 
     release();
     await vi.waitFor(() =>
@@ -357,6 +361,8 @@ for (const scope of ["global", "collection"] as const) {
       await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c2"));
       const expected = decision === "remote" ? { id: 1, title: "second" } : merged;
       expect(f.rows.get("1")).toEqual(expected);
+      // Forgotten in the pull transaction that decided it.
+      expect(await f.store.getSkippedRemoteEvents()).toEqual([]);
 
       release();
       await vi.waitFor(async () => expect(await f.store.getPendingEvents()).toEqual([]));
@@ -380,8 +386,12 @@ for (const scope of ["global", "collection"] as const) {
     // The pending write leaves the outbox without an acknowledgement of this handler.
     await f.store.deleteEvents(["e1"]);
     await f.store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
+    expect(await f.store.getSkippedRemoteEvents()).toEqual([
+      { collection: "todos", recordId: "1", event: remoteUpdate("first") },
+    ]);
     stream.commitChanges({ changes: [remoteUpdate("second")], checkpoint: { todos: "c2" } });
     await vi.waitFor(() => expect(f.rows.get("1")?.title).toBe("second"));
+    expect(await f.store.getSkippedRemoteEvents()).toEqual([]);
 
     release();
     await settle();
@@ -415,6 +425,7 @@ for (const scope of ["global", "collection"] as const) {
     );
     expect(f.pushed).toHaveLength(2);
     expect(await f.store.getPendingEvents()).toEqual([]);
+    expect(await f.store.getSkippedRemoteEvents()).toEqual([]);
     expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([echo("local", 100)]);
     f.stop();
   });

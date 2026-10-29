@@ -4,6 +4,7 @@ import {
   type DirtyRecord,
   type DirtyRecordKey,
   type LocalChangeScope,
+  type SkippedRemoteEvent,
   type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
@@ -30,20 +31,34 @@ export interface TypeOrmAppliedEventRow {
   appliedAt: number;
 }
 
-/** The predefined outbox, dirty-record and applied-event entities of one dialect. */
+/** A collection's serialized pull checkpoint. */
+export interface TypeOrmCheckpointRow {
+  collection: string;
+  value: string;
+}
+
+/**
+ * The predefined outbox, dirty-record, applied-event, checkpoint and skipped-event entities
+ * of one dialect.
+ */
 export interface TypeOrmLocalChangeEntities {
   /** `seq` must be a generated primary key and `id` unique. */
   readonly events: EntitySchema<TypeOrmEventRow>;
   readonly dirtyRecords: EntitySchema<DirtyRecord>;
   /** `eventId` must be the primary key. */
   readonly appliedEvents: EntitySchema<TypeOrmAppliedEventRow>;
+  /** `collection` must be the primary key. */
+  readonly checkpoints: EntitySchema<TypeOrmCheckpointRow>;
+  /** `collection` and `recordId` must be the primary key; `event` a JSON column. */
+  readonly skippedRemoteEvents: EntitySchema<SkippedRemoteEvent>;
 }
 
 /**
  * Version of the outbox tables the store reads and writes; 2 added the `seq` column, 3 the
- * `ez_sync_applied_events` table.
+ * `ez_sync_applied_events` table, 4 the `ez_sync_checkpoints` and
+ * `ez_sync_skipped_remote_events` tables.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const EVENT_FIELDS = ["id", "type", "collection", "data", "recordId", "createdAt"] as const;
 
@@ -104,10 +119,13 @@ export function createTypeOrmLocalChangeStore(
   const eventTarget = entities.events;
   const dirtyRecordTarget = entities.dirtyRecords;
   const appliedEventTarget = entities.appliedEvents;
+  const checkpointTarget = entities.checkpoints;
+  const skippedEventTarget = entities.skippedRemoteEvents;
 
   // Open the data source, then create or upgrade the tables (with their keys) in one
   // transaction, so contexts sharing a storage cannot both do it. Missing tables are
-  // created, which also upgrades version 2 (no applied-event table).
+  // created, which also upgrades version 2 (no applied-event table) and version 3 (no
+  // checkpoint or skipped-event table).
   async function initialize() {
     if (!db.isInitialized) await db.initialize();
     await db.transaction(async (manager) => {
@@ -119,7 +137,13 @@ export function createTypeOrmLocalChangeStore(
       const version = await readSchemaVersion(queryRunner, events);
       if (version >= SCHEMA_VERSION) return;
       if (version === 1) await upgradeEventsFromV1(db, queryRunner, events);
-      for (const target of [eventTarget, dirtyRecordTarget, appliedEventTarget]) {
+      for (const target of [
+        eventTarget,
+        dirtyRecordTarget,
+        appliedEventTarget,
+        checkpointTarget,
+        skippedEventTarget,
+      ]) {
         const metadata = db.getMetadata(target);
         if (await queryRunner.hasTable(metadata.tablePath)) continue;
         await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
@@ -192,6 +216,36 @@ export function createTypeOrmLocalChangeStore(
       return managerFor(transactionContext)
         .getRepository(dirtyRecordTarget)
         .find(scopeWhere(scope));
+    },
+    async getCheckpoint(collection: string, transactionContext) {
+      const row = await managerFor(transactionContext)
+        .getRepository(checkpointTarget)
+        .findOneBy({ collection });
+      return row?.value;
+    },
+    async saveCheckpoint(collection: string, value: string | undefined, transactionContext) {
+      const repository = managerFor(transactionContext).getRepository(checkpointTarget);
+      if (value === undefined) await repository.delete({ collection });
+      else await repository.upsert({ collection, value }, ["collection"]);
+    },
+    async getSkippedRemoteEvents(scope, transactionContext) {
+      return managerFor(transactionContext)
+        .getRepository(skippedEventTarget)
+        .find(scopeWhere(scope));
+    },
+    async upsertSkippedRemoteEvent(entry: SkippedRemoteEvent, transactionContext) {
+      const { collection, recordId, event } = entry;
+      await managerFor(transactionContext)
+        .getRepository(skippedEventTarget)
+        .upsert({ collection, recordId, event } as QueryDeepPartialEntity<SkippedRemoteEvent>, [
+          "collection",
+          "recordId",
+        ]);
+    },
+    async removeSkippedRemoteEvents(keys: DirtyRecordKey[], transactionContext) {
+      const repository = managerFor(transactionContext).getRepository(skippedEventTarget);
+      for (const { collection, recordId } of keys)
+        await repository.delete({ collection, recordId });
     },
   };
 }

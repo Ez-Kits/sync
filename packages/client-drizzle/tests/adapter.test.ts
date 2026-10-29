@@ -12,6 +12,15 @@ const appliedEvents = sqliteTable("applied_events", {
   eventId: text("eventId").primaryKey(),
   appliedAt: integer("appliedAt").notNull(),
 });
+const checkpoints = sqliteTable("checkpoints", {
+  collection: text("collection").primaryKey(),
+  value: text("value").notNull(),
+});
+const skippedRemoteEvents = sqliteTable("skipped_remote_events", {
+  collection: text("collection").notNull(),
+  recordId: text("record_id").notNull(),
+  event: text("event", { mode: "json" }).notNull(),
+});
 /** The storage of the last `adapterFor` call. */
 let dbStorage: any;
 
@@ -163,7 +172,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   }));
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
-    tables: { events, dirtyRecords, appliedEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
     initialize,
   });
   const pruned: unknown[] = [];
@@ -256,7 +265,7 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   const tx = databaseFor("tx");
   const store = createDrizzleLocalChangeStore({
     db,
-    tables: { events, dirtyRecords, appliedEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
     initialize,
   });
 
@@ -339,7 +348,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
         values: () => ({ onDuplicateKeyUpdate }),
       }),
     },
-    tables: { events, dirtyRecords, appliedEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
     initialize,
   });
   const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
@@ -350,11 +359,11 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
 
   const unsupportedStore = createDrizzleLocalChangeStore({
     db: { insert: () => ({ values: () => ({}) }) },
-    tables: { events, dirtyRecords, appliedEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
     initialize,
   });
   await expect(unsupportedStore.upsertDirtyRecord(record)).rejects.toThrow(
-    "does not support dirty-record upserts",
+    "does not support local-change upserts",
   );
 });
 
@@ -373,8 +382,14 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
 
   createDrizzleLocalChangeStore({
     db,
-    // @ts-expect-error event table omits persisted event columns
-    tables: { events: invalidEvents, dirtyRecords, appliedEvents },
+    tables: {
+      // @ts-expect-error event table omits persisted event columns
+      events: invalidEvents,
+      dirtyRecords,
+      appliedEvents,
+      checkpoints,
+      skippedRemoteEvents,
+    },
     initialize,
   });
 
@@ -390,7 +405,13 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
   // @ts-expect-error arbitrary event payloads require a compatible JSON data column
   createDrizzleLocalChangeStore({
     db,
-    tables: { events: textDataEvents, dirtyRecords, appliedEvents },
+    tables: {
+      events: textDataEvents,
+      dirtyRecords,
+      appliedEvents,
+      checkpoints,
+      skippedRemoteEvents,
+    },
     initialize,
   });
 });
