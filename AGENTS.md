@@ -29,3 +29,23 @@ release. Add a tool name to select part of the graph. For example, run
 - [ ] If setup, runtime, or package-manager behavior looks wrong, run `vp env doctor` and include its output when asking for help.
 
 <!--VITE PLUS END-->
+
+# Git convention
+
+## Branch
+
+Add no brand identifies to branch name. Such as: claude, codex,...
+
+- Fix bug: `fix/<task>`
+- New feature: `feature/<task>`
+- Refactor: `refactor/<task>` . Touch no feature. Preserve all behavior.
+- Other: `chore/<task>`
+
+## Commit message
+
+Add no brand identifies to commit message. Such as: claude, codex,...
+
+- Fix bugs: `fix: <describe the task>`
+- New feature: `feat: <describe the task>`
+- Refactor: `refactor: <describe the task>`
+- Other: `chore: <describe the task>`
