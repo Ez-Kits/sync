@@ -10,8 +10,26 @@ const sdk = vi.hoisted(() => ({
   rtdbCancelCallbacks: {} as Record<string, Array<(error: Error) => void>>,
   rtdbUnsubscribes: {} as Record<string, Array<ReturnType<typeof vi.fn>>>,
   updates: [] as unknown[][],
+  /** Realtime Database contents after the multipath updates applied so far. */
+  rtdbTree: {} as Record<string, unknown>,
   failCommit: false,
+  /** Index (in `firestoreCommits`) of the batch whose commit fails. */
+  failBatchAt: -1,
 }));
+
+/** Write `value` at a slash path of `tree`, as a multipath `update` does (null removes it). */
+function setTreePath(tree: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = path.split("/");
+  const last = segments.pop()!;
+  let node = tree;
+  for (const segment of segments) {
+    const child = node[segment];
+    if (typeof child !== "object" || child === null) node[segment] = {};
+    node = node[segment] as Record<string, unknown>;
+  }
+  if (value === null) delete node[last];
+  else node[last] = structuredClone(value);
+}
 
 vi.mock("firebase/firestore", () => ({
   collection: (_db: unknown, path: string) => ({ path }),
@@ -30,12 +48,13 @@ vi.mock("firebase/firestore", () => ({
     return unsubscribe;
   },
   writeBatch: () => {
+    const index = sdk.firestoreCommits.length;
     const batch = {
       set: vi.fn((ref: unknown, data: unknown, options?: unknown) =>
         sdk.firestoreSets.push([ref, data, options]),
       ),
       commit: vi.fn(async () => {
-        if (sdk.failCommit) throw new Error("commit failed");
+        if (sdk.failCommit || sdk.failBatchAt === index) throw new Error("commit failed");
       }),
     };
     sdk.firestoreCommits.push(batch.commit);
@@ -62,9 +81,20 @@ vi.mock("firebase/database", () => {
     onChildAdded: listen("added"),
     onChildChanged: listen("changed"),
     onChildRemoved: listen("removed"),
-    update: async (...args: unknown[]) => {
-      sdk.updates.push(args);
+    update: async (target: unknown, updates: Record<string, unknown>) => {
+      sdk.updates.push([target, updates]);
+      // Like the SDK, reject a multipath update whose paths overlap.
+      const paths = Object.keys(updates);
+      for (const path of paths) {
+        const nested = paths.find((other) => other.startsWith(`${path}/`));
+        if (nested) {
+          throw new Error(
+            `update() contains a path ${path} that is ancestor of another path ${nested}`,
+          );
+        }
+      }
       if (sdk.failCommit) throw new Error("update failed");
+      for (const [path, value] of Object.entries(updates)) setTreePath(sdk.rtdbTree, path, value);
     },
   };
 });
@@ -96,7 +126,9 @@ beforeEach(() => {
   sdk.rtdbCancelCallbacks = {};
   sdk.rtdbUnsubscribes = {};
   sdk.updates.length = 0;
+  sdk.rtdbTree = {};
   sdk.failCommit = false;
+  sdk.failBatchAt = -1;
 });
 
 test("Firebase pull adapters report listener failures to core", () => {
@@ -323,7 +355,8 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
   await adapter.push({ events, commitChanges: commit } as never);
   expect(sdk.firestoreCommits).toHaveLength(3);
   expect(sdk.firestoreSets).toHaveLength(501);
-  expect(commit).toHaveBeenCalledOnce();
+  // Each batch is acknowledged once it is committed.
+  expect(commit.mock.calls.map(([call]) => call.events.length)).toEqual([500, 1]);
   const pushed = [
     { type: "update", collection: "todos", data: { id: "u" } },
     { type: "delete", collection: "todos", id: "d", deletedAt: 456 },
@@ -339,7 +372,9 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
 });
 
 test("Firestore default push mappings write resolved document IDs and soft-delete documents", async () => {
-  const resolveDocumentId = vi.fn((event: any) => event.data.id ?? "resolved-two");
+  const resolveDocumentId = vi.fn((event: any) =>
+    event.type === "delete" ? `doc-${event.id}` : (event.data.id ?? "resolved-two"),
+  );
   const adapter = createFirestoreCollectionSyncAdapter({
     db: {} as never,
     collectionName: "todos",
@@ -360,9 +395,13 @@ test("Firestore default push mappings write resolved document IDs and soft-delet
   expect(sdk.firestoreSets[0]?.[1]).toEqual({ id: "one" });
   expect(sdk.firestoreSets[1]?.[0]).toEqual({ path: "todos/resolved-two", id: "resolved-two" });
   expect(sdk.firestoreSets[1]?.[1]).toEqual({ title: "two" });
-  // Deletes are addressed by the event id; only writes go through the resolver.
-  expect(resolveDocumentId.mock.calls.map(([event]) => event.type)).toEqual(["create", "update"]);
-  expect(sdk.firestoreSets[2]?.[0]).toEqual({ path: "todos/three", id: "three" });
+  // Deletes go through the resolver too, so they reach the document the writes created.
+  expect(resolveDocumentId.mock.calls.map(([event]) => event.type)).toEqual([
+    "create",
+    "update",
+    "delete",
+  ]);
+  expect(sdk.firestoreSets[2]?.[0]).toEqual({ path: "todos/doc-three", id: "doc-three" });
   expect(sdk.firestoreSets[2]?.[1]).toMatchObject({ deleted: true, deletedAt: expect.any(Number) });
 });
 
@@ -471,7 +510,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     serializeCreate: (data: any) => ({ ...data, encoded: true }),
     serializeUpdate: () => ({ nested: { value: 2 } }),
     serializeDelete,
-    resolveRecordId: (event: any) => String(event.data.id),
+    resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
   } as never);
   const commit = vi.fn();
   await adapter.push({
@@ -483,9 +522,9 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     ],
     commitChanges: commit,
   } as never);
+  // The update is merged into the created record instead of writing an overlapping path.
   expect(sdk.updates[0]?.[1]).toEqual({
-    "todos/1": { id: "1", encoded: true },
-    "todos/1/nested": { value: 2 },
+    "todos/1": { id: "1", encoded: true, nested: { value: 2 } },
     "todos/2": "gone",
   });
   expect(serializeDelete).toHaveBeenCalledWith("2", { deletedAt: 789 });
@@ -500,9 +539,10 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
 });
 
 test("Realtime Database default push handles no-op batches, resolved IDs, tombstones, and array replacement", async () => {
-  const resolveRecordId = vi.fn((event: any) =>
-    Array.isArray(event.data) ? "resolved-list" : event.data.id,
-  );
+  const resolveRecordId = vi.fn((event: any) => {
+    if (event.type === "delete") return `record-${event.id}`;
+    return Array.isArray(event.data) ? "resolved-list" : event.data.id;
+  });
   const adapter = createRealtimeDBSyncAdapter({
     db: {} as never,
     collections: [
@@ -533,9 +573,13 @@ test("Realtime Database default push handles no-op batches, resolved IDs, tombst
   expect(updates["todos/one"]).toEqual({ id: "one" });
   // Arrays replace the record instead of merging field by field.
   expect(updates["todos/resolved-list"]).toEqual([1, 2]);
-  expect(resolveRecordId.mock.calls.map(([event]) => event.type)).toEqual(["create", "update"]);
-  expect(updates["todos/gone/deleted"]).toBe(true);
-  expect(updates["todos/gone/deletedAt"]).toEqual(expect.any(Number));
+  expect(resolveRecordId.mock.calls.map(([event]) => event.type)).toEqual([
+    "create",
+    "update",
+    "delete",
+  ]);
+  expect(updates["todos/record-gone/deleted"]).toBe(true);
+  expect(updates["todos/record-gone/deletedAt"]).toEqual(expect.any(Number));
   expect(commit).toHaveBeenCalledOnce();
 });
 
@@ -593,4 +637,285 @@ test("Firebase pushes resolve only after core has acknowledged the pushed events
       } as never),
     ).rejects.toThrow("ack failed");
   }
+});
+
+const realtimeTodos = (overrides: Record<string, unknown> = {}) =>
+  createRealtimeDBCollectionSyncAdapter({
+    db: {} as never,
+    collectionName: "todos",
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+    ...overrides,
+  } as never);
+
+/** Push `events` and return the events acknowledged by each `commitChanges` call. */
+async function pushRealtime(adapter: ReturnType<typeof realtimeTodos>, events: unknown[]) {
+  const commit = vi.fn(async (_options: { events: unknown[] }) => undefined);
+  await adapter.push({ events, commitChanges: commit } as never);
+  return commit.mock.calls.map(([call]) => call.events);
+}
+
+test("Realtime Database push coalesces a create and later updates of one record into a single replace", async () => {
+  sdk.rtdbTree = { todos: { "1": { id: "1", stale: true } } };
+  const events = [
+    { type: "create", collection: "todos", data: { id: "1", title: "a", done: false } },
+    { type: "update", collection: "todos", data: { id: "1", title: "b" } },
+    { type: "update", collection: "todos", data: { id: "1", tags: { x: 1 } } },
+  ];
+  expect(await pushRealtime(realtimeTodos(), events)).toEqual([events]);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    { "todos/1": { id: "1", title: "b", done: false, tags: { x: 1 } } },
+  ]);
+  expect(sdk.rtdbTree).toEqual({
+    todos: { "1": { id: "1", title: "b", done: false, tags: { x: 1 } } },
+  });
+});
+
+test("Realtime Database push lets a create after field updates replace the record", async () => {
+  sdk.rtdbTree = { todos: { "1": { id: "1", extra: true } } };
+  const events = [
+    { type: "update", collection: "todos", data: { id: "1", title: "x" } },
+    { type: "update", collection: "todos", data: { id: "1", done: true } },
+    { type: "create", collection: "todos", data: { id: "1", title: "c" } },
+  ];
+  expect(await pushRealtime(realtimeTodos(), events)).toEqual([events]);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    { "todos/1": { id: "1", title: "c" } },
+  ]);
+  expect(sdk.rtdbTree).toEqual({ todos: { "1": { id: "1", title: "c" } } });
+});
+
+test("Realtime Database push merges a delete into a record created in the same push, and a create replaces a tombstone", async () => {
+  const createThenDelete = [
+    { type: "create", collection: "todos", data: { id: "1", title: "a" } },
+    { type: "delete", collection: "todos", id: "1", deletedAt: 5 },
+  ];
+  expect(await pushRealtime(realtimeTodos(), createThenDelete)).toEqual([createThenDelete]);
+  expect(sdk.rtdbTree).toEqual({
+    todos: { "1": { id: "1", title: "a", deleted: true, deletedAt: 5 } },
+  });
+
+  const deleteThenCreate = [
+    { type: "delete", collection: "todos", id: "2", deletedAt: 6 },
+    { type: "create", collection: "todos", data: { id: "2", title: "again" } },
+  ];
+  expect(await pushRealtime(realtimeTodos(), deleteThenCreate)).toEqual([deleteThenCreate]);
+  expect(sdk.updates.at(-1)?.[1]).toEqual({ "todos/2": { id: "2", title: "again" } });
+  expect(sdk.rtdbTree).toMatchObject({ todos: { "2": { id: "2", title: "again" } } });
+});
+
+test("Realtime Database push replays an offline history of several records as one non-overlapping update", async () => {
+  sdk.rtdbTree = { todos: { "2": { id: "2", title: "old", done: false } } };
+  const events = [
+    { type: "create", collection: "todos", data: { id: "1", title: "a" } },
+    { type: "update", collection: "todos", data: { id: "2", title: "two" } },
+    { type: "update", collection: "todos", data: { id: "1", title: "b" } },
+    { type: "update", collection: "todos", data: { id: "1", done: true } },
+    { type: "delete", collection: "todos", id: "1", deletedAt: 7 },
+    { type: "update", collection: "todos", data: { id: "2", done: true } },
+    { type: "create", collection: "todos", data: { id: "1", title: "reborn" } },
+    { type: "delete", collection: "todos", id: "3", deletedAt: 8 },
+  ];
+  expect(await pushRealtime(realtimeTodos(), events)).toEqual([events]);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    {
+      "todos/1": { id: "1", title: "reborn" },
+      "todos/2/id": "2",
+      "todos/2/title": "two",
+      "todos/2/done": true,
+      "todos/3/deleted": true,
+      "todos/3/deletedAt": 8,
+    },
+  ]);
+  expect(sdk.rtdbTree).toEqual({
+    todos: {
+      "1": { id: "1", title: "reborn" },
+      "2": { id: "2", title: "two", done: true },
+      "3": { deleted: true, deletedAt: 8 },
+    },
+  });
+});
+
+test("Realtime Database push splits records whose paths nest into ordered updates, acknowledging each", async () => {
+  const adapter = createRealtimeDBSyncAdapter({
+    db: {} as never,
+    collections: [
+      {
+        collectionName: "todos",
+        collectionPath: "todos",
+        createCheckpoint: () => 1,
+        // User-chosen ids may contain slashes, so one record can sit inside another.
+        resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+      },
+      {
+        collectionName: "comments",
+        collectionPath: "todos/1/comments",
+        createCheckpoint: () => 1,
+        resolveRecordId: (event: any) => String(event.data.id),
+      },
+    ],
+  } as never);
+  const events = [
+    { type: "create", collection: "todos", data: { id: "1", title: "a" } },
+    { type: "update", collection: "todos", data: { id: "1/title", text: "nested" } },
+    { type: "create", collection: "comments", data: { id: "c", text: "hi" } },
+    { type: "update", collection: "todos", data: { id: "1", done: true } },
+    { type: "delete", collection: "todos", id: "1", deletedAt: 9 },
+  ];
+  const commit = vi.fn(async (_options: { events: unknown[] }) => undefined);
+  await adapter.push({ events, commitChanges: commit } as never);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    { "todos/1": { id: "1", title: "a" } },
+    {
+      "todos/1/title/id": "1/title",
+      "todos/1/title/text": "nested",
+      "todos/1/comments/c": { id: "c", text: "hi" },
+    },
+    {
+      "todos/1/id": "1",
+      "todos/1/done": true,
+      "todos/1/deleted": true,
+      "todos/1/deletedAt": 9,
+    },
+  ]);
+  expect(commit.mock.calls.map(([call]) => call.events)).toEqual([
+    [events[0]],
+    [events[1], events[2]],
+    [events[3], events[4]],
+  ]);
+  expect(sdk.rtdbTree).toEqual({
+    todos: {
+      "1": {
+        id: "1",
+        title: { id: "1/title", text: "nested" },
+        comments: { c: { id: "c", text: "hi" } },
+        done: true,
+        deleted: true,
+        deletedAt: 9,
+      },
+    },
+  });
+});
+
+test("Realtime Database push does not coalesce deep-path update fields, and merges fields into a replaced primitive", async () => {
+  const adapter = realtimeTodos({ serializeUpdate: (data: any) => data.fields });
+  const events = [
+    { type: "update", collection: "todos", data: { id: "1", fields: { meta: { a: 1 } } } },
+    { type: "update", collection: "todos", data: { id: "1", fields: { "meta/b": 2 } } },
+    { type: "update", collection: "todos", data: { id: "1", fields: { meta: { c: 3 } } } },
+    { type: "update", collection: "todos", data: { id: "2", fields: "flat" } },
+    { type: "update", collection: "todos", data: { id: "2", fields: { title: "obj" } } },
+  ];
+  expect(await pushRealtime(adapter, events)).toEqual([
+    [events[0]],
+    [events[1]],
+    [events[2], events[3], events[4]],
+  ]);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    { "todos/1/meta": { a: 1 } },
+    { "todos/1/meta/b": 2 },
+    { "todos/1/meta": { c: 3 }, "todos/2": { title: "obj" } },
+  ]);
+  expect(sdk.rtdbTree).toEqual({ todos: { "1": { meta: { c: 3 } }, "2": { title: "obj" } } });
+
+  // An update without fields writes nothing but is still acknowledged.
+  const empty = { type: "update", collection: "todos", data: { id: "1", fields: {} } };
+  expect(await pushRealtime(adapter, [empty])).toEqual([[empty]]);
+  expect(sdk.updates).toHaveLength(3);
+});
+
+test("Realtime Database push stops at a failed update, acknowledging only the updates written before it", async () => {
+  const events = [
+    { type: "create", collection: "todos", data: { id: "1" } },
+    { type: "create", collection: "todos", data: { id: "1/x" } },
+  ];
+  const commit = vi.fn(async (_options: { events: unknown[] }) => {
+    sdk.failCommit = true;
+  });
+  await expect(realtimeTodos().push({ events, commitChanges: commit } as never)).rejects.toThrow(
+    "update failed",
+  );
+  expect(commit.mock.calls.map(([call]) => call.events)).toEqual([[events[0]]]);
+});
+
+test("Realtime Database deletes use the configured record id resolver", async () => {
+  const serializeDelete = vi.fn((_id: unknown, { deletedAt }: { deletedAt: number }) => ({
+    deleted: true,
+    deletedAt,
+  }));
+  const adapter = realtimeTodos({
+    serializeDelete,
+    resolveRecordId: (event: any) => `remote-${event.type === "delete" ? event.id : event.data.id}`,
+  });
+  await pushRealtime(adapter, [
+    { type: "create", collection: "todos", data: { id: "1", title: "a" } },
+  ]);
+  await pushRealtime(adapter, [{ type: "delete", collection: "todos", id: "1", deletedAt: 3 }]);
+  expect(serializeDelete).toHaveBeenCalledWith("1", { deletedAt: 3 });
+  expect(sdk.rtdbTree).toEqual({
+    todos: { "remote-1": { id: "1", title: "a", deleted: true, deletedAt: 3 } },
+  });
+});
+
+test("Firestore deletes use the configured document id resolver", async () => {
+  const serializeDelete = vi.fn(() => ({ deleted: true }));
+  const adapter = createFirestoreCollectionSyncAdapter({
+    db: {} as never,
+    collectionName: "todos",
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    serializeDelete,
+    resolveDocumentId: (event: any) =>
+      `remote-${event.type === "delete" ? event.id : event.data.id}`,
+  } as never);
+  await adapter.push({
+    events: [
+      { type: "create", collection: "todos", data: { id: "1" } },
+      { type: "delete", collection: "todos", id: "1", deletedAt: 3 },
+    ],
+    commitChanges: vi.fn(),
+  } as never);
+  expect(sdk.firestoreSets.map(([ref]) => ref)).toEqual([
+    { path: "todos/remote-1", id: "remote-1" },
+    { path: "todos/remote-1", id: "remote-1" },
+  ]);
+  expect(serializeDelete).toHaveBeenCalledWith("1", { deletedAt: 3 });
+});
+
+test("Firestore push acknowledges each committed batch, so a retry after a failed batch makes progress", async () => {
+  const adapter = createFirestoreCollectionSyncAdapter({
+    db: {} as never,
+    collectionName: "todos",
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    resolveDocumentId: (event: any) => String(event.data.id),
+  } as never);
+  const events = Array.from({ length: 1001 }, (_, i) => ({
+    type: "create",
+    collection: "todos",
+    data: { id: String(i) },
+  }));
+  let acknowledge!: () => void;
+  const commit = vi.fn(
+    (_options: { events: unknown[] }) => new Promise<void>((resolve) => (acknowledge = resolve)),
+  );
+  sdk.failBatchAt = 1;
+  const push = adapter.push({ events, commitChanges: commit } as never);
+  await vi.waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  // The next batch waits until the previous one is acknowledged.
+  expect(sdk.firestoreCommits[1]).not.toHaveBeenCalled();
+  acknowledge();
+  await expect(push).rejects.toThrow("commit failed");
+  expect(sdk.firestoreCommits[2]).not.toHaveBeenCalled();
+  expect(commit.mock.calls.map(([call]) => call.events)).toEqual([events.slice(0, 500)]);
+
+  // Core re-sends only what is still in the outbox.
+  sdk.failBatchAt = -1;
+  const retry = vi.fn(async (_options: { events: unknown[] }) => undefined);
+  await adapter.push({ events: events.slice(500), commitChanges: retry } as never);
+  expect(retry.mock.calls.map(([call]) => call.events)).toEqual([
+    events.slice(500, 1000),
+    events.slice(1000),
+  ]);
 });

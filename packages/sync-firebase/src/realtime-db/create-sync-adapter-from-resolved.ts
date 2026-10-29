@@ -43,17 +43,94 @@ function recordPath(collectionPath: string, recordId: string): string {
 }
 
 /**
- * Merge fields into a record via multipath keys (`path/field`), matching `update(nodeRef, payload)`.
- * Non-objects are written as a full path replace.
+ * The net write to one record: replace the whole node, or merge fields into it
+ * (`path/field` keys, matching `update(nodeRef, fields)`).
  */
-function assignMergePaths(updates: Record<string, unknown>, path: string, payload: unknown): void {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    updates[path] = payload;
-    return;
+type RecordWrite =
+  | { replace: true; value: unknown }
+  | { replace: false; fields: Record<string, unknown> };
+
+/** One multipath `update` and the events it applies. */
+interface PendingUpdate<TEvent> {
+  writes: Map<string, RecordWrite>;
+  /** Strict ancestors of the record paths in {@link writes}. */
+  ancestors: Set<string>;
+  events: TEvent[];
+}
+
+/** Creates replace the record; updates and deletes merge fields, and non-objects replace it. */
+function recordWrite(payload: unknown, merge: boolean): RecordWrite {
+  if (merge && typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    return { replace: false, fields: { ...(payload as Record<string, unknown>) } };
   }
-  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
-    updates[`${path}/${key}`] = value;
+  return { replace: true, value: payload };
+}
+
+function hasDeepPath(fields: Record<string, unknown>): boolean {
+  return Object.keys(fields).some((field) => field.includes("/"));
+}
+
+/**
+ * Fold `next` into the record's `previous` write, with the effect of applying both in order.
+ * Returns undefined when they cannot share one update.
+ */
+function coalesceWrite(previous: RecordWrite, next: RecordWrite): RecordWrite | undefined {
+  if (next.replace) return next;
+  // A slash in a field writes a deeper path, which would overlap the record's other keys.
+  if (hasDeepPath(next.fields) || (!previous.replace && hasDeepPath(previous.fields))) {
+    return undefined;
   }
+  if (!previous.replace) return { replace: false, fields: { ...previous.fields, ...next.fields } };
+  // Merging into a primitive replaces it, as RTDB does when a child is written under it.
+  const base = typeof previous.value === "object" && previous.value !== null ? previous.value : {};
+  return { replace: true, value: { ...base, ...next.fields } };
+}
+
+function ancestorPaths(path: string): string[] {
+  const segments = path.split("/");
+  return segments.slice(1).map((_, index) => segments.slice(0, index + 1).join("/"));
+}
+
+/**
+ * Add a record write to `pending`, coalesced with an earlier write of the same record.
+ * Returns false when it cannot join without two of the update's paths nesting, which the
+ * SDK rejects (e.g. a record id containing `/`).
+ */
+function addRecordWrite<TEvent>(
+  pending: PendingUpdate<TEvent>,
+  path: string,
+  write: RecordWrite,
+): boolean {
+  const previous = pending.writes.get(path);
+  if (previous) {
+    const coalesced = coalesceWrite(previous, write);
+    if (!coalesced) return false;
+    pending.writes.set(path, coalesced);
+    return true;
+  }
+  const ancestors = ancestorPaths(path);
+  if (pending.ancestors.has(path) || ancestors.some((ancestor) => pending.writes.has(ancestor))) {
+    return false;
+  }
+  for (const ancestor of ancestors) pending.ancestors.add(ancestor);
+  pending.writes.set(path, write);
+  return true;
+}
+
+function toMultipathUpdates(writes: Map<string, RecordWrite>): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+  for (const [path, write] of writes) {
+    if (write.replace) {
+      updates[path] = write.value;
+      continue;
+    }
+    for (const [field, value] of Object.entries(write.fields)) updates[`${path}/${field}`] = value;
+  }
+  return updates;
+}
+
+function createPendingUpdate<TEvent>(): PendingUpdate<TEvent> {
+  return { writes: new Map(), ancestors: new Set(), events: [] };
 }
 
 export function createRealtimeDBSyncAdapterFromResolved<
@@ -209,15 +286,18 @@ export function createRealtimeDBSyncAdapterFromResolved<
         collections.map((collectionConfig) => [collectionConfig.collectionName, collectionConfig]),
       );
 
-      const updates: Record<string, unknown> = {};
-      const handledEvents: ChangeBusEvent<C, N>[] = [];
+      // Events are coalesced per record, in outbox order, into as few multipath updates as
+      // possible: one update must not hold a path and one of its descendants.
+      const pendingUpdates: PendingUpdate<ChangeBusEvent<C, N>>[] = [];
+      let current = createPendingUpdate<ChangeBusEvent<C, N>>();
 
       for (const event of events) {
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
-        handledEvents.push(event as ChangeBusEvent<C, N>);
 
-        const { collectionPath } = collectionConfig;
+        const recordId = collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>);
+        const path = recordPath(collectionConfig.collectionPath, recordId);
+        let write: RecordWrite;
 
         if (event.type === "delete") {
           const deletedAt = event.deletedAt ?? Date.now();
@@ -227,31 +307,35 @@ export function createRealtimeDBSyncAdapterFromResolved<
                 deleted: true,
                 deletedAt,
               };
-          assignMergePaths(updates, recordPath(collectionPath, String(event.id)), payload);
-          continue;
-        }
-
-        const recordId = collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>);
-        const path = recordPath(collectionPath, recordId);
-
-        if (event.type === "create") {
+          write = recordWrite(payload, true);
+        } else if (event.type === "create") {
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : event.data;
-          updates[path] = payload;
-          continue;
+          write = recordWrite(payload, false);
+        } else {
+          const payload = collectionConfig.serializeUpdate
+            ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
+            : event.data;
+          write = recordWrite(payload, true);
         }
 
-        const payload = collectionConfig.serializeUpdate
-          ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
-          : event.data;
-        assignMergePaths(updates, path, payload);
+        if (!addRecordWrite(current, path, write)) {
+          pendingUpdates.push(current);
+          current = createPendingUpdate();
+          addRecordWrite(current, path, write);
+        }
+        current.events.push(event as ChangeBusEvent<C, N>);
       }
+      if (current.events.length > 0) pendingUpdates.push(current);
 
-      if (Object.keys(updates).length > 0) {
-        await update(ref(db), updates);
+      // Updates are written in order, and each is acknowledged once written, so a failure
+      // leaves only the remaining events in the outbox.
+      for (const pending of pendingUpdates) {
+        const updates = toMultipathUpdates(pending.writes);
+        if (Object.keys(updates).length > 0) await update(ref(db), updates);
+        await commitChanges({ events: pending.events });
       }
-      if (handledEvents.length > 0) await commitChanges({ events: handledEvents });
     },
   };
 }
