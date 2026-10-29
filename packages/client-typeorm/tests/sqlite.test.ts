@@ -46,6 +46,7 @@ test("runs the adapter and its outbox on the storage, initializing the data sour
   await adapter.localChangeStore.initialize();
   expect(db.isInitialized).toBe(true);
   expect(await rows("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")).toEqual([
+    { name: "ez_sync_applied_events" },
     { name: "ez_sync_dirty_records" },
     { name: "ez_sync_events" },
     { name: "ez_sync_meta" },

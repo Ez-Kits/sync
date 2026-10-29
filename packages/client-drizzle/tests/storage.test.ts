@@ -285,3 +285,18 @@ test("predefined event tables index pending events by collection, then seq or re
     ]);
   }
 });
+
+test("predefined applied-event tables are keyed by event id and pruned by appliedAt", () => {
+  for (const config of [
+    getSqliteTableConfig(sqliteLocalChangeTables.appliedEvents),
+    getPgTableConfig(pgLocalChangeTables.appliedEvents),
+  ]) {
+    expect(config.columns.find((column) => column.name === "eventId")?.primary).toBe(true);
+    expect(
+      config.indexes.map((index) => [
+        index.config.name,
+        index.config.columns.map((column: any) => column.name),
+      ]),
+    ).toEqual([["ez_sync_applied_events_applied_at", ["appliedAt"]]]);
+  }
+});

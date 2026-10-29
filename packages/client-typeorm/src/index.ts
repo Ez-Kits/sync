@@ -1,5 +1,9 @@
 // Dialect-independent API. Adapters live in the `./sqlite` and `./pg` entry points.
 export * from "./collection";
 export * from "./core/create-typeorm-proxy-db-adapter";
-export type { TypeOrmEventRow, TypeOrmLocalChangeEntities } from "./core/local-change-store";
+export type {
+  TypeOrmAppliedEventRow,
+  TypeOrmEventRow,
+  TypeOrmLocalChangeEntities,
+} from "./core/local-change-store";
 export * from "./types";

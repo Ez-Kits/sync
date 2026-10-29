@@ -13,6 +13,7 @@ import {
   buildSchemaFromCollections,
   defineTypeormCollection,
   type TypeOrmDatabase,
+  type TypeOrmAppliedEventRow,
   type TypeOrmDBAdapter,
   type TypeOrmEventRow,
   type TypeOrmLocalChangeEntities,
@@ -125,5 +126,12 @@ describe("outbox entities", () => {
     >();
     expectTypeOf(sqliteLocalChangeEntities).toExtend<TypeOrmLocalChangeEntities>();
     expectTypeOf(pgLocalChangeEntities).toExtend<TypeOrmLocalChangeEntities>();
+  });
+
+  test("applied-event rows key an event id with the time it is pruned by", () => {
+    expectTypeOf<TypeOrmAppliedEventRow>().toEqualTypeOf<{ eventId: string; appliedAt: number }>();
+    expectTypeOf<TypeOrmLocalChangeEntities["appliedEvents"]>().toEqualTypeOf<
+      EntitySchema<TypeOrmAppliedEventRow>
+    >();
   });
 });

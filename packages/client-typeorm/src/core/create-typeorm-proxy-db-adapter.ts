@@ -184,12 +184,13 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
     );
   }
   const schema = buildSchemaFromCollections(collections);
-  const { events, dirtyRecords } = driver.localChangeEntities;
+  const { events, dirtyRecords, appliedEvents } = driver.localChangeEntities;
   const entities = [
     ...(Object.values(schema) as TypeOrmEntity[]),
     ...(config.entities ?? []),
     events,
     dirtyRecords,
+    appliedEvents,
   ];
   const dataSource = driver.createDataSource(dbStorage, entities, config.dataSourceOptions);
   // SQLite drivers share one query runner per data source, so every statement sent while

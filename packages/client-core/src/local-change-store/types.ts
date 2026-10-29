@@ -27,6 +27,12 @@ export interface DirtyRecordKey {
 export type LocalChangeScope = string | DirtyRecordKey;
 
 /**
+ * How long a store keeps the record that an event was applied, counted from its
+ * `createdAt` to the newest appended event's. Far longer than a commit retry can take.
+ */
+export const APPLIED_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/**
  * The outbox and dirty records. Every method takes an optional `transactionContext`: the
  * `native` handle of a `DBAdapterTransactionContext`. With it the call runs in that
  * transaction; without it, on its own, after any open transaction ends.
@@ -39,11 +45,17 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
    * safe to run concurrently. Applications never run these migrations themselves.
    */
   initialize(): Promise<void>;
-  /** Events get a database-assigned position, so they are read back in commit order. */
+  /**
+   * Events get a database-assigned position, so they are read back in commit order. Each
+   * event's `id` is also recorded as applied, in the same transaction, and outlives its
+   * acknowledgement; records older than {@link APPLIED_EVENT_RETENTION_MS} are pruned here.
+   */
   appendEvents(
     events: StoredChangeBusEvent[],
     transactionContext?: TTransactionContext,
   ): Promise<void>;
+  /** Whether an event with this `id` was appended, even if it was acknowledged since. */
+  hasAppliedEvent(eventId: string, transactionContext?: TTransactionContext): Promise<boolean>;
   /** Events not yet acknowledged by the provider, in the order they were committed. */
   getPendingEvents(
     scope?: LocalChangeScope,

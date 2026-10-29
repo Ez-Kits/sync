@@ -27,8 +27,8 @@ import type { DrizzleDBAdapter } from "../types";
 // Columns are named explicitly so a `casing` option cannot rename them.
 
 /**
- * Outbox and dirty-record tables of SQLite storages, created by the adapter itself. `seq`
- * is assigned on insert, so pending events follow commit order.
+ * Outbox, dirty-record and applied-event tables of SQLite storages, created by the adapter
+ * itself. `seq` is assigned on insert, so pending events follow commit order.
  */
 export const sqliteLocalChangeTables = {
   events: sqliteTable(
@@ -56,6 +56,14 @@ export const sqliteLocalChangeTables = {
       updatedAt: integer("updatedAt").notNull(),
     },
     (table) => [uniqueIndex("ez_sync_dirty_record_key").on(table.collection, table.recordId)],
+  ),
+  appliedEvents: sqliteTable(
+    "ez_sync_applied_events",
+    {
+      eventId: text("eventId").primaryKey(),
+      appliedAt: integer("appliedAt").notNull(),
+    },
+    (table) => [index("ez_sync_applied_events_applied_at").on(table.appliedAt)],
   ),
 };
 
@@ -86,6 +94,12 @@ CREATE TABLE IF NOT EXISTS ez_sync_dirty_records (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ez_sync_dirty_record_key
   ON ez_sync_dirty_records (collection, recordId);
+CREATE TABLE IF NOT EXISTS ez_sync_applied_events (
+  eventId TEXT PRIMARY KEY NOT NULL,
+  appliedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ez_sync_applied_events_applied_at
+  ON ez_sync_applied_events (appliedAt);
 `,
   upgradeFromV1: `
 CREATE TEMP TABLE ez_sync_events_v1 AS SELECT * FROM ez_sync_events;

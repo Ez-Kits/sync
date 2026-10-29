@@ -84,29 +84,15 @@ export async function executeLocalMutation(
 }
 
 /**
- * Whether a retried mutation already reached the database. A pending outbox event proves
- * it; a create whose row exists was committed and already pushed. Updates and deletes
- * are value-idempotent, so re-applying them is safe.
+ * Whether a retried mutation already reached the database. Its outbox event is recorded
+ * as applied in the mutation's transaction and stays recorded after it is pushed, so a
+ * retry never re-applies a write that a newer one may have replaced since.
  */
-export async function isLocalMutationCommitted(
-  db: BaseDBAdapter<any, any, any>,
+export function isLocalMutationCommitted(
   localChangeStore: ILocalChangeStore,
   mutation: LocalMutation,
 ): Promise<boolean> {
-  const pending = await localChangeStore.getPendingEvents({
-    collection: mutation.collection,
-    recordId: mutation.recordId,
-  });
-  if (pending.some((event) => event.id === mutation.eventId)) return true;
-  if (mutation.type !== "create") return false;
-  const id = mutation.id as never;
-  if (db.getOptional) return (await db.getOptional(mutation.collection, id)) !== undefined;
-  try {
-    // Adapters either throw or resolve undefined for a missing row.
-    return (await db.get(mutation.collection, id)) !== undefined;
-  } catch {
-    return false;
-  }
+  return localChangeStore.hasAppliedEvent(mutation.eventId);
 }
 
 export function createLocalMutationSink(

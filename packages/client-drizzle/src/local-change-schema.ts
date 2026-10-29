@@ -1,7 +1,10 @@
 import type { DBExecutor, DBStorage } from "@ez-kits/sync-client-core";
 
-/** Version of the outbox tables the store reads and writes; 2 added the `seq` column. */
-export const LOCAL_CHANGE_SCHEMA_VERSION = 2;
+/**
+ * Version of the outbox tables the store reads and writes; 2 added the `seq` column, 3 the
+ * `ez_sync_applied_events` table.
+ */
+export const LOCAL_CHANGE_SCHEMA_VERSION = 3;
 
 /** One dialect's scripts for {@link initializeLocalChangeSchema}; none takes parameters. */
 export interface LocalChangeSchemaScripts {
@@ -9,7 +12,10 @@ export interface LocalChangeSchemaScripts {
   readonly createMeta: string;
   /** Return a row when `ez_sync_events` exists. */
   readonly hasEvents: string;
-  /** Create the current tables and indexes when missing. */
+  /**
+   * Create the current tables and indexes when missing. Every statement is `IF NOT EXISTS`,
+   * so it also adds the tables a later version introduced (version 2 to 3).
+   */
   readonly create: string;
   /** Rebuild a version 1 `ez_sync_events` (no `seq`), in `createdAt, id` order. */
   readonly upgradeFromV1: string;

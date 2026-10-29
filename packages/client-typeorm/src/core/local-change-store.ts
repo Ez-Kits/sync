@@ -1,12 +1,14 @@
-import type {
-  AtomicLocalChangeStore,
-  DirtyRecord,
-  DirtyRecordKey,
-  LocalChangeScope,
-  StoredChangeBusEvent,
+import {
+  APPLIED_EVENT_RETENTION_MS,
+  type AtomicLocalChangeStore,
+  type DirtyRecord,
+  type DirtyRecordKey,
+  type LocalChangeScope,
+  type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
   type EntitySchema,
+  LessThan,
   Table,
   type DataSource,
   type EntityManager,
@@ -21,15 +23,27 @@ export type TypeOrmEventRow = StoredChangeBusEvent & {
   seq: number;
 };
 
-/** The predefined outbox and dirty-record entities of one dialect. */
+/** The `id` of an appended event, kept after acknowledgement so retries can find it. */
+export interface TypeOrmAppliedEventRow {
+  eventId: string;
+  /** The event's `createdAt`; records are pruned by it. */
+  appliedAt: number;
+}
+
+/** The predefined outbox, dirty-record and applied-event entities of one dialect. */
 export interface TypeOrmLocalChangeEntities {
   /** `seq` must be a generated primary key and `id` unique. */
   readonly events: EntitySchema<TypeOrmEventRow>;
   readonly dirtyRecords: EntitySchema<DirtyRecord>;
+  /** `eventId` must be the primary key. */
+  readonly appliedEvents: EntitySchema<TypeOrmAppliedEventRow>;
 }
 
-/** Version of the outbox tables the store reads and writes; 2 added the `seq` column. */
-const SCHEMA_VERSION = 2;
+/**
+ * Version of the outbox tables the store reads and writes; 2 added the `seq` column, 3 the
+ * `ez_sync_applied_events` table.
+ */
+const SCHEMA_VERSION = 3;
 
 const EVENT_FIELDS = ["id", "type", "collection", "data", "recordId", "createdAt"] as const;
 
@@ -89,9 +103,11 @@ export function createTypeOrmLocalChangeStore(
     (transactionContext as EntityManager | undefined) ?? db.manager;
   const eventTarget = entities.events;
   const dirtyRecordTarget = entities.dirtyRecords;
+  const appliedEventTarget = entities.appliedEvents;
 
-  // Open the data source, then create or upgrade the two tables (with their keys) in one
-  // transaction, so contexts sharing a storage cannot both do it.
+  // Open the data source, then create or upgrade the tables (with their keys) in one
+  // transaction, so contexts sharing a storage cannot both do it. Missing tables are
+  // created, which also upgrades version 2 (no applied-event table).
   async function initialize() {
     if (!db.isInitialized) await db.initialize();
     await db.transaction(async (manager) => {
@@ -103,7 +119,7 @@ export function createTypeOrmLocalChangeStore(
       const version = await readSchemaVersion(queryRunner, events);
       if (version >= SCHEMA_VERSION) return;
       if (version === 1) await upgradeEventsFromV1(db, queryRunner, events);
-      for (const target of [eventTarget, dirtyRecordTarget]) {
+      for (const target of [eventTarget, dirtyRecordTarget, appliedEventTarget]) {
         const metadata = db.getMetadata(target);
         if (await queryRunner.hasTable(metadata.tablePath)) continue;
         await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
@@ -136,9 +152,19 @@ export function createTypeOrmLocalChangeStore(
         recordId,
         createdAt,
       }));
-      await managerFor(transactionContext)
+      const manager = managerFor(transactionContext);
+      await manager
         .getRepository(eventTarget)
         .insert(values as QueryDeepPartialEntity<TypeOrmEventRow>[]);
+      const applied = manager.getRepository(appliedEventTarget);
+      const newest = Math.max(...events.map((event) => event.createdAt));
+      await applied.delete({ appliedAt: LessThan(newest - APPLIED_EVENT_RETENTION_MS) });
+      await applied.insert(
+        events.map((event) => ({ eventId: event.id, appliedAt: event.createdAt })),
+      );
+    },
+    async hasAppliedEvent(eventId: string, transactionContext) {
+      return managerFor(transactionContext).getRepository(appliedEventTarget).existsBy({ eventId });
     },
     async getPendingEvents(scope, transactionContext) {
       return managerFor(transactionContext)

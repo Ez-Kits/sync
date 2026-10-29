@@ -26,10 +26,19 @@ class DirtyRecordEntity implements DirtyRecord {
   state!: "dirty" | "deleted";
   updatedAt!: number;
 }
+
+class AppliedEventEntity {
+  eventId!: string;
+  appliedAt!: number;
+}
 PrimaryColumn("integer")(Todo.prototype, "id");
 const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
 /** Stand-ins for the dialect's outbox entities; only their identity matters here. */
-const entities = { events: OutboxEvent, dirtyRecords: DirtyRecordEntity } as never;
+const entities = {
+  events: OutboxEvent,
+  dirtyRecords: DirtyRecordEntity,
+  appliedEvents: AppliedEventEntity,
+} as never;
 
 /** An adapter whose driver hands back the mock data source. */
 function adapterFor(db: unknown, createDataSource = vi.fn(() => db as never)) {
@@ -223,8 +232,13 @@ test("TypeORM local-change writes use the transaction manager", async () => {
       getRepository: vi.fn(() => ({ insert: rootInsert, upsert: rootUpsert })),
     },
   };
+  const transactionDelete = vi.fn();
   const transactionManager = {
-    getRepository: vi.fn(() => ({ insert: transactionInsert, upsert: transactionUpsert })),
+    getRepository: vi.fn(() => ({
+      insert: transactionInsert,
+      upsert: transactionUpsert,
+      delete: transactionDelete,
+    })),
   };
   const store = createTypeOrmLocalChangeStore(db as never, entities);
   const event = {
@@ -238,13 +252,16 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   // A `seq` read back with an event never reaches the insert: the database assigns it.
   await store.appendEvents([{ ...event, seq: 7 } as typeof event], transactionManager as never);
   expect(transactionInsert).toHaveBeenCalledWith([event]);
+  // The applied record is pruned and written in the same transaction.
+  expect(transactionDelete).toHaveBeenCalledOnce();
+  expect(transactionInsert).toHaveBeenLastCalledWith([{ eventId: "event", appliedAt: 1 }]);
   await store.upsertDirtyRecord(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     transactionManager as never,
   );
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
-  expect(transactionInsert).toHaveBeenCalledOnce();
+  expect(transactionInsert).toHaveBeenCalledTimes(2);
   expect(transactionUpsert).toHaveBeenCalledWith(
     { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
     ["collection", "recordId"],
@@ -350,7 +367,7 @@ test("the driver builds the data source from every entity and exposes typed repo
   const adapter = adapterFor(db, createDataSource);
   expect(createDataSource).toHaveBeenCalledWith(
     { dialect: "sqlite" },
-    [Todo, OutboxEvent, DirtyRecordEntity],
+    [Todo, OutboxEvent, DirtyRecordEntity, AppliedEventEntity],
     undefined,
   );
   expect((adapter.db.repositories as any).todos).toBe(repository);
@@ -368,7 +385,7 @@ test("the driver builds the data source from every entity and exposes typed repo
   );
   expect(createDataSource).toHaveBeenLastCalledWith(
     { dialect: "sqlite" },
-    [Todo, DirtyRecordEntity, OutboxEvent, DirtyRecordEntity],
+    [Todo, DirtyRecordEntity, OutboxEvent, DirtyRecordEntity, AppliedEventEntity],
     { logging: true },
   );
 });

@@ -5,7 +5,7 @@ import {
   createTypeOrmProxyDBAdapter,
   type TypeOrmProxyDBAdapterConfig,
 } from "../core/create-typeorm-proxy-db-adapter";
-import type { TypeOrmEventRow } from "../core/local-change-store";
+import type { TypeOrmAppliedEventRow, TypeOrmEventRow } from "../core/local-change-store";
 import type { TypeOrmDBAdapter } from "../types";
 import { createTypeOrmPgDriver } from "./storage-driver";
 
@@ -18,7 +18,7 @@ const bigintAsNumber: ValueTransformer = {
 };
 
 /**
- * Outbox and dirty-record entities of Postgres storages. The adapter registers them and
+ * Outbox, dirty-record and applied-event entities of Postgres storages. The adapter registers them and
  * creates and upgrades their tables itself; applications never declare or migrate them.
  * `seq` is assigned on insert, so pending events follow commit order.
  */
@@ -49,6 +49,15 @@ export const pgLocalChangeEntities = {
       state: { type: "text" },
       updatedAt: { type: "bigint", transformer: bigintAsNumber },
     },
+  }),
+  appliedEvents: new EntitySchema<TypeOrmAppliedEventRow>({
+    name: "EzSyncAppliedEvent",
+    tableName: "ez_sync_applied_events",
+    columns: {
+      eventId: { type: "text", primary: true },
+      appliedAt: { type: "bigint", transformer: bigintAsNumber },
+    },
+    indices: [{ name: "ez_sync_applied_events_applied_at", columns: ["appliedAt"] }],
   }),
 };
 
