@@ -57,7 +57,7 @@ export class GlobalSyncHandler<
           return syncAdapter.pull({
             checkpoint: checkpointMap,
             commitChanges: ({ changes, checkpoint }) => {
-              void this.commitPullChanges(changes, checkpoint);
+              void this.commitPullChanges(changes, checkpoint, { isActive, onError });
             },
             onError,
           });
@@ -105,30 +105,23 @@ export class GlobalSyncHandler<
     );
   }
 
+  /** Queue a pulled batch; one of a failed or stopped stream is dropped (see `retryPull`). */
   private async commitPullChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
     checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
+    stream: { isActive: () => boolean; onError: (error: unknown) => void },
   ): Promise<void> {
     const next = this.pullCommitQueue
       .catch(() => undefined)
       .then(async () => {
-        if (!this.mayCommit()) return;
-        if (changes.length > 0) {
-          await this.config.db.transaction(async (tx, context) => {
-            for (const event of changes) {
-              const resolved = await this.resolveRemoteEvent(event, context);
-              if (!resolved) continue;
-              await this.applyAnyCollectionEvent(resolved, tx);
-            }
-          });
-        }
-
-        this.config.changeBus.publishRemoteBatch(changes);
-        if (changes.length > 0) this.config.onRemoteChangesCommitted?.(changes);
-        await this.saveCheckpointMap(checkpoint);
-        this.config.onSyncSuccess?.();
+        if (!this.mayCommit() || !stream.isActive()) return;
+        const needsPush = await this.commitPulledChanges(changes, checkpoint, (event, tx) =>
+          this.applyAnyCollectionEvent(event, tx),
+        );
+        if (needsPush) this.schedulePush();
       });
-    this.pullCommitQueue = next.catch((error) => this.config.onSyncError?.(error));
+    // A failed batch fails its stream, which resubscribes from the persisted checkpoint.
+    this.pullCommitQueue = next.catch((error) => stream.onError(error));
     return this.pullCommitQueue;
   }
 }

@@ -30,7 +30,13 @@ Adapters should implement `getOptional` to distinguish an absent record from a d
 
 ## Conflicts and browser tabs
 
-Pass `resolveConflict` to inspect an incoming remote event when the same record has a locally pending write. Return `"remote"`, `"local"`, or `{ data }`. The resolver runs inside the transaction that applies the pulled changes and receives the local row as `local`; it must not query the database itself, because that query would wait for the transaction it runs in. With no hook, remote changes are applied in arrival order. Applications should include comparable version metadata if they need a stronger deterministic winner policy.
+Pass `resolveConflict` to inspect an incoming remote event when the same record has a locally pending write. Return `"remote"`, `"local"`, or `{ data }`. The resolver runs inside the transaction that applies the pulled changes and receives the local row as `local`; it must not query the database itself, because that query would wait for the transaction it runs in. The decision is reconciled with the outbox in that transaction:
+
+- `"local"` skips the remote event; the pending local writes are pushed later and win on the remote.
+- `"remote"` applies the remote event and discards the record's pending local writes, so they are never pushed over it.
+- `{ data }` stores `data` locally and replaces the record's pending writes with one outbox event that pushes it, scheduled once the pull commits. After a remote delete, `data` recreates the record.
+
+With no hook, a record with pending local writes keeps its local state (the `"local"` decision); records without pending writes always take remote changes. Live queries, other tabs and `onRemoteChangesCommitted` see the changes as applied, not the raw remote events. A push already in flight when a decision replaces its events cannot be recalled: the provider applies it after the decision, and both sides converge on it once pull delivers it back. Applications should include comparable version metadata if they need a stronger deterministic winner policy.
 
 ## Multiple tabs
 
@@ -45,7 +51,7 @@ Pass `resolveConflict` to inspect an incoming remote event when the same record 
 
 Outbox stores return pending events in commit order: the database assigns each event an increasing position (`seq`) when it is appended, and transactions run one at a time on the leader, so the order holds across tabs and within one millisecond. Acknowledging pushed events (deleting them and refreshing dirty records) runs in one transaction.
 
-Provider `pull` implementations should pass listener failures to the optional `onError` callback. Core reports the failure and retries the pull stream with capped backoff; stopping sync cancels the retry. Checkpoints remain tied to successfully committed local changes.
+Provider `pull` implementations should pass listener failures to the optional `onError` callback. Core reports the failure and retries the pull stream with capped backoff; stopping sync cancels the retry. Checkpoints remain tied to successfully committed local changes. A batch whose local commit fails (a transaction timeout, a leader change, a database error or a throwing resolver) fails its stream the same way: core calls the stream's cleanup, drops every batch that stream delivers afterwards, including ones already queued, and resubscribes from the last saved checkpoint, so the provider sends the failed changes again. Cleanup must therefore stop the listener, and each `pull` call must start from the checkpoint it is given rather than from a cursor kept by an earlier subscription.
 
 ## Provider adapter responsibilities
 

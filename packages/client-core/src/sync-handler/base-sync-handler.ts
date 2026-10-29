@@ -28,8 +28,9 @@ export interface BaseSyncHandlerConfig<
   localChangeStore: ILocalChangeStore;
   onSyncError?: (error: unknown) => void;
   onSyncSuccess?: () => void;
+  /** Decides remote changes to records with pending local writes; without it they stay local. */
   conflictResolver?: ConflictResolution<SyncHandlerDataMap<C>>;
-  /** Called after pulled changes are committed locally, e.g. to notify other tabs. */
+  /** Called with the pulled changes as applied locally (after conflict resolution), e.g. to notify other tabs. */
   onRemoteChangesCommitted?: (changes: ChangeBusEvent<SyncHandlerDataMap<C>>[]) => void;
   /** Fencing check: when it returns false this handler lost leadership and must not write. */
   canCommit?: () => boolean;
@@ -80,7 +81,14 @@ export abstract class BaseSyncHandler<
     return next;
   }
 
-  /** Keep a pull listener alive across provider errors while retaining checkpoint safety. */
+  /**
+   * Keep a pull listener alive across provider errors while retaining checkpoint safety.
+   *
+   * Every subscription is one stream. `onError` fails it: the listener is torn down and a new
+   * stream resubscribes from the persisted checkpoint after a backoff. `isActive` turns false
+   * once the stream failed or the pull stopped; nothing it delivers afterwards may be
+   * committed, since providers only send what came after their own last batch.
+   */
   protected retryPull(
     subscribe: (
       onError: (error: unknown) => void,
@@ -90,15 +98,11 @@ export abstract class BaseSyncHandler<
     let active = true;
     let connecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let currentStream: object | undefined;
     let currentCleanup: (() => void) | undefined;
     let retryDelayMs = 250;
 
-    const scheduleRetry = (error: unknown) => {
-      if (!active) return;
-      this.config.onSyncError?.(error);
-      const cleanup = currentCleanup;
-      currentCleanup = undefined;
-      cleanup?.();
+    const scheduleReconnect = () => {
       if (!active || retryTimer !== undefined) return;
       retryTimer = setTimeout(() => {
         retryTimer = undefined;
@@ -107,23 +111,43 @@ export abstract class BaseSyncHandler<
       retryDelayMs = Math.min(retryDelayMs * 2, 8_000);
     };
 
+    const failStream = (stream: object, error: unknown) => {
+      if (!active) return;
+      this.config.onSyncError?.(error);
+      // A stream that already failed has been replaced; its errors only get reported.
+      if (currentStream !== stream) return;
+      currentStream = undefined;
+      const cleanup = currentCleanup;
+      currentCleanup = undefined;
+      cleanup?.();
+      scheduleReconnect();
+    };
+
     const connect = async () => {
       if (!active || connecting) return;
       connecting = true;
       const cleanup = currentCleanup;
       currentCleanup = undefined;
       cleanup?.();
+      const stream = {};
+      currentStream = stream;
       try {
-        const unsubscribe = await subscribe(scheduleRetry, () => active);
-        if (active) {
+        const unsubscribe = await subscribe(
+          (error) => failStream(stream, error),
+          () => active && currentStream === stream,
+        );
+        if (active && currentStream === stream) {
           if (typeof unsubscribe === "function") currentCleanup = unsubscribe;
           retryDelayMs = 250;
           this.config.onSyncSuccess?.();
         } else {
           unsubscribe?.();
+          // It failed while connecting, when a retry that fired was skipped.
+          scheduleReconnect();
         }
       } catch (error) {
-        scheduleRetry(error);
+        failStream(stream, error);
+        scheduleReconnect();
       } finally {
         connecting = false;
       }
@@ -170,15 +194,60 @@ export abstract class BaseSyncHandler<
   }
 
   /**
-   * Apply the configured conflict hook only when this record has local pending writes.
-   * Called inside the pull transaction, so every read goes through `context`.
+   * Apply one pulled batch in a single transaction, announce what it applied and save its
+   * checkpoint. Resolves `true` when conflict resolution queued an outbox event to push.
+   */
+  protected async commitPulledChanges(
+    changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
+    checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
+    apply: (
+      event: ChangeBusEvent<SyncHandlerDataMap<C>>,
+      tx: DBAdapterOperations<C>,
+    ) => Promise<void>,
+  ): Promise<boolean> {
+    let applied: ChangeBusEvent<SyncHandlerDataMap<C>>[] = [];
+    let needsPush = false;
+    if (changes.length > 0) {
+      await this.config.db.transaction(async (tx, context) => {
+        applied = [];
+        needsPush = false;
+        for (const event of changes) {
+          const resolved = await this.resolveRemoteEvent(event, context);
+          needsPush ||= resolved.needsPush;
+          if (!resolved.event) continue;
+          await apply(resolved.event, tx);
+          applied.push(resolved.event);
+        }
+      });
+    }
+
+    this.config.changeBus.publishRemoteBatch(applied);
+    if (applied.length > 0) this.config.onRemoteChangesCommitted?.(applied);
+    await this.saveCheckpointMap(checkpoint);
+    this.config.onSyncSuccess?.();
+    return needsPush;
+  }
+
+  /**
+   * Reconcile a pulled event with the record's pending local writes. Runs inside the pull
+   * transaction, so every read and write goes through `context`. A record without pending
+   * writes takes the remote event as is; otherwise the conflict resolver decides, and without
+   * one the local state is kept:
+   * - `"local"`: skip the remote event; the pending writes are pushed later.
+   * - `"remote"`: apply it and drop the pending writes, so they never overwrite it.
+   * - `{ data }`: apply the merged data and replace the pending writes with one event that
+   *   pushes it: a create when the remote deleted the record, an update otherwise.
+   *
+   * A push in flight may already hold the replaced writes. Its acknowledgement deletes only the
+   * ids it sent and recomputes the dirty state from what remains, so a merged event stays
+   * pending and is pushed after it. What the provider accepted cannot be taken back, though: it
+   * lands remotely after the decision and, like any remote write, comes back through pull,
+   * where both sides converge on it.
    */
   protected async resolveRemoteEvent(
     event: ChangeBusEvent<SyncHandlerDataMap<C>>,
     context: DBAdapterTransactionContext<C>,
-  ): Promise<ChangeBusEvent<SyncHandlerDataMap<C>> | undefined> {
-    const resolver = this.config.conflictResolver;
-    if (!resolver) return event;
+  ): Promise<{ event?: ChangeBusEvent<SyncHandlerDataMap<C>>; needsPush: boolean }> {
     const collection = event.collection as CollectionNames<C>;
     const primaryField = this.primaryFieldName(collection);
     const recordId = String(
@@ -186,29 +255,41 @@ export abstract class BaseSyncHandler<
     );
     const key = { collection: String(collection), recordId };
     const store = this.config.localChangeStore;
-    if (
-      (await store.getDirtyRecords(key, context.native)).length === 0 &&
-      (await store.getPendingEvents(key, context.native)).length === 0
-    ) {
-      return event;
-    }
+    const { native, operations } = context;
+    const dirty = await store.getDirtyRecords(key, native);
+    const pending = await store.getPendingEvents(key, native);
+    if (dirty.length === 0 && pending.length === 0) return { event, needsPush: false };
 
-    const { operations } = context;
+    const resolver = this.config.conflictResolver;
+    if (!resolver) return { needsPush: false };
     const local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined =
       operations.getOptional
         ? await operations.getOptional(collection, coerceRecordId(recordId) as never)
         : await operations.get(collection, coerceRecordId(recordId) as never);
     const resolution = await resolver({ remote: event, local });
-    if (resolution === "local") return undefined;
-    if (resolution === "remote") return event;
-    if (event.type === "delete") {
-      return {
-        type: "update",
-        collection: event.collection,
-        data: resolution.data,
-      } as ChangeBusEvent<SyncHandlerDataMap<C>>;
+    if (resolution === "local") return { needsPush: false };
+
+    await store.deleteEvents(
+      pending.map(({ id }) => id),
+      native,
+    );
+    if (resolution === "remote") {
+      await store.removeDirtyRecords([key], native);
+      return { event, needsPush: false };
     }
-    return { ...event, data: resolution.data } as ChangeBusEvent<SyncHandlerDataMap<C>>;
+
+    const type = event.type === "delete" ? "create" : "update";
+    const now = Date.now();
+    await store.appendEvents(
+      [{ id: crypto.randomUUID(), type, ...key, data: resolution.data, createdAt: now }],
+      native,
+    );
+    await store.upsertDirtyRecord({ ...key, state: "dirty", updatedAt: now }, native);
+    const merged =
+      event.type === "delete"
+        ? { type, collection: event.collection, data: resolution.data }
+        : { ...event, data: resolution.data };
+    return { event: merged as ChangeBusEvent<SyncHandlerDataMap<C>>, needsPush: true };
   }
 
   /**
