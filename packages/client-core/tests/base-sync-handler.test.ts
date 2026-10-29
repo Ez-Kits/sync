@@ -30,6 +30,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   class Harness extends BaseSyncHandler<any, any, any> {
+    protected requestPush() {}
     apply(event: any, target?: any) {
       return this.applyAnyCollectionEvent(event, target);
     }

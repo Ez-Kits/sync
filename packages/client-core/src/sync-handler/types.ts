@@ -50,8 +50,33 @@ export interface SyncAdapter<
 > {
   /** Open a pull stream. A returned cleanup function must stop every listener. */
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
-  /** Resolve only after the provider has durably accepted every supplied event. */
+  /**
+   * Resolve only after the provider has durably accepted every supplied event. A rejection is
+   * retried with backoff, re-sending what is still in the outbox, unless it is permanent: a
+   * `PushRejectedError` (or any error with `permanent: true`) for a refusal that sending the
+   * same events again would meet as well, such as security rules or validation. Core then
+   * pushes the events again in smaller pieces, in order, and parks the ones refused when
+   * pushed alone: they stay in the outbox, held with the later events of their record, are
+   * retried with a backoff and on every sync start, and are reported through `onPushRejected`.
+   * Nothing leaves the outbox unless acknowledged, or discarded by the application.
+   */
   push(options: PushOptions<C, N>): void | Promise<void>;
+}
+
+/** An event the provider refused when pushed alone; parked in the outbox. */
+export interface PushRejection<C extends ChangeBusEventDataMap, N extends keyof C = keyof C> {
+  event: ChangeBusEvent<C, N>;
+  /** The permanent error the push of this event alone failed with. */
+  error: unknown;
+  /**
+   * Remove the event from the outbox for good, as if acknowledged (dirty records are
+   * recomputed, and a remote change pulled for the record meanwhile is applied); the
+   * record's later events are then pushed. Resolves without effect once the event is no
+   * longer parked (pushed after a retry, already discarded). Rejects with
+   * `LeaderChangedError`, leaving the event in the outbox, once this context no longer
+   * leads; the new leader pushes it again and reports a new rejection.
+   */
+  discard: () => Promise<void>;
 }
 
 export type PullCheckpointMap<

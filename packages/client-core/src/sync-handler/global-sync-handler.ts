@@ -47,6 +47,8 @@ export class GlobalSyncHandler<
           stream: "local",
         });
 
+        // Starting sync retries parked events at once.
+        this.retryParkedOnNextPush("global");
         this.schedulePush();
 
         if (this.startToken !== startToken) return;
@@ -89,6 +91,16 @@ export class GlobalSyncHandler<
     this.schedulePush();
   }
 
+  /** Retry the parked events now, when started. */
+  retryRejectedPushes(): void {
+    this.retryParkedOnNextPush("global");
+    this.schedulePush();
+  }
+
+  protected requestPush(): void {
+    this.schedulePush();
+  }
+
   private schedulePush(): void {
     const syncAdapter = this.config.syncAdapter;
     const pushController = this.pushController;
@@ -97,10 +109,9 @@ export class GlobalSyncHandler<
     void this.enqueuePush(
       "global",
       () =>
-        this.collectAllPendingPushEvents().then((events) => {
-          if (events.length === 0) return;
-          return this.pushAndAcknowledge(syncAdapter, events);
-        }),
+        this.collectAllPendingPushEvents().then((events) =>
+          this.pushPending("global", syncAdapter, events, pushController.signal),
+        ),
       pushController.signal,
     );
   }

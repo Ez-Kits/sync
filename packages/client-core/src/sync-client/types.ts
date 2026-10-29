@@ -13,7 +13,12 @@ import type {
   TCollectionRuntimeRecord,
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter/types";
-import type { ConflictResolution, SyncAdapter, SyncStatusEvent } from "../sync-handler";
+import type {
+  ConflictResolution,
+  PushRejection,
+  SyncAdapter,
+  SyncStatusEvent,
+} from "../sync-handler";
 
 export interface SyncClientConfig<
   C extends CollectionConfigMap<TCheckpoint>,
@@ -36,6 +41,18 @@ export interface SyncClientConfig<
    * local writes win: the remote change is skipped and they are pushed over it.
    */
   resolveConflict?: ConflictResolution<ChangeBusEventDataMapFromCollectionConfigMap<C>>;
+  /**
+   * Called once for each local write the provider refused when pushed alone
+   * (`PushRejectedError`, e.g. security rules or validation). The write is parked, not lost:
+   * it stays in the outbox, later writes of its record wait behind it, and it is retried with
+   * a backoff, on every sync start and on `retryRejectedPushes()`. Each push that parks
+   * writes also reports the error through `onSyncStatus`. Call `rejection.discard()` to drop
+   * a write that can never succeed; the local row keeps its value, so revert or fix it, for
+   * example by re-reading the record from the remote.
+   */
+  onPushRejected?: (
+    rejection: PushRejection<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
+  ) => void;
 }
 
 export interface SyncClient<
@@ -49,6 +66,11 @@ export interface SyncClient<
   /** Start syncing; on a follower, also asks the leader to sync. */
   startSync: () => void;
   stopSync: () => void;
+  /**
+   * Push the writes parked after a rejection (`onPushRejected`) now instead of after their
+   * backoff, e.g. once the user signed in. Acts in the leading context, which runs sync.
+   */
+  retryRejectedPushes: () => void;
   /** Stop sync, release the storage and browser listeners permanently. */
   dispose: () => Promise<void>;
   /** Whether this context leads the storage (and is the only one that syncs). */

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
+import { PushRejectedError } from "@ez-kits/sync-client-core";
 import { deleteApp, initializeApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, signInAnonymously } from "firebase/auth";
 import {
@@ -101,7 +102,8 @@ runIfEmulator(
         events: [{ type: "create", collection: "todos", data: { id: "denied" } }],
         commitChanges: notAcknowledged,
       } as never),
-    ).rejects.toThrow();
+      // Permanent: core parks it instead of retrying it ahead of later writes.
+    ).rejects.toBeInstanceOf(PushRejectedError);
     expect(notAcknowledged).not.toHaveBeenCalled();
     await expect(getDoc(doc(firestore, deniedPath, "denied"))).rejects.toThrow();
   },
@@ -203,7 +205,8 @@ runIfEmulator(
         events: [{ type: "create", collection: "todos", data: { id: "denied" } }],
         commitChanges: notAcknowledged,
       } as never),
-    ).rejects.toThrow();
+      // Permanent: core parks it instead of retrying it ahead of later writes.
+    ).rejects.toBeInstanceOf(PushRejectedError);
     expect(notAcknowledged).not.toHaveBeenCalled();
     await expect(
       get(ref(database, "users/another-user/integration-denied/denied")),
