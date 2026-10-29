@@ -74,6 +74,8 @@ function makeDb(row: unknown = { id: 1, title: "one" }) {
   };
   const db = {
     options: { type: "sqljs" },
+    initialize: vi.fn(async () => db),
+    destroy: vi.fn(async () => {}),
     getRepository: vi.fn(() => repository),
     transaction: vi.fn(async (fn: (manager: any) => Promise<unknown>) => fn(db)),
   };
@@ -118,6 +120,68 @@ test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and run
   expect(db.transaction).toHaveBeenCalledOnce();
 });
 
+test("TypeORM adapter runs transactions on a data source of their own, retrying a failed open", async () => {
+  const main = makeDb();
+  const own = makeDb();
+  const adapter = adapterFor(
+    main.db,
+    vi
+      .fn((): never => main.db as never)
+      .mockReturnValueOnce(main.db as never)
+      .mockReturnValueOnce(own.db as never),
+  );
+  own.db.initialize.mockRejectedValueOnce(new Error("cannot open"));
+  const insert = () => adapter.transaction((tx) => tx.insert("todos" as never, { id: 2 } as never));
+  await expect(insert()).rejects.toThrow("cannot open");
+  await insert();
+  await insert();
+  expect(own.db.initialize).toHaveBeenCalledTimes(2);
+  expect(own.db.transaction).toHaveBeenCalledTimes(2);
+  expect(main.db.transaction).not.toHaveBeenCalled();
+  expect(main.db.initialize).not.toHaveBeenCalled();
+});
+
+test("destroying the data source also closes the transaction data source, if it opened", async () => {
+  const main = makeDb();
+  const own = makeDb();
+  const destroyMain = main.db.destroy;
+  const adapter = adapterFor(
+    main.db,
+    vi
+      .fn((): never => main.db as never)
+      .mockReturnValueOnce(main.db as never)
+      .mockReturnValueOnce(own.db as never),
+  );
+  const insert = () => adapter.transaction((tx) => tx.insert("todos" as never, { id: 2 } as never));
+
+  // Never opened.
+  await adapter.db.destroy();
+  expect(destroyMain).toHaveBeenCalledTimes(1);
+  expect(own.db.destroy).not.toHaveBeenCalled();
+
+  // Opened, then reopened by the next transaction.
+  await insert();
+  await adapter.db.destroy();
+  expect(own.db.destroy).toHaveBeenCalledTimes(1);
+  await insert();
+  expect(own.db.initialize).toHaveBeenCalledTimes(2);
+
+  // Destroyed while opening fails: there is nothing to close.
+  await adapter.db.destroy();
+  let failOpen!: (error: Error) => void;
+  own.db.initialize.mockImplementationOnce(
+    () => new Promise((_, reject) => (failOpen = reject)) as never,
+  );
+  const failed = insert();
+  await new Promise((resolve) => setTimeout(resolve));
+  const destroyed = adapter.db.destroy();
+  failOpen(new Error("cannot open"));
+  await destroyed;
+  await expect(failed).rejects.toThrow("cannot open");
+  expect(own.db.destroy).toHaveBeenCalledTimes(2);
+  expect(destroyMain).toHaveBeenCalledTimes(4);
+});
+
 test("TypeORM commitLocalMutation uses transaction-scoped repository operations", async () => {
   const { db, calls } = makeDb();
   const adapter = adapterFor(db);
@@ -154,6 +218,7 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   const transactionUpsert = vi.fn();
   const db = {
     options: { type: "sqljs" },
+    destroy: vi.fn(),
     manager: {
       getRepository: vi.fn(() => ({ insert: rootInsert, upsert: rootUpsert })),
     },

@@ -87,8 +87,9 @@ function createConnection(dbStorage: DBStorage): TypeOrmSqliteConnection {
  * database. `createTypeOrmSqliteDBAdapter` builds its data source with it.
  *
  * TypeORM's `BEGIN`/`COMMIT`/`ROLLBACK` open and end a `dbStorage.transaction`, and like
- * one SQLite connection, statements sent while it is open join it. Writes outside a
- * transaction run in one of their own, so they are durable once they resolve.
+ * one SQLite connection, statements sent while it is open join it (TypeORM shares one
+ * query runner per data source, so the adapter opens its transactions on a second one).
+ * Writes outside a transaction run in one of their own, so they are durable once they resolve.
  */
 export function createTypeOrmSqliteDriver(dbStorage: DBStorage): TypeOrmSqliteDriver {
   if (dbStorage.dialect !== "sqlite") {

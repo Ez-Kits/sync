@@ -146,6 +146,61 @@ test("concurrent transactions run one at a time", async () => {
   await db.destroy();
 });
 
+test("statements outside an adapter transaction wait for it and never join it", async () => {
+  const { db, adapter } = await setup();
+  await adapter.localChangeStore.initialize();
+  const settled = <T>(promise: Promise<T>) => {
+    const state = { done: false, value: promise };
+    void promise.then(() => (state.done = true));
+    return state;
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  for (const commit of [true, false]) {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    let inserted!: () => void;
+    const insertedRow = new Promise<void>((resolve) => (inserted = resolve));
+    const transaction = adapter.transaction(async (tx) => {
+      await tx.insert("todos", { id: "pulled", title: "uncommitted" });
+      inserted();
+      await finished;
+      if (!commit) throw new Error("rolled back");
+    });
+    await insertedRow;
+    const reads = [
+      settled(adapter.getOptional!("todos", "pulled")),
+      settled(db.repositories.todos.findOneBy({ id: "pulled" })),
+    ];
+    const write = settled(adapter.insert("todos", { id: `app-${commit}`, title: "app" }));
+    await tick();
+    expect([...reads, write].map((read) => read.done)).toEqual([false, false, false]);
+
+    finish();
+    await transaction.catch(() => undefined);
+    const [viaAdapter, viaDataSource] = await Promise.all(reads.map((read) => read.value));
+    expect(viaAdapter === undefined).toBe(!commit);
+    expect(viaDataSource === null).toBe(!commit);
+    await write.value;
+    // The app's write ran on its own, not inside the rolled-back transaction.
+    expect(await adapter.getOptional!("todos", `app-${commit}`)).toMatchObject({ title: "app" });
+    await adapter.delete("todos", "pulled");
+  }
+  await db.destroy();
+});
+
+test("destroying the data source closes the transaction one; both open again", async () => {
+  const { db, adapter } = await setup();
+  await adapter.localChangeStore.initialize();
+  await adapter.transaction((tx) => tx.insert("todos", { id: "a", title: "one" }));
+  await db.destroy();
+  expect(db.isInitialized).toBe(false);
+  await db.initialize();
+  await adapter.transaction((tx) => tx.insert("todos", { id: "b", title: "two" }));
+  expect((await adapter.getMany("todos")).map((todo) => todo.id)).toEqual(["a", "b"]);
+  await db.destroy();
+});
+
 test("a transaction that cannot open or commit fails with the storage's error", async () => {
   const base = createLocalDBStorage({ dialect: "sqlite", open: () => openSqlJsEngine() });
   let failure: "begin" | "commit" | undefined;
