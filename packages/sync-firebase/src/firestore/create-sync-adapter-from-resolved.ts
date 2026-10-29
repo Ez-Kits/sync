@@ -159,37 +159,38 @@ export function createFirestoreSyncAdapterFromResolved<
         collections.map((collectionConfig) => [collectionConfig.collectionName, collectionConfig]),
       );
 
-      const batches: WriteBatch[] = [];
-      const handledEvents: ChangeBusEvent<C, N>[] = [];
-      let currentBatch = writeBatch(db);
-      let opsInCurrentBatch = 0;
+      // Each event is one write. Writes to one document, in a batch or across batches committed
+      // in order, apply in event order, so events need no coalescing.
+      const batches: Array<{ batch: WriteBatch; events: ChangeBusEvent<C, N>[] }> = [];
+      let current = { batch: writeBatch(db), events: [] as ChangeBusEvent<C, N>[] };
 
       const enqueueSet = (
+        event: ChangeBusEvent<C, N>,
         documentPath: string,
         documentId: string,
         payload: DocumentData,
         options?: { merge: boolean },
       ) => {
-        if (opsInCurrentBatch >= FIRESTORE_BATCH_LIMIT) {
-          batches.push(currentBatch);
-          currentBatch = writeBatch(db);
-          opsInCurrentBatch = 0;
+        if (current.events.length >= FIRESTORE_BATCH_LIMIT) {
+          batches.push(current);
+          current = { batch: writeBatch(db), events: [] };
         }
         const ref = doc(db, documentPath, documentId);
         if (options) {
-          currentBatch.set(ref, payload, options);
+          current.batch.set(ref, payload, options);
         } else {
-          currentBatch.set(ref, payload);
+          current.batch.set(ref, payload);
         }
-        opsInCurrentBatch += 1;
+        current.events.push(event);
       };
 
-      for (const event of events) {
-        const collectionConfig = collectionByName.get(event.collection as N);
+      for (const rawEvent of events) {
+        const collectionConfig = collectionByName.get(rawEvent.collection as N);
         if (!collectionConfig) continue;
-        handledEvents.push(event as ChangeBusEvent<C, N>);
+        const event = rawEvent as ChangeBusEvent<C, N>;
 
         const { collectionPath } = collectionConfig;
+        const id = collectionConfig.resolveDocumentId(event);
 
         if (event.type === "delete") {
           const deletedAt = event.deletedAt ?? Date.now();
@@ -199,34 +200,31 @@ export function createFirestoreSyncAdapterFromResolved<
                 deleted: true,
                 deletedAt,
               } satisfies DocumentData);
-          enqueueSet(collectionPath, String(event.id), payload, { merge: true });
+          enqueueSet(event, collectionPath, id, payload, { merge: true });
           continue;
         }
-
-        const id = collectionConfig.resolveDocumentId(event as ChangeBusEvent<C, N>);
 
         if (event.type === "create") {
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : (event.data as DocumentData);
-          enqueueSet(collectionPath, id, payload);
+          enqueueSet(event, collectionPath, id, payload);
           continue;
         }
 
         const payload = collectionConfig.serializeUpdate
           ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
           : (event.data as DocumentData);
-        enqueueSet(collectionPath, id, payload, { merge: true });
+        enqueueSet(event, collectionPath, id, payload, { merge: true });
       }
+      if (current.events.length > 0) batches.push(current);
 
-      if (opsInCurrentBatch > 0) {
-        batches.push(currentBatch);
-      }
-
-      for (const batch of batches) {
+      // Batches commit in order, and each is acknowledged before the next commits, so a
+      // failed batch leaves only its own and later events in the outbox.
+      for (const { batch, events: batchEvents } of batches) {
         await batch.commit();
+        await commitChanges({ events: batchEvents });
       }
-      if (handledEvents.length > 0) await commitChanges({ events: handledEvents });
     },
   };
 }
