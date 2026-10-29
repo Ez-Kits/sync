@@ -163,42 +163,46 @@ test("acknowledging an older event keeps the latest dirty record state", async (
 test("conflict resolution ignores clean rows and supports local, remote, merged and delete decisions", async () => {
   const { handler, localChangeStore, db } = fixture({ conflictResolver: vi.fn(() => "local") });
   const update = { type: "update", collection: "todos", data: { id: 1, title: "remote" } };
-  expect(await handler.resolve(update)).toBe(update);
+  expect(await handler.resolve(update)).toEqual({ event: update, needsPush: false });
   await localChangeStore.upsertDirtyRecord({
     collection: "todos",
     recordId: "1",
     state: "dirty",
     updatedAt: 1,
   });
-  expect(await handler.resolve(update)).toBeUndefined();
+  expect(await handler.resolve(update)).toEqual({ needsPush: false });
   const remoteResolver = vi.fn(() => "remote");
-  const remoteHandler = fixture({ conflictResolver: remoteResolver }).handler;
-  await remoteHandler["config"].localChangeStore.upsertDirtyRecord({
+  const remote = fixture({ conflictResolver: remoteResolver });
+  await remote.localChangeStore.upsertDirtyRecord({
     collection: "todos",
     recordId: "1",
     state: "dirty",
     updatedAt: 1,
   });
-  expect(await remoteHandler.resolve(update)).toBe(update);
-  const mergeHandler = fixture({
+  expect(await remote.handler.resolve(update)).toEqual({ event: update, needsPush: false });
+  expect(await remote.localChangeStore.getDirtyRecords()).toEqual([]);
+  const merge = fixture({
     conflictResolver: () => ({ data: { id: 1, title: "merged" } }),
-  }).handler;
-  await mergeHandler["config"].localChangeStore.upsertDirtyRecord({
+  });
+  await merge.localChangeStore.upsertDirtyRecord({
     collection: "todos",
     recordId: "1",
     state: "dirty",
     updatedAt: 1,
   });
-  expect(await mergeHandler.resolve(update)).toEqual({
-    ...update,
-    data: { id: 1, title: "merged" },
+  expect(await merge.handler.resolve(update)).toEqual({
+    event: { ...update, data: { id: 1, title: "merged" } },
+    needsPush: true,
   });
   const deleteEvent = { type: "delete", collection: "todos", id: 1 };
-  expect(await mergeHandler.resolve(deleteEvent)).toEqual({
-    type: "update",
-    collection: "todos",
-    data: { id: 1, title: "merged" },
+  expect(await merge.handler.resolve(deleteEvent)).toEqual({
+    event: { type: "create", collection: "todos", data: { id: 1, title: "merged" } },
+    needsPush: true,
   });
+  // Each merge replaced the pending writes, so only the last merged event is left.
+  expect(await merge.localChangeStore.getPendingEvents()).toEqual([
+    expect.objectContaining({ type: "create", recordId: "1", data: { id: 1, title: "merged" } }),
+  ]);
   db.getOptional.mockRejectedValueOnce(new Error("read unavailable"));
   await localChangeStore.upsertDirtyRecord({
     collection: "todos",
@@ -217,7 +221,7 @@ test("conflict resolution considers pending outbox writes and checkpoints only d
     { id: "e", type: "update", collection: "todos", recordId: "5", data: {}, createdAt: 1 },
   ]);
   const event = { type: "update", collection: "todos", data: { id: 5 } };
-  expect(await handler.resolve(event)).toBeUndefined();
+  expect(await handler.resolve(event)).toEqual({ needsPush: false });
   await localChangeStore.upsertDirtyRecord({
     collection: "todos",
     recordId: "not-numeric",
@@ -268,9 +272,17 @@ test("push queue serializes calls, retries indefinitely with capped delays, and 
 test("missing conflict resolver and recovered push queue both use their fallbacks", async () => {
   vi.useFakeTimers();
   try {
-    const { handler } = fixture();
+    const { handler, localChangeStore } = fixture();
     const event = { type: "update", collection: "todos", data: { id: 1 } };
-    expect(await handler.resolve(event)).toBe(event);
+    expect(await handler.resolve(event)).toEqual({ event, needsPush: false });
+    // Without a resolver, a record with pending local writes keeps its local state.
+    await localChangeStore.upsertDirtyRecord({
+      collection: "todos",
+      recordId: "1",
+      state: "deleted",
+      updatedAt: 1,
+    });
+    expect(await handler.resolve(event)).toEqual({ needsPush: false });
     const controller = new AbortController();
     const first = handler.push(
       "recover",
@@ -361,6 +373,53 @@ test("pull retries coalesce repeated errors and skip reconnects while still conn
     stop();
     await vi.advanceTimersByTimeAsync(8_000);
     expect(subscribe).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("pull reconnects a stream that failed while connecting and ignores its later errors", async () => {
+  vi.useFakeTimers();
+  try {
+    const errors: unknown[] = [];
+    const { handler } = fixture({ onSyncError: (e: unknown) => errors.push(e) });
+    const streams: Array<{ onError: (error: unknown) => void; isActive: () => boolean }> = [];
+    const cleanups = [vi.fn(), vi.fn()];
+    let finishFirstConnect!: () => void;
+    const subscribe = vi
+      .fn()
+      .mockImplementationOnce(async (onError: any, isActive: any) => {
+        streams.push({ onError, isActive });
+        onError(new Error("failed while connecting"));
+        await new Promise<void>((resolve) => (finishFirstConnect = resolve));
+        return cleanups[0];
+      })
+      .mockImplementation(async (onError: any, isActive: any) => {
+        streams.push({ onError, isActive });
+        return cleanups[1];
+      });
+    const stop = handler.pull(subscribe);
+
+    // The retry fires while the first stream is still connecting and is skipped.
+    await vi.advanceTimersByTimeAsync(250);
+    expect(subscribe).toHaveBeenCalledOnce();
+    finishFirstConnect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cleanups[0]).toHaveBeenCalledOnce();
+    expect(streams[0]!.isActive()).toBe(false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(subscribe).toHaveBeenCalledTimes(2);
+    expect(streams[1]!.isActive()).toBe(true);
+
+    // A late error of the replaced stream is reported but leaves the new one running.
+    streams[0]!.onError(new Error("late"));
+    expect(errors).toHaveLength(2);
+    expect(cleanups[1]).not.toHaveBeenCalled();
+    expect(streams[1]!.isActive()).toBe(true);
+
+    stop();
+    expect(cleanups[1]).toHaveBeenCalledOnce();
+    expect(streams[1]!.isActive()).toBe(false);
   } finally {
     vi.useRealTimers();
   }

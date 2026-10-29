@@ -34,7 +34,7 @@ const client = createSyncClient({
 
 The current core resolver contract only accepts `"local"`, `"remote"`, or `{ data }`; it has no durable deferred-conflict state or replay API. `manualResolution` can await an application decision, or the callback can persist conflict context in an application-owned queue and return a fallback. The application remains responsible for storing, presenting, and replaying deferred conflicts. A pending asynchronous decision also holds the current pull batch—and therefore its checkpoint—until it settles.
 
-Without a `resolveConflict` callback, core behavior is unchanged: remote changes are applied in arrival order. Checkpoints track progress through the remote feed, not whether every incoming event became local data.
+Core reconciles each decision with the outbox: `"remote"` discards the record's pending local writes, `{ data }` replaces them with one event that pushes the merged data, and `"local"` keeps them. Without a `resolveConflict` callback, a record with pending local writes keeps its local state, as with `localWins()`; records without pending writes always take remote changes. Checkpoints track progress through the remote feed, not whether every incoming event became local data. A resolver that throws fails the pulled batch; the pull resubscribes from the last saved checkpoint and asks again.
 
 ## Development
 

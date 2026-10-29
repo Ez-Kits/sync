@@ -13,7 +13,16 @@ export interface SyncStatusEvent {
 }
 
 /**
- * App supplied policy for reconciling an incoming remote event with local data.
+ * App supplied policy for reconciling an incoming remote event with a record that has
+ * pending (unpushed) local writes. Records without them always take the remote event.
+ * - `"local"`: skip the remote event and keep pushing the local writes. Without a resolver,
+ *   this is what every conflict gets.
+ * - `"remote"`: apply the remote event and discard the record's pending local writes.
+ * - `{ data }`: store `data` locally and push it in place of the pending local writes. After
+ *   a remote delete, `data` recreates the record.
+ *
+ * A throwing resolver fails the pulled batch: the pull stream resubscribes from the last
+ * saved checkpoint and the conflict is resolved again.
  *
  * It runs inside the transaction that applies pulled changes, which holds the database
  * until it commits. Decide from `remote` and `local` only: a resolver that queries the

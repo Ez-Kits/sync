@@ -126,7 +126,10 @@ export class CollectionSyncHandler<
         return syncAdapter.pull({
           checkpoint: checkpointMap as Partial<Record<N, TCheckpoint>> | undefined,
           commitChanges: (options) => {
-            void this.commitPullChanges(collectionName, options.changes, options.checkpoint);
+            void this.commitPullChanges(collectionName, options.changes, options.checkpoint, {
+              isActive,
+              onError,
+            });
           },
           onError,
         });
@@ -160,39 +163,27 @@ export class CollectionSyncHandler<
     );
   }
 
+  /** Queue a pulled batch; one of a failed or stopped stream is dropped (see `retryPull`). */
   private async commitPullChanges<N extends CollectionNames<C>>(
     collectionName: N,
     changes: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
     checkpoint: Partial<Record<N, TCheckpoint>>,
+    stream: { isActive: () => boolean; onError: (error: unknown) => void },
   ): Promise<void> {
     const previous = this.pullCommitQueues.get(collectionName) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        if (!this.mayCommit()) return;
-        if (changes.length > 0) {
-          await this.config.db.transaction(async (tx, context) => {
-            for (const event of changes) {
-              const resolved = await this.resolveRemoteEvent(
-                event as ChangeBusEvent<SyncHandlerDataMap<C>>,
-                context,
-              );
-              if (!resolved) continue;
-              await this.applyEvent(collectionName, resolved as never, tx);
-            }
-          });
-        }
-
-        this.config.changeBus.publishRemoteBatch(changes);
-        if (changes.length > 0) {
-          this.config.onRemoteChangesCommitted?.(
-            changes as ChangeBusEvent<SyncHandlerDataMap<C>>[],
-          );
-        }
-        await this.saveCheckpointMap(checkpoint);
-        this.config.onSyncSuccess?.();
+        if (!this.mayCommit() || !stream.isActive()) return;
+        const needsPush = await this.commitPulledChanges(
+          changes as ChangeBusEvent<SyncHandlerDataMap<C>>[],
+          checkpoint,
+          (event, tx) => this.applyEvent(collectionName, event as never, tx),
+        );
+        if (needsPush) this.schedulePush(collectionName);
       });
-    const safeNext = next.catch((error) => this.config.onSyncError?.(error));
+    // A failed batch fails its stream, which resubscribes from the persisted checkpoint.
+    const safeNext = next.catch((error) => stream.onError(error));
     this.pullCommitQueues.set(collectionName, safeNext);
     return safeNext;
   }

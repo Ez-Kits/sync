@@ -31,7 +31,10 @@ export interface SyncClientConfig<
   checkpointStorage: ICheckpointStorage<CollectionNames<C>, TCheckpoint>;
   /** Optional lifecycle notifications. Sync errors never include document payloads. */
   onSyncStatus?: (event: SyncStatusEvent) => void;
-  /** Resolves a remote change when the same record has unpushed local writes. */
+  /**
+   * Resolves a remote change when the same record has unpushed local writes. Without it the
+   * local writes win: the remote change is skipped and they are pushed over it.
+   */
   resolveConflict?: ConflictResolution<ChangeBusEventDataMapFromCollectionConfigMap<C>>;
 }
 
