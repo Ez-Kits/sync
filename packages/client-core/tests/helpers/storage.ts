@@ -131,10 +131,6 @@ export function atomicMemoryStore() {
 export function clientConfig(dbAdapter: unknown, extra: Record<string, unknown> = {}) {
   return {
     collections: [collection],
-    checkpointStorage: {
-      getCheckpoint: vi.fn(async () => undefined),
-      saveCheckpoint: vi.fn(async () => {}),
-    },
     dbAdapter,
     ...extra,
   } as any;

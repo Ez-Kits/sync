@@ -12,6 +12,8 @@ EzSync is a modular, local-first sync library for TypeScript applications. The c
 - `@ez-kits/sync-firebase`: Firestore and Realtime Database remote adapters.
 - `@ez-kits/sync-conflict-resolution`: provider-neutral built-in conflict policies.
 
+Pull checkpoints are stored in the local database with the synced rows and committed in the same transaction; the client's only checkpoint option is `checkpoint: { serialize, deserialize }`, needed when checkpoints hold non-JSON values such as a Firestore `Timestamp` (see the core README).
+
 See each package README for setup and adapter configuration. Firebase authentication and security rules are configured by the host application.
 
 ## Development

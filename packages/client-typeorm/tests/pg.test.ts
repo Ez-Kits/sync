@@ -42,10 +42,6 @@ test("a sync client writes through the adapter, its outbox created by the adapte
   const client = createSyncClient({
     collections: [collection],
     dbAdapter: adapter,
-    checkpointStorage: {
-      getCheckpoint: async () => undefined,
-      saveCheckpoint: async () => {},
-    },
   });
 
   await client.collections.todos.insert({ id: "a", title: "first" });

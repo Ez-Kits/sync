@@ -101,10 +101,6 @@ describe("typeorm adapter", () => {
     const client = createSyncClient({
       collections,
       dbAdapter: createTypeOrmSqliteDBAdapter({ dbStorage, collections }),
-      checkpointStorage: {
-        getCheckpoint: async () => undefined,
-        saveCheckpoint: async () => {},
-      },
     });
     expectTypeOf(client.collections.todos.get(1)).resolves.toEqualTypeOf<Todo>();
     client.liveQuery({

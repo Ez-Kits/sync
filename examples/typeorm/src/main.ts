@@ -1,8 +1,4 @@
-import {
-  createLocalDBStorage,
-  createLocalStorageCheckpointStorage,
-  createSyncClient,
-} from "@ez-kits/sync-client-core";
+import { createLocalDBStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
 import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
@@ -30,11 +26,6 @@ const syncClient = createSyncClient({
     // Entities that are not collections, and TypeORM creating the app's own tables.
     entities: [Post, UsersPosts],
     dataSourceOptions: { synchronize: true },
-  }),
-  checkpointStorage: createLocalStorageCheckpointStorage({
-    key: "checkpoint",
-    serializer: (checkpoint: string) => JSON.stringify(checkpoint),
-    deserializer: (value: string) => JSON.parse(value) as string,
   }),
 });
 

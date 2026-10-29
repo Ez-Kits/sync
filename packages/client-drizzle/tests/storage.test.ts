@@ -50,10 +50,6 @@ const pgSchema = `
   CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT false);
 `;
 
-function checkpointStorage() {
-  return { getCheckpoint: vi.fn(async () => undefined), saveCheckpoint: vi.fn(async () => {}) };
-}
-
 /** The same scenario on every engine: a sync client writing through the Drizzle adapter. */
 async function exerciseAdapter(
   adapter: any,
@@ -64,7 +60,6 @@ async function exerciseAdapter(
   const client = createSyncClient({
     collections: [collection],
     dbAdapter: adapter,
-    checkpointStorage: checkpointStorage(),
   } as never) as any;
 
   // The client created the outbox tables (the schemas above do not), idempotently.

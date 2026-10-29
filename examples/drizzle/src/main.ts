@@ -1,8 +1,4 @@
-import {
-  createLocalDBStorage,
-  createLocalStorageCheckpointStorage,
-  createSyncClient,
-} from "@ez-kits/sync-client-core";
+import { createLocalDBStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
 import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
 import { defineRelations } from "drizzle-orm";
@@ -86,11 +82,6 @@ const dbAdapter = createDrizzleSqliteDBAdapter({
 const syncClient = createSyncClient({
   collections: [collection],
   dbAdapter,
-  checkpointStorage: createLocalStorageCheckpointStorage({
-    key: "checkpoint",
-    serializer: (checkpoint: string) => JSON.stringify(checkpoint),
-    deserializer: (value: string) => JSON.parse(value) as string,
-  }),
   syncAdapter: {
     pull: (options) => {
       options.commitChanges({

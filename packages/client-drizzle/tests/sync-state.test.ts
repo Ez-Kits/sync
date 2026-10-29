@@ -1,10 +1,9 @@
 import {
-  ChangeBus,
-  createDBCheckpointStorage,
   createLocalDBStorage,
-  GlobalSyncHandler,
+  createSyncClient,
   type DBStorage,
   type StoredChangeBusEvent,
+  type SyncStatusEvent,
 } from "@ez-kits/sync-client-core";
 import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
 import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
@@ -76,30 +75,28 @@ class Stamp {
   constructor(readonly millis: number) {}
 }
 
-/** A leader-side handler over `dbStorage` whose checkpoints live in the database. */
-function dbSyncHandler(
+/** A sync client over `dbStorage`; it serializes its checkpoints into the database. */
+function dbSyncClient(
   dialect: (typeof dialects)[number],
   dbStorage: DBStorage,
   push: (options: any) => Promise<void>,
 ) {
   const adapter = dialect.adapter(dbStorage);
-  const checkpointStorage = createDBCheckpointStorage<string, Stamp>({
-    localChangeStore: adapter.localChangeStore,
-    serializer: (stamp) => String(stamp.millis),
-    deserializer: (value) => new Stamp(Number(value)),
-  });
   const errors: unknown[] = [];
   const pulls: any[] = [];
-  const handler = new GlobalSyncHandler({
+  const client = createSyncClient({
     collections: [dialect.collection()],
-    db: adapter,
-    changeBus: new ChangeBus<any>(),
-    checkpointStorage,
-    localChangeStore: adapter.localChangeStore,
-    onSyncError: (error: unknown) => errors.push(error),
+    dbAdapter: adapter,
+    checkpoint: {
+      serialize: (stamp: Stamp) => String(stamp.millis),
+      deserialize: (value: string) => new Stamp(Number(value)),
+    },
+    onSyncStatus: (status: SyncStatusEvent) => {
+      if (status.status === "error") errors.push(status.error);
+    },
     syncAdapter: { push, pull: (pull: any) => void pulls.push(pull) },
-  } as never);
-  return { adapter, checkpointStorage, handler, errors, pulls };
+  } as never) as any;
+  return { adapter, client, errors, pulls };
 }
 
 const acknowledge = async ({ events, commitChanges }: any) => {
@@ -179,22 +176,16 @@ for (const dialect of dialects) {
 
   test(`${dialect.name}: a DB checkpoint commits and rolls back with the pulled rows`, async () => {
     const dbStorage = dialect.storage();
-    const { adapter, checkpointStorage, handler, errors, pulls } = dbSyncHandler(
-      dialect,
-      dbStorage,
-      acknowledge,
-    );
+    const { adapter, client, errors, pulls } = dbSyncClient(dialect, dbStorage, acknowledge);
     await adapter.localChangeStore.initialize();
-    handler.start();
+    client.startSync();
     await vi.waitFor(() => expect(pulls).toHaveLength(1));
     expect(pulls[0].checkpoint).toEqual({});
     pulls[0].commitChanges({
       changes: [{ type: "create", collection: "todos", data: { id: "a", title: "one" } }],
       checkpoint: { todos: new Stamp(1) },
     });
-    await vi.waitFor(async () =>
-      expect(await checkpointStorage.getCheckpoint("todos")).toEqual(new Stamp(1)),
-    );
+    await vi.waitFor(async () => expect(await client.getCheckpoint("todos")).toEqual(new Stamp(1)));
     expect(await adapter.getMany("todos")).toEqual([{ id: "a", title: "one" }]);
 
     // The checkpoint is written, then the transaction fails: neither row nor checkpoint stays.
@@ -215,15 +206,15 @@ for (const dialect of dialects) {
     // The stream resubscribes from the checkpoint that committed.
     await vi.waitFor(() => expect(pulls).toHaveLength(2));
     expect(pulls[1].checkpoint).toEqual({ todos: new Stamp(1) });
-    handler.stop();
+    client.stopSync();
     await dbStorage.close();
   }, 30_000);
 
   test(`${dialect.name}: a reset database pulls everything again from no checkpoint`, async () => {
     const first = dialect.storage();
-    const before = dbSyncHandler(dialect, first, acknowledge);
+    const before = dbSyncClient(dialect, first, acknowledge);
     await before.adapter.localChangeStore.initialize();
-    before.handler.start();
+    before.client.startSync();
     await vi.waitFor(() => expect(before.pulls).toHaveLength(1));
     before.pulls[0].commitChanges({
       changes: [{ type: "create", collection: "todos", data: { id: "a", title: "one" } }],
@@ -232,23 +223,23 @@ for (const dialect of dialects) {
     await vi.waitFor(async () =>
       expect(await before.adapter.localChangeStore.getCheckpoint("todos")).toBe("5"),
     );
-    before.handler.stop();
+    before.client.stopSync();
     await first.close();
 
     // An in-memory storage opened again (or a cleared IndexedDB): rows and checkpoint are gone.
     const reset = dialect.storage();
-    const after = dbSyncHandler(dialect, reset, acknowledge);
+    const after = dbSyncClient(dialect, reset, acknowledge);
     await after.adapter.localChangeStore.initialize();
-    after.handler.start();
+    after.client.startSync();
     await vi.waitFor(() => expect(after.pulls).toHaveLength(1));
     expect(after.pulls[0].checkpoint).toEqual({});
-    after.handler.stop();
+    after.client.stopSync();
     await reset.close();
   }, 30_000);
 
   test(`${dialect.name}: a skipped remote event survives a reload and is applied by the acknowledgement`, async () => {
     const dbStorage = dialect.storage();
-    const before = dbSyncHandler(dialect, dbStorage, neverAcknowledge);
+    const before = dbSyncClient(dialect, dbStorage, neverAcknowledge);
     const store = before.adapter.localChangeStore;
     await store.initialize();
     await before.adapter.commitLocalMutation({
@@ -264,7 +255,7 @@ for (const dialect of dialects) {
           native,
         ),
     });
-    before.handler.start();
+    before.client.startSync();
     await vi.waitFor(() => expect(before.pulls).toHaveLength(1));
     // The server's copy of the pushed write, pulled before its acknowledgement.
     const echo = { type: "update", collection: "todos", data: { id: "a", title: "server" } };
@@ -274,12 +265,12 @@ for (const dialect of dialects) {
       { collection: "todos", recordId: "a", event: echo },
     ]);
     expect(await before.adapter.getMany("todos")).toEqual([{ id: "a", title: "local" }]);
-    before.handler.stop();
+    before.client.stopSync();
 
-    // A reload: a new adapter and handler on the same database push e1 again.
-    const after = dbSyncHandler(dialect, dbStorage, acknowledge);
+    // A reload: a new adapter and client on the same database push e1 again.
+    const after = dbSyncClient(dialect, dbStorage, acknowledge);
     await after.adapter.localChangeStore.initialize();
-    after.handler.start();
+    after.client.startSync();
     await vi.waitFor(async () =>
       expect(await after.adapter.getMany("todos")).toEqual([{ id: "a", title: "server" }]),
     );
@@ -287,7 +278,7 @@ for (const dialect of dialects) {
     expect(await after.adapter.localChangeStore.getDirtyRecords()).toEqual([]);
     expect(await after.adapter.localChangeStore.getSkippedRemoteEvents()).toEqual([]);
     expect(after.errors).toEqual([]);
-    after.handler.stop();
+    after.client.stopSync();
     await dbStorage.close();
   }, 30_000);
 }

@@ -1,7 +1,4 @@
-import {
-  createLocalDBStorage,
-  createLocalStorageCheckpointStorage,
-} from "@ez-kits/sync-client-core";
+import { createLocalDBStorage } from "@ez-kits/sync-client-core";
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
 import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
@@ -30,11 +27,6 @@ const { useLiveQuery } = createSyncClientReact({
     // Entities that are not collections, and TypeORM creating the app's own tables.
     entities: [Post, UsersPosts],
     dataSourceOptions: { synchronize: true },
-  }),
-  checkpointStorage: createLocalStorageCheckpointStorage({
-    key: "checkpoint",
-    serializer: (checkpoint: string) => JSON.stringify(checkpoint),
-    deserializer: (value: string) => JSON.parse(value) as string,
   }),
 });
 

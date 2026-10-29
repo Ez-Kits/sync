@@ -45,10 +45,6 @@ function setup() {
   const client = createSyncClientReact({
     collections: [todoCollection],
     dbAdapter: db,
-    checkpointStorage: {
-      getCheckpoint: vi.fn(async () => undefined),
-      saveCheckpoint: vi.fn(async () => {}),
-    },
   } as never);
   return { client, db };
 }

@@ -1,10 +1,4 @@
-import type {
-  AtomicLocalChangeStore,
-  BaseDBAdapter,
-  CollectionConfig,
-  DBStorage,
-  ICheckpointStorage,
-} from "../../src";
+import type { AtomicLocalChangeStore, BaseDBAdapter, CollectionConfig, DBStorage } from "../../src";
 
 export interface TodoSelect {
   id: number;
@@ -74,4 +68,3 @@ export declare const collections: Collections;
 export declare const db: DB;
 export declare const store: AtomicLocalChangeStore;
 export declare const dbStorage: DBStorage;
-export declare const checkpointStorage: ICheckpointStorage<"todos" | "users", Checkpoint>;
