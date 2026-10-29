@@ -167,6 +167,14 @@ test("sync client parks rejected pushes until retried or discarded, isolating it
 
   // Allowed now (e.g. after sign-in): retried without waiting for the backoff.
   allowed = new Set(["allowed", "later"]);
+  const pushes = adapter.push.mock.calls.length;
+  syncClient.retryRejectedPushes();
+  // The oldest parked event probes alone and is still refused: the retry stops there.
+  await vi.waitFor(() => expect(adapter.push).toHaveBeenCalledTimes(pushes + 1));
+  await settle();
+  expect(adapter.push).toHaveBeenCalledTimes(pushes + 1);
+  expect(await pending()).toEqual(["denied", "later"]);
+  // The next retry probes the next parked record.
   syncClient.retryRejectedPushes();
   await vi.waitFor(async () => expect(await pending()).toEqual(["denied"]));
   await onPushRejected.mock.calls[0]![0].discard();
