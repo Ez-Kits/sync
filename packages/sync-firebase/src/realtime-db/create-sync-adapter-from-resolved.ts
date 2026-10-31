@@ -17,7 +17,6 @@ import {
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import { realtimeDBPushError, rejectedPush } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
-import { realtimeDBCheckpointSerializer } from "./checkpoint-serializer.ts";
 import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Target for `onChild*` listeners (collection root or a narrowed RTDB `query`). */
@@ -168,7 +167,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
   return {
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
-    checkpointSerializer: common.checkpointSerializer ?? realtimeDBCheckpointSerializer,
+    checkpointSerializer: common.checkpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribeFns: Array<() => void> = [];

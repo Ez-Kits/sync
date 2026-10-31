@@ -36,11 +36,11 @@ createFirestoreSyncAdapter({
 | `db`                     | `Firestore`                              | From `getFirestore()`.                                                                                                                                          |
 | `collections`            | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. Only these are pushed; writes to other collections without an adapter stay local. |
 | `includeMetadataChanges` | `boolean`                                | Default for every collection; passed to `onSnapshot`. Default `false`.                                                                                          |
-| `checkpointSerializer`   | `CheckpointSerializer`                   | How checkpoints are stored in the database. Default: `firestoreCheckpointSerializer` (JSON that keeps `Timestamp`s).                                            |
+| `checkpointSerializer`   | `CheckpointSerializer`                   | How checkpoints are stored in the database. Default: the client's JSON, which turns `Timestamp`s into plain objects.                                            |
 
 ### `defineFirestoreCollectionSyncAdapterConfig(config)`
 
-Maps one EzSync collection to one Firestore collection, with types inferred from the collection. The checkpoint type is inferred from `createCheckpoint` / `createPullCheckpoint`, and the adapter stores checkpoints with `firestoreCheckpointSerializer` (which keeps `Timestamp`s) unless given its own `checkpointSerializer`.
+Maps one EzSync collection to one Firestore collection, with types inferred from the collection. The checkpoint type is inferred from `createCheckpoint` / `createPullCheckpoint`. Checkpoints are stored with the client's `JSON.stringify` / `JSON.parse` unless the adapter is given a `checkpointSerializer`; give one when the checkpoint holds a `Timestamp`.
 
 | Option                                                   | Type                     | Required | Description                                                                          |
 | -------------------------------------------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------ |
@@ -70,7 +70,7 @@ A `SyncAdapter` for **one** collection, to pass as that collection's `syncAdapte
 | `collectionPath`         | `string`               | Required.                                                                  |
 | `collectionName`         | `string`               | The EzSync collection name. Default: the last segment of `collectionPath`. |
 | `includeMetadataChanges` | `boolean`              | Passed to `onSnapshot`.                                                    |
-| `checkpointSerializer`   | `CheckpointSerializer` | Default: `firestoreCheckpointSerializer`.                                  |
+| `checkpointSerializer`   | `CheckpointSerializer` | Default: the client's JSON.                                                |
 
 ### Behaviour
 
@@ -91,7 +91,7 @@ createRealtimeDBSyncAdapter({
 });
 ```
 
-`checkpointSerializer` (optional) sets how checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer` (JSON).
+`checkpointSerializer` (optional) sets how checkpoints are stored in the database. Default: the client's `JSON.stringify` / `JSON.parse`.
 
 ### `defineRealtimeDBCollectionSyncAdapterConfig(config)`
 
@@ -134,5 +134,3 @@ A `SyncAdapter` for one collection. Takes the handler options above plus `db`, `
 | `FirestoreSyncAdapterCollectionConfig`      | `RealtimeDBSyncAdapterCollectionConfig`      |
 | `FirestoreSyncAdapterCollectionHandlers`    | `RealtimeDBSyncAdapterCollectionHandlers`    |
 | `FirestoreCollectionSyncAdapterConfig`      | `RealtimeDBCollectionSyncAdapterConfig`      |
-
-The default checkpoint serializers are exported too, to reuse or build on: `firestoreCheckpointSerializer` from `/sync-firestore` and `realtimeDBCheckpointSerializer` from `/sync-realtime-db`.

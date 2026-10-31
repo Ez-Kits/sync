@@ -1,3 +1,4 @@
+import type { CheckpointSerializer } from "@ez-kits/sync-client-core";
 import { createScopedSyncClientReact } from "@ez-kits/sync-client-react";
 import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
@@ -48,6 +49,21 @@ function checkpointFromSnapshot(
   }
   return next ?? { updatedAt: Timestamp.fromMillis(0), id: "" };
 }
+
+/**
+ * The checkpoint holds a `Timestamp`, which the client's default JSON reads back as a plain
+ * `{ seconds, nanoseconds }` object: rebuild it, so `startAfter` gets a real `Timestamp`.
+ */
+const todoCheckpointSerializer: CheckpointSerializer<TodoCheckpoint> = {
+  serialize: (checkpoint) => JSON.stringify(checkpoint),
+  deserialize: (value) => {
+    const { updatedAt, id } = JSON.parse(value) as {
+      updatedAt: { seconds: number; nanoseconds: number };
+      id: string;
+    };
+    return { updatedAt: new Timestamp(updatedAt.seconds, updatedAt.nanoseconds), id };
+  },
+};
 
 function timestampToMillis(value: unknown): number | undefined {
   if (value instanceof Timestamp) return value.toMillis();
@@ -109,6 +125,7 @@ function createTodoFirestoreSyncAdapter(account: string) {
         deserializeDeleteId: ({ snapshot }) => snapshot.id,
       }),
     ],
+    checkpointSerializer: todoCheckpointSerializer,
   });
 }
 
