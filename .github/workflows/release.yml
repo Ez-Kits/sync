@@ -60,8 +60,10 @@ jobs:
               echo "::notice::$name@$version is already published, skipping"
               continue
             fi
+            # pnpm pack and publishing a tarball skip prepublishOnly, so run it first
+            # (build, then copy LICENSE, README and docs into the package).
             # pnpm pack rewrites workspace: and catalog: ranges to real versions.
-            (cd "$dir" && vp pm pack --pack-destination "$out")
+            (cd "$dir" && vp run prepublishOnly && vp pm pack --pack-destination "$out")
             tarball=$(ls "$out"/*.tgz)
             npm publish "$tarball" --access public --provenance
             rm "$tarball"

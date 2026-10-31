@@ -24,4 +24,6 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   lint: { options: { typeAware: true, typeCheck: true } },
+  // release-please writes these in its own format on every release PR.
+  fmt: { ignorePatterns: ["**/CHANGELOG.md", ".release-please-manifest.json"] },
 });

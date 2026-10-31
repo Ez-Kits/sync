@@ -32,7 +32,7 @@
     "test:types": "vp test run --typecheck.only",
     "test:coverage": "vp test run --coverage",
     "check": "vp check",
-    "prepublishOnly": "vp run build"
+    "prepublishOnly": "vp run build && node ../../scripts/copy-package-files.mjs"
   },
   "dependencies": {
     "@ez-kits/sync-client-core": "workspace:*"
