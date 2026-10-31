@@ -53,12 +53,13 @@ A typical app installs the core, one DB adapter, one storage engine and one sync
 
 ## Learn more
 
+- [Documentation](docs/README.md): installation, a step-by-step quick start, guides, the API reference of every package, and how to write your own DB storage, DB adapter or sync adapter.
 - [Architecture decisions](https://github.com/Ez-Kits/sync/blob/main/architecture.md): why EzSync works the way it does, and its guarantees and trade-offs.
 - [Examples](https://github.com/Ez-Kits/sync/tree/main/examples): todo apps with React, Drizzle or TypeORM, and Firestore.
 
 ## Status
 
-EzSync is approaching a stable API but is not there yet; expect breaking changes between releases. Usage documentation is in progress.
+EzSync is approaching a stable API but is not there yet; expect breaking changes between releases.
 
 ## Development
 
