@@ -376,7 +376,8 @@ test("a worker error after startup is reported without failing the storage", asy
   endpoint.onmessage({ data: { t: "role", role: "leader" } });
   await storage.ready;
 
-  target.dispatchEvent(new ErrorEvent("error", { message: "boom" }));
+  // Node 24 has no global ErrorEvent, so build an equivalent event.
+  target.dispatchEvent(Object.assign(new Event("error"), { message: "boom" }));
   expect(onError).toHaveBeenCalledWith(
     expect.objectContaining({ message: "The DB storage worker failed: boom" }),
   );
