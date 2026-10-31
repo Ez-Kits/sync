@@ -90,13 +90,46 @@ test("the client stores checkpoints as JSON in its adapter's store by default", 
 
 test("the client round-trips checkpoints JSON cannot hold through the configured serializer", async () => {
   const db = makeDb();
-  const client = createSyncClient(clientConfig(db, { checkpoint: stampCheckpoint }));
+  const client = createSyncClient(clientConfig(db, { checkpointSerializer: stampCheckpoint }));
   await client.saveCheckpoint("todos", new Stamp(42));
   expect(await db.localChangeStore.getCheckpoint("todos")).toBe("42");
   const read = await client.getCheckpoint("todos");
   expect(read).toBeInstanceOf(Stamp);
   expect(read).toEqual(new Stamp(42));
   await client.dispose();
+});
+
+test("the adapter that syncs a collection serializes its checkpoints, unless the client sets one", async () => {
+  const db = makeDb();
+  const prefixed = (prefix: string) => ({
+    serialize: (stamp: Stamp) => `${prefix}:${stamp.millis}`,
+    deserialize: (value: string) => new Stamp(Number(value.split(":")[1])),
+  });
+  const notes = {
+    name: "notes",
+    adapterConfig: {},
+    primaryField: "id",
+    syncAdapter: { ...pullAdapter(), checkpointSerializer: prefixed("own") },
+  };
+  const drafts = { name: "drafts", adapterConfig: {}, primaryField: "id" };
+  const config = {
+    collections: [collection, notes, drafts],
+    syncAdapter: { ...pullAdapter(), checkpointSerializer: prefixed("client") },
+  };
+  const client = createSyncClient(clientConfig(db, config));
+  await client.saveCheckpoint("todos", new Stamp(1));
+  await client.saveCheckpoint("notes", new Stamp(2));
+  expect(await db.localChangeStore.getCheckpoint("todos")).toBe("client:1");
+  expect(await db.localChangeStore.getCheckpoint("notes")).toBe("own:2");
+  expect(await client.getCheckpoint("notes")).toEqual(new Stamp(2));
+  await client.dispose();
+
+  const overridden = createSyncClient(
+    clientConfig(db, { ...config, checkpointSerializer: stampCheckpoint }),
+  );
+  await overridden.saveCheckpoint("notes", new Stamp(3));
+  expect(await db.localChangeStore.getCheckpoint("notes")).toBe("3");
+  await overridden.dispose();
 });
 
 test("checkpoint calls before initialization wait for the storage and the store", async () => {
@@ -141,7 +174,7 @@ test("a pulled checkpoint is serialized into the adapter's store inside the pull
   const adapter = pullAdapter();
   const config = clientConfig(db, {
     collections: [{ ...collection, syncAdapter: adapter }],
-    checkpoint: stampCheckpoint,
+    checkpointSerializer: stampCheckpoint,
   });
   const client = createSyncClient(config);
   client.startSync();
@@ -183,7 +216,7 @@ test("a rolled back pull transaction keeps the previous checkpoint", async () =>
   const client = createSyncClient(
     clientConfig(db, {
       collections: [{ ...collection, syncAdapter: adapter }],
-      checkpoint: stampCheckpoint,
+      checkpointSerializer: stampCheckpoint,
       onSyncStatus: (event: any) => statuses.push(event.error),
     }),
   );

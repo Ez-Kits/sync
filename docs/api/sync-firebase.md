@@ -36,16 +36,17 @@ createFirestoreSyncAdapter({
 | `db`                     | `Firestore`                              | From `getFirestore()`.                                                                                                                                          |
 | `collections`            | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. Only these are pushed; writes to other collections without an adapter stay local. |
 | `includeMetadataChanges` | `boolean`                                | Default for every collection; passed to `onSnapshot`. Default `false`.                                                                                          |
+| `checkpointSerializer`   | `CheckpointSerializer`                   | How checkpoints are stored in the database. Default: `firestoreCheckpointSerializer` (JSON that keeps `Timestamp`s).                                            |
 
 ### `defineFirestoreCollectionSyncAdapterConfig(config)`
 
-Maps one EzSync collection to one Firestore collection, with types inferred from the collection.
+Maps one EzSync collection to one Firestore collection, with types inferred from the collection. The checkpoint type is inferred from `createCheckpoint` / `createPullCheckpoint`, and the adapter stores checkpoints with `firestoreCheckpointSerializer` (which keeps `Timestamp`s) unless given its own `checkpointSerializer`.
 
 | Option                                                   | Type                     | Required | Description                                                                          |
 | -------------------------------------------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------ |
-| `collectionConfig`                                       | your collection          | yes      | The EzSync collection (from `defineDrizzleCollection` / `defineTypeormCollection`).  |
+| `collectionConfig`                                       | your collection          | yes      | The EzSync collection (from `defineDrizzleCollection` / `defineTypeOrmCollection`).  |
 | `collectionPath`                                         | `string`                 | yes      | Firestore collection path: `"todos"`, `"users/uid/todos"`.                           |
-| `resolveDocumentId(event)`                               | `(event) => string`      | yes      | The document id of a local change (create, update or delete).                        |
+| `resolveRemoteId(event)`                                 | `(event) => string`      | yes      | The document id of a local change (create, update or delete).                        |
 | `createCheckpoint()`                                     | `() => TCheckpoint`      | yes      | The checkpoint used when `createPullCheckpoint` is not set.                          |
 | `buildPullQueryConstraints({ checkpoint })`              | `=> QueryConstraint[]`   | no       | Narrow the pull query, e.g. `orderBy` + `startAfter`. Default: the whole collection. |
 | `createPullCheckpoint({ snapshot, previousCheckpoint })` | `=> TCheckpoint`         | no       | The checkpoint to save after a snapshot.                                             |
@@ -63,12 +64,13 @@ Maps one EzSync collection to one Firestore collection, with types inferred from
 
 A `SyncAdapter` for **one** collection, to pass as that collection's `syncAdapter`. Takes the handler options above (without `collectionConfig`) plus:
 
-| Option                   | Type        | Description                                                                |
-| ------------------------ | ----------- | -------------------------------------------------------------------------- |
-| `db`                     | `Firestore` | Required.                                                                  |
-| `collectionPath`         | `string`    | Required.                                                                  |
-| `collectionName`         | `string`    | The EzSync collection name. Default: the last segment of `collectionPath`. |
-| `includeMetadataChanges` | `boolean`   | Passed to `onSnapshot`.                                                    |
+| Option                   | Type                   | Description                                                                |
+| ------------------------ | ---------------------- | -------------------------------------------------------------------------- |
+| `db`                     | `Firestore`            | Required.                                                                  |
+| `collectionPath`         | `string`               | Required.                                                                  |
+| `collectionName`         | `string`               | The EzSync collection name. Default: the last segment of `collectionPath`. |
+| `includeMetadataChanges` | `boolean`              | Passed to `onSnapshot`.                                                    |
+| `checkpointSerializer`   | `CheckpointSerializer` | Default: `firestoreCheckpointSerializer`.                                  |
 
 ### Behaviour
 
@@ -89,28 +91,30 @@ createRealtimeDBSyncAdapter({
 });
 ```
 
+`checkpointSerializer` (optional) sets how checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer` (JSON).
+
 ### `defineRealtimeDBCollectionSyncAdapterConfig(config)`
 
-| Option                                                       | Type                     | Required | Description                                                                                                                   |
-| ------------------------------------------------------------ | ------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `collectionConfig`                                           | your collection          | yes      | The EzSync collection.                                                                                                        |
-| `collectionPath`                                             | `string`                 | yes      | The RTDB path holding the records: `"todos"`, `"users/uid/todos"`.                                                            |
-| `resolveRecordId(event)`                                     | `(event) => string`      | yes      | The child key of a local change.                                                                                              |
-| `createCheckpoint()`                                         | `() => TCheckpoint`      | yes      | The checkpoint used when `createPullCheckpoint` is not set.                                                                   |
-| `buildRealtimePullQuery({ db, collectionPath, checkpoint })` | `=> Query`               | no       | Narrow the listener, e.g. `query(ref(db, path), orderByChild("updatedAt"), startAt(cp))`. Default: `ref(db, collectionPath)`. |
-| `createPullCheckpoint({ snapshot, previousCheckpoint })`     | `=> TCheckpoint`         | no       | The checkpoint to save after each child event.                                                                                |
-| `serializeCreate(data)`                                      | `=> unknown`             | no       | Value written for a create (replaces the node).                                                                               |
-| `serializeUpdate(data)`                                      | `=> unknown`             | no       | Fields merged for an update.                                                                                                  |
-| `serializeDelete(id, { deletedAt })`                         | `=> unknown`             | no       | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`.                                                          |
-| `deserializeCreate(data, { snapshot })`                      | `=> InsertModel`         | no       | Local record for an added child.                                                                                              |
-| `deserializeUpdate(data, { snapshot })`                      | `=> UpdateModel`         | no       | Local record for a changed child.                                                                                             |
-| `deserializeDeleteId({ snapshot })`                          | `=> PrimaryKey`          | no       | Default: `snapshot.key`.                                                                                                      |
-| `isDeleted(data, { snapshot })`                              | `=> boolean`             | no       | Default: `data.deleted === true`.                                                                                             |
-| `resolveDeletedAt(data, { snapshot })`                       | `=> number \| undefined` | no       | Default: `data.deletedAt`, else now.                                                                                          |
+| Option                                                   | Type                     | Required | Description                                                                                                                   |
+| -------------------------------------------------------- | ------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `collectionConfig`                                       | your collection          | yes      | The EzSync collection.                                                                                                        |
+| `collectionPath`                                         | `string`                 | yes      | The RTDB path holding the records: `"todos"`, `"users/uid/todos"`.                                                            |
+| `resolveRemoteId(event)`                                 | `(event) => string`      | yes      | The child key of a local change.                                                                                              |
+| `createCheckpoint()`                                     | `() => TCheckpoint`      | yes      | The checkpoint used when `createPullCheckpoint` is not set.                                                                   |
+| `buildPullQuery({ db, collectionPath, checkpoint })`     | `=> Query`               | no       | Narrow the listener, e.g. `query(ref(db, path), orderByChild("updatedAt"), startAt(cp))`. Default: `ref(db, collectionPath)`. |
+| `createPullCheckpoint({ snapshot, previousCheckpoint })` | `=> TCheckpoint`         | no       | The checkpoint to save after each child event.                                                                                |
+| `serializeCreate(data)`                                  | `=> unknown`             | no       | Value written for a create (replaces the node).                                                                               |
+| `serializeUpdate(data)`                                  | `=> unknown`             | no       | Fields merged for an update.                                                                                                  |
+| `serializeDelete(id, { deletedAt })`                     | `=> unknown`             | no       | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`.                                                          |
+| `deserializeCreate(data, { snapshot })`                  | `=> InsertModel`         | no       | Local record for an added child.                                                                                              |
+| `deserializeUpdate(data, { snapshot })`                  | `=> UpdateModel`         | no       | Local record for a changed child.                                                                                             |
+| `deserializeDeleteId({ snapshot })`                      | `=> PrimaryKey`          | no       | Default: `snapshot.key`.                                                                                                      |
+| `isDeleted(data, { snapshot })`                          | `=> boolean`             | no       | Default: `data.deleted === true`.                                                                                             |
+| `resolveDeletedAt(data, { snapshot })`                   | `=> number \| undefined` | no       | Default: `data.deletedAt`, else now.                                                                                          |
 
 ### `createRealtimeDBCollectionSyncAdapter(config)`
 
-A `SyncAdapter` for one collection. Takes the handler options above plus `db`, `collectionPath` and optional `collectionName` (default: the last segment of `collectionPath`).
+A `SyncAdapter` for one collection. Takes the handler options above plus `db`, `collectionPath`, optional `collectionName` (default: the last segment of `collectionPath`) and optional `checkpointSerializer`.
 
 ### Behaviour
 
@@ -130,3 +134,5 @@ A `SyncAdapter` for one collection. Takes the handler options above plus `db`, `
 | `FirestoreSyncAdapterCollectionConfig`      | `RealtimeDBSyncAdapterCollectionConfig`      |
 | `FirestoreSyncAdapterCollectionHandlers`    | `RealtimeDBSyncAdapterCollectionHandlers`    |
 | `FirestoreCollectionSyncAdapterConfig`      | `RealtimeDBCollectionSyncAdapterConfig`      |
+
+The default checkpoint serializers are exported too, to reuse or build on: `firestoreCheckpointSerializer` from `/sync-firestore` and `realtimeDBCheckpointSerializer` from `/sync-realtime-db`.

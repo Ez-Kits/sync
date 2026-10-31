@@ -1,5 +1,5 @@
 import { createLocalDBStorage, createSyncClient } from "@ez-kits/sync-client-core";
-import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
+import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
 import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
 import "reflect-metadata";
@@ -9,10 +9,10 @@ import { Post, User, UsersPosts } from "./entities/index.ts";
 // database shared by every tab through a storage worker.
 const dbStorage = createLocalDBStorage({
   dialect: "sqlite",
-  open: () => openSqlJsEngine({ indexedDB: "ez-sync-typeorm-example" }),
+  open: () => openSqlJsEngine({ indexedDBName: "ez-sync-typeorm-example" }),
 });
 
-const collection = defineTypeormCollection({
+const collection = defineTypeOrmCollection({
   name: "users",
   entity: User,
   primaryField: "id",

@@ -98,7 +98,7 @@ Write the `CREATE TABLE` statements the same way. Do not rely on TypeORM's `sync
 
 To wipe the local database (for example on sign-out), delete it from browser storage after calling `await client.dispose()` in every tab:
 
-- sql.js: delete the IndexedDB database named in `engineOptions.indexedDB`.
+- sql.js: delete the IndexedDB database named in `engineOptions.indexedDBName`.
 - PGlite: delete the IndexedDB database of `dataDir` (`idb://name` uses `/pglite/name`).
 - SQLite WASM: remove the file from the OPFS pool, or use a new `filename`.
 

@@ -1,5 +1,5 @@
 import { createWorkerDBStorage, type DBStorage } from "@ez-kits/sync-client-core";
-import type { SqlJsStorageOptions } from "./options";
+import type { SqlJsDBStorageOptions } from "./options";
 
 export type * from "./options";
 
@@ -8,6 +8,6 @@ export type * from "./options";
  * worker, which must call `startDBStorageWorker` with `openSqlJsEngine` from
  * `@ez-kits/sync-storage-sqljs/worker`.
  */
-export function createSqlJsStorage(options: SqlJsStorageOptions): DBStorage {
+export function createSqlJsDBStorage(options: SqlJsDBStorageOptions): DBStorage {
   return createWorkerDBStorage({ ...options, dialect: "sqlite" });
 }

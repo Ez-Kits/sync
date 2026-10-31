@@ -68,7 +68,7 @@ test("options are validated like createSyncClient", () => {
   const serialized = createSyncClientReact({
     collections,
     dbAdapter,
-    checkpoint: {
+    checkpointSerializer: {
       serialize: (checkpoint: Checkpoint) => checkpoint.cursor,
       deserialize: (value: string): Checkpoint => ({ cursor: value }),
     },

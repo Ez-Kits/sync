@@ -32,7 +32,7 @@ for (const scope of ["global", "collection"] as const) {
     const localChangeStore = createTestLocalChangeStore();
     const checkpointStorage = createCheckpointStorage<string, Stamp>(
       localChangeStore,
-      stampSerializer,
+      () => stampSerializer,
     );
     return fixture(scope, { localChangeStore, checkpointStorage });
   };

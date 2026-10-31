@@ -140,7 +140,7 @@ describe("drizzle adapter", () => {
       dbStorage,
       collections,
       // @ts-expect-error relations are configured through `relations`
-      drizzleConfig: { relations: {} },
+      drizzleOptions: { relations: {} },
     });
   });
 
@@ -153,7 +153,7 @@ describe("drizzle adapter", () => {
       dbStorage,
       collections,
       relations,
-      drizzleConfig: { logger: true },
+      drizzleOptions: { logger: true },
     });
     expectTypeOf(dbAdapter.queryBuilder).toEqualTypeOf<
       SqliteRemoteDatabase<unknown, typeof relations>

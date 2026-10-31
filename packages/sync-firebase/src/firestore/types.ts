@@ -1,8 +1,8 @@
 import type {
   ChangeBusEvent,
   ChangeBusEventDataMap,
+  CheckpointSerializer,
   CollectionConfig,
-  InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
@@ -42,7 +42,7 @@ export interface FirestoreSyncAdapterCollectionHandlers<
   }) => TCheckpoint;
   /** Forwarded to {@link onSnapshot} (useful with metadata-driven flows). */
   includeMetadataChanges?: boolean;
-  resolveDocumentId: (event: ChangeBusEvent<C, N>) => string;
+  resolveRemoteId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (
     data: DocumentData,
     context: { snapshot: QueryDocumentSnapshot<DocumentData> },
@@ -75,6 +75,10 @@ export interface FirestoreCollectionSyncAdapterConfig<
 > extends FirestoreSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Firestore;
   /**
+   * How the adapter's checkpoints are stored in the database. Default: `firestoreCheckpointSerializer`.
+   */
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
+  /**
    * Local collection name used in change-bus events.
    * Defaults to the last segment of {@link collectionPath}.
    * Must match `CollectionConfig.name`.
@@ -101,16 +105,20 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
     }
   >;
 
-/** Collection mapping input used by the client-level Firestore adapter. */
+/**
+ * Collection mapping input used by the client-level Firestore adapter. The checkpoint type is
+ * inferred from the handlers (`createCheckpoint`, `createPullCheckpoint`).
+ */
 export type FirestoreCollectionSyncAdapterConfigInput<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
+  TCheckpoint = unknown,
 > = {
   collectionConfig: Col;
   collectionPath: string;
 } & FirestoreSyncAdapterCollectionHandlers<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
-  InferCollectionCheckpoint<Col>
+  TCheckpoint
 >;
 
 /** Resolved per-collection sync config returned by {@link defineFirestoreCollectionSyncAdapterConfig}. */
@@ -130,6 +138,10 @@ export interface FirestoreSyncAdapterConfig<
   TCheckpoint,
 > extends FirestoreSyncCommonAdapterConfig {
   collections: readonly FirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
+  /**
+   * How the adapter's checkpoints are stored in the database. Default: `firestoreCheckpointSerializer`.
+   */
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
 }
 
 /** Internal resolved shape used by pull/push. */

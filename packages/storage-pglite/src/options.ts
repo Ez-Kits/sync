@@ -6,4 +6,4 @@ export interface PGliteEngineOptions {
   dataDir?: string;
 }
 
-export type PGliteStorageOptions = Omit<WorkerDBStorageOptions<PGliteEngineOptions>, "dialect">;
+export type PGliteDBStorageOptions = Omit<WorkerDBStorageOptions<PGliteEngineOptions>, "dialect">;

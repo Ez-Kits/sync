@@ -41,6 +41,12 @@ type ConflictLocalRecord<C extends ChangeBusEventDataMap, N extends keyof C> = C
   ? Record
   : C[N]["create"] | C[N]["update"];
 
+/** Turns checkpoints into the strings stored in the database, and back. */
+export interface CheckpointSerializer<TCheckpoint> {
+  serialize(checkpoint: TCheckpoint): string;
+  deserialize(value: string): TCheckpoint;
+}
+
 export interface SyncAdapter<
   C extends ChangeBusEventDataMap,
   N extends keyof C = keyof C,
@@ -52,6 +58,12 @@ export interface SyncAdapter<
    * to a collection no adapter syncs stay local and never enter the outbox.
    */
   readonly collections?: readonly N[];
+  /**
+   * How this adapter's checkpoints are stored as strings, for checkpoints that are not plain
+   * JSON (e.g. a Firestore `Timestamp`). Used for the collections it syncs, unless the client
+   * sets its own `checkpointSerializer`; without either, `JSON.stringify` / `JSON.parse`.
+   */
+  readonly checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   /** Open a pull stream. A returned cleanup function must stop every listener. */
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
   /**

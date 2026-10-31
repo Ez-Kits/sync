@@ -1,14 +1,9 @@
 /**
  * Internal: how the sync client keeps pull checkpoints. Not exported from the package entry;
- * applications only choose the serialization (`SyncClientConfig.checkpoint`).
+ * applications only choose the serialization (`SyncClientConfig.checkpointSerializer`).
  */
 import type { ILocalChangeStore } from "../local-change-store";
-
-/** Turns checkpoints into the strings the local-change store keeps, and back. */
-export interface CheckpointSerializer<TCheckpoint> {
-  serialize: (checkpoint: TCheckpoint) => string;
-  deserialize: (value: string) => TCheckpoint;
-}
+import type { CheckpointSerializer } from "../sync-handler/types";
 
 /**
  * Checkpoints kept in a local-change store, so in the database of the outbox and the synced
@@ -28,27 +23,31 @@ export interface CheckpointStorage<TCollectionName, TCheckpoint> {
   ): Promise<void>;
 }
 
-const jsonSerializer: CheckpointSerializer<any> = {
+export const jsonCheckpointSerializer: CheckpointSerializer<any> = {
   serialize: (checkpoint) => JSON.stringify(checkpoint),
   deserialize: (value) => JSON.parse(value),
 };
 
 export function createCheckpointStorage<TCollectionName, TCheckpoint>(
   localChangeStore: ILocalChangeStore,
-  serializer: CheckpointSerializer<TCheckpoint> = jsonSerializer,
+  /** The serializer of a collection's checkpoints; JSON when it returns `undefined`. */
+  serializerFor: (collectionName: string) => CheckpointSerializer<TCheckpoint> | undefined = () =>
+    undefined,
 ): CheckpointStorage<TCollectionName, TCheckpoint> {
+  const serializer = (collectionName: TCollectionName) =>
+    serializerFor(String(collectionName)) ?? jsonCheckpointSerializer;
   return {
     async getCheckpoint(collectionName, transactionContext) {
       const value = await localChangeStore.getCheckpoint(
         String(collectionName),
         transactionContext,
       );
-      return value === undefined ? undefined : serializer.deserialize(value);
+      return value === undefined ? undefined : serializer(collectionName).deserialize(value);
     },
     async saveCheckpoint(collectionName, checkpoint, transactionContext) {
       await localChangeStore.saveCheckpoint(
         String(collectionName),
-        checkpoint === undefined ? undefined : serializer.serialize(checkpoint),
+        checkpoint === undefined ? undefined : serializer(collectionName).serialize(checkpoint),
         transactionContext,
       );
     },

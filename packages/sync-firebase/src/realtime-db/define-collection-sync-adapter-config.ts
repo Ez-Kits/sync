@@ -1,6 +1,5 @@
 import type {
   CollectionConfig,
-  InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
@@ -28,12 +27,13 @@ type EventMapFromCollectionConfig<Col extends CollectionConfig<any, any, any, an
  */
 export function defineRealtimeDBCollectionSyncAdapterConfig<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
+  TCheckpoint,
 >(
-  config: RealtimeDBCollectionSyncAdapterConfigInput<Col>,
+  config: RealtimeDBCollectionSyncAdapterConfigInput<Col, TCheckpoint>,
 ): RealtimeDBSyncAdapterCollectionConfig<
   EventMapFromCollectionConfig<Col>,
   Col["name"],
-  InferCollectionCheckpoint<Col>
+  TCheckpoint
 > {
   const { collectionConfig, ...rest } = config;
   return {

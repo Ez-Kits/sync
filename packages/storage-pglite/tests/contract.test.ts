@@ -1,6 +1,6 @@
 import { createLocalDBStorage, type DBQuery } from "@ez-kits/sync-client-core";
 import { expect, test, vi } from "vite-plus/test";
-import { createPGliteStorage } from "../src";
+import { createPGliteDBStorage } from "../src";
 import { openPGliteEngine } from "../src/worker";
 
 const run = (sql: string, params: unknown[] = []): DBQuery => ({ sql, params, method: "run" });
@@ -59,7 +59,11 @@ test("storage transactions are atomic on PGlite", async () => {
 
 test("the page-side storage forwards worker and coordination options", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createPGliteStorage({ key: "pg", worker: () => endpoint, requestTimeoutMs: 500 });
+  const storage = createPGliteDBStorage({
+    key: "pg",
+    worker: () => endpoint,
+    requestTimeoutMs: 500,
+  });
   expect(storage.key).toBe("pg");
   expect(endpoint.postMessage).toHaveBeenCalledWith(
     expect.objectContaining({ t: "init", key: "pg", requestTimeoutMs: 500 }),

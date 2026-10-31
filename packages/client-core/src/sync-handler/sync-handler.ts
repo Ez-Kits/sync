@@ -6,7 +6,7 @@ import { GlobalSyncHandler } from "./global-sync-handler";
 import type { SyncAdapter } from "./types";
 
 export interface SyncHandlerConfig<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandlerConfig<C, DB, TCheckpoint> {
@@ -17,7 +17,7 @@ export interface SyncHandlerConfig<
  * Orchestrates global and per-collection sync handlers.
  */
 export class SyncHandler<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > {

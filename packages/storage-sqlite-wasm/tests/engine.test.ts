@@ -1,6 +1,6 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { expect, test, vi } from "vite-plus/test";
-import { createSqliteWasmStorage } from "../src";
+import { createSqliteWasmDBStorage } from "../src";
 import { openSqliteWasmEngine } from "../src/worker";
 
 test("runs migrations, binds parameters and returns rows in both row modes", async () => {
@@ -68,7 +68,7 @@ test("the OPFS pool is opened for the leader and paused when it steps down", asy
 
 test("the page-side storage speaks SQLite to its worker", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createSqliteWasmStorage({
+  const storage = createSqliteWasmDBStorage({
     engineOptions: { filename: "/todos.sqlite3" },
     worker: () => endpoint,
   });

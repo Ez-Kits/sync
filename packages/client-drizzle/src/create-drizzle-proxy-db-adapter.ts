@@ -37,7 +37,7 @@ export type DrizzleProxyDBAdapterConfig<
    */
   readonly relations?: TRelations;
   /** Extra Drizzle options (logger, casing, codecs, ...). `relations` is set separately. */
-  readonly drizzleConfig?: TDrizzleConfig;
+  readonly drizzleOptions?: TDrizzleConfig;
 };
 
 /** What a dialect entry point supplies to {@link createDrizzleProxyDBAdapter}. */

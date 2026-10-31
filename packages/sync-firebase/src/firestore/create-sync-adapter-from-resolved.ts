@@ -1,4 +1,9 @@
-import type { ChangeBusEvent, ChangeBusEventDataMap, SyncAdapter } from "@ez-kits/sync-client-core";
+import type {
+  ChangeBusEvent,
+  ChangeBusEventDataMap,
+  CheckpointSerializer,
+  SyncAdapter,
+} from "@ez-kits/sync-client-core";
 import {
   doc,
   collection as getCollectionRef,
@@ -16,6 +21,7 @@ import {
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import { firestorePushError } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
+import { firestoreCheckpointSerializer } from "./checkpoint-serializer.ts";
 import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Firestore allows at most 500 writes per batch. */
@@ -57,11 +63,16 @@ export function createFirestoreSyncAdapterFromResolved<
 >(
   db: Firestore,
   collections: readonly ResolvedFirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
-  common: { includeMetadataChanges?: boolean } = {},
+  common: {
+    includeMetadataChanges?: boolean;
+    checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
+  } = {},
 ): SyncAdapter<C, N, TCheckpoint> {
   return {
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
+    // Checkpoints usually hold a `Timestamp`, which plain JSON would turn into an object.
+    checkpointSerializer: common.checkpointSerializer ?? firestoreCheckpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribes = collections.map((collectionConfig) => {
@@ -198,7 +209,7 @@ export function createFirestoreSyncAdapterFromResolved<
         const event = rawEvent as ChangeBusEvent<C, N>;
 
         const { collectionPath } = collectionConfig;
-        const id = collectionConfig.resolveDocumentId(event);
+        const id = collectionConfig.resolveRemoteId(event);
 
         if (event.type === "delete") {
           const deletedAt = event.deletedAt ?? Date.now();

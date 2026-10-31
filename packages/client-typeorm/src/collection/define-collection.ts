@@ -2,7 +2,7 @@ import type { SyncAdapter } from "@ez-kits/sync-client-core";
 import { getMetadataArgsStorage, type DeepPartial } from "typeorm";
 import type { EntityClass, TypeOrmCollectionConfig } from "./types";
 
-export type DefineTypeormCollectionOptions<
+export type DefineTypeOrmCollectionOptions<
   TName extends string,
   E extends EntityClass<object>,
   PK extends keyof InstanceType<E> & string,
@@ -25,13 +25,13 @@ export type DefineTypeormCollectionOptions<
   >;
 };
 
-export function defineTypeormCollection<
+export function defineTypeOrmCollection<
   TName extends string,
   E extends EntityClass<object>,
   PK extends keyof InstanceType<E> & string,
   TCheckpoint,
 >(
-  options: DefineTypeormCollectionOptions<TName, E, PK, TCheckpoint>,
+  options: DefineTypeOrmCollectionOptions<TName, E, PK, TCheckpoint>,
 ): TypeOrmCollectionConfig<TName, InstanceType<E>, E, PK, TCheckpoint> {
   const { name, entity, primaryField, syncAdapter } = options;
   const metaPk = getPrimaryKeyPropertyName(entity);

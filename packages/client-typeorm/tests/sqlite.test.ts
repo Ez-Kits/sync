@@ -8,7 +8,7 @@ import {
 import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
 import { Column, Entity, PrimaryColumn } from "typeorm";
 import { expect, test, vi } from "vite-plus/test";
-import { defineTypeormCollection } from "../src/collection";
+import { defineTypeOrmCollection } from "../src/collection";
 import { createTypeOrmSqliteDBAdapter, createTypeOrmSqliteDriver } from "../src/sqlite";
 
 class Todo {
@@ -21,7 +21,7 @@ PrimaryColumn("text")(Todo.prototype, "id");
 Column("text")(Todo.prototype, "title");
 Column("boolean", { default: false })(Todo.prototype, "completed");
 
-const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
+const collection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
 
 async function setup(
   storage: DBStorage = createLocalDBStorage({ dialect: "sqlite", open: () => openSqlJsEngine() }),

@@ -6,17 +6,17 @@ Postgres ([PGlite](https://pglite.dev)) in a leader worker, persisted to Indexed
 npm install @ez-kits/sync-storage-pglite @electric-sql/pglite
 ```
 
-| Entry point                           | Use it in            | Contents              |
-| ------------------------------------- | -------------------- | --------------------- |
-| `@ez-kits/sync-storage-pglite`        | the page             | `createPGliteStorage` |
-| `@ez-kits/sync-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`    |
+| Entry point                           | Use it in            | Contents                |
+| ------------------------------------- | -------------------- | ----------------------- |
+| `@ez-kits/sync-storage-pglite`        | the page             | `createPGliteDBStorage` |
+| `@ez-kits/sync-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`      |
 
 Setup walkthrough: [Choosing a storage engine → PGlite](../guides/storage-engines.md#pglite).
 
-## `createPGliteStorage(options)`
+## `createPGliteDBStorage(options)`
 
 ```ts
-function createPGliteStorage(options: PGliteStorageOptions): DBStorage;
+function createPGliteDBStorage(options: PGliteDBStorageOptions): DBStorage;
 ```
 
 `createWorkerDBStorage` with `dialect: "postgres"`. Takes `worker`, `key`, `engineOptions`, `requestTimeoutMs` and `transactionTimeoutMs`, like [`createWorkerDBStorage`](client-core.md#createworkerdbstorageoptions).
@@ -46,4 +46,4 @@ With Vite, add `optimizeDeps: { exclude: ["@electric-sql/pglite"] }` to `vite.co
 
 ## Types
 
-`PGliteStorageOptions`, `PGliteEngineOptions` (both entry points), `OpenPGliteEngineOptions`, `PGliteEngine` (`/worker`).
+`PGliteDBStorageOptions`, `PGliteEngineOptions` (both entry points), `OpenPGliteEngineOptions`, `PGliteEngine` (`/worker`).

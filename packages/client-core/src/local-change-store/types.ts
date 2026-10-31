@@ -86,7 +86,7 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
     scope?: LocalChangeScope,
     transactionContext?: TTransactionContext,
   ): Promise<DirtyRecord[]>;
-  /** A collection's serialized pull checkpoint (see `SyncClientConfig.checkpoint`). */
+  /** A collection's serialized pull checkpoint (see `SyncClientConfig.checkpointSerializer`). */
   getCheckpoint(
     collection: string,
     transactionContext?: TTransactionContext,

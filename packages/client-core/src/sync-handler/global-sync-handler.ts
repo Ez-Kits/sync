@@ -9,7 +9,7 @@ import {
 import type { SyncAdapter } from "./types";
 
 export interface GlobalSyncHandlerConfig<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandlerConfig<C, DB, TCheckpoint> {
@@ -34,7 +34,7 @@ export function globalSyncCollections(
 }
 
 export class GlobalSyncHandler<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandler<C, DB, TCheckpoint> {

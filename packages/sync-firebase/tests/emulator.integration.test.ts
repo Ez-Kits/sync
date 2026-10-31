@@ -61,7 +61,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: path,
       createCheckpoint: () => "cp",
-      resolveDocumentId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+      resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
     } as never);
     const createEvent = {
       type: "create",
@@ -94,7 +94,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: deniedPath,
       createCheckpoint: () => "cp",
-      resolveDocumentId: (event: any) => String(event.data.id),
+      resolveRemoteId: (event: any) => String(event.data.id),
     } as never);
     const notAcknowledged = vi.fn();
     await expect(
@@ -166,7 +166,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: path,
       createCheckpoint: () => "cp",
-      resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+      resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
     } as never);
     const createEvent = {
       type: "create",
@@ -197,7 +197,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: `users/another-user/integration-${crypto.randomUUID()}`,
       createCheckpoint: () => "cp",
-      resolveRecordId: (event: any) => String(event.data.id),
+      resolveRemoteId: (event: any) => String(event.data.id),
     } as never);
     const notAcknowledged = vi.fn();
     await expect(
@@ -228,7 +228,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: path,
       createCheckpoint: () => ({ cursor: 0, id: "" }),
-      buildRealtimePullQuery: ({ db, collectionPath, checkpoint }: any) => {
+      buildPullQuery: ({ db, collectionPath, checkpoint }: any) => {
         const target = ref(db, collectionPath);
         return checkpoint
           ? queryDatabase(
@@ -277,7 +277,7 @@ runIfEmulator(
       collectionName: "todos",
       collectionPath: path,
       createCheckpoint: () => "cp",
-      resolveRecordId: (event: any) => String(event.data.id),
+      resolveRemoteId: (event: any) => String(event.data.id),
     } as never);
     let cleanup: (() => void) | undefined;
     const pulled = new Promise<any>((resolve, reject) => {

@@ -1,7 +1,12 @@
 import { expectTypeOf, test } from "vite-plus/test";
 import {
   createSyncClient,
+  type BaseDBAdapter,
+  type CheckpointSerializer,
+  type CollectionConfig,
+  type CollectionConfigMap,
   type ILocalChangeStore,
+  type SyncAdapterFor,
   type SkippedRemoteEvent,
   type SyncClient,
   type SyncClientConfig,
@@ -13,7 +18,7 @@ test("checkpoints are serialized with a typed `checkpoint` option, JSON by defau
   const client = createSyncClient({
     collections,
     dbAdapter: db,
-    checkpoint: {
+    checkpointSerializer: {
       serialize: (checkpoint) => {
         expectTypeOf(checkpoint).toEqualTypeOf<Checkpoint>();
         return checkpoint.cursor;
@@ -25,15 +30,14 @@ test("checkpoints are serialized with a typed `checkpoint` option, JSON by defau
   expectTypeOf(createSyncClient({ collections, dbAdapter: db })).toEqualTypeOf<
     SyncClient<Collections, DB, Checkpoint>
   >();
-  expectTypeOf<SyncClientConfig<Collections, DB, Checkpoint>["checkpoint"]>().toEqualTypeOf<
-    | { serialize: (checkpoint: Checkpoint) => string; deserialize: (value: string) => Checkpoint }
-    | undefined
-  >();
+  expectTypeOf<
+    SyncClientConfig<Collections, DB, Checkpoint>["checkpointSerializer"]
+  >().toEqualTypeOf<CheckpointSerializer<Checkpoint> | undefined>();
 
   createSyncClient({
     collections,
     dbAdapter: db,
-    checkpoint: {
+    checkpointSerializer: {
       // @ts-expect-error a serializer returns the string stored in the database
       serialize: (checkpoint: Checkpoint) => checkpoint,
       deserialize: (value: string) => ({ cursor: value }),
@@ -43,7 +47,7 @@ test("checkpoints are serialized with a typed `checkpoint` option, JSON by defau
     collections,
     dbAdapter: db,
     // @ts-expect-error a serializer needs its deserializer
-    checkpoint: { serialize: (checkpoint: Checkpoint) => checkpoint.cursor },
+    checkpointSerializer: { serialize: (checkpoint: Checkpoint) => checkpoint.cursor },
   });
 });
 
@@ -99,4 +103,42 @@ test("the local-change store keeps serialized checkpoints and skipped remote eve
   expectTypeOf<ILocalChangeStore<{ kind: "tx" }>["upsertSkippedRemoteEvent"]>()
     .parameter(1)
     .toEqualTypeOf<{ kind: "tx" } | undefined>();
+});
+
+interface Note {
+  id: string;
+  body: string;
+}
+interface Stamp {
+  at: Date;
+}
+type NoteConfig = CollectionConfig<"notes", unknown, Partial<Note>, Note, Note, "id">;
+declare const notes: NoteConfig;
+declare const notesDb: BaseDBAdapter<[NoteConfig], unknown, { notes: unknown }>;
+declare function stampAdapter<C extends CollectionConfigMap>(
+  collections: C,
+): SyncAdapterFor<C, Stamp>;
+
+test("the checkpoint type comes from the sync adapter, not the collections", () => {
+  const client = createSyncClient({
+    collections: [notes],
+    dbAdapter: notesDb,
+    syncAdapter: stampAdapter([notes]),
+    checkpointSerializer: {
+      serialize: (checkpoint) => {
+        expectTypeOf(checkpoint).toEqualTypeOf<Stamp>();
+        return checkpoint.at.toISOString();
+      },
+      deserialize: (value) => ({ at: new Date(value) }),
+    },
+  });
+  expectTypeOf(client.getCheckpoint("notes")).resolves.toEqualTypeOf<Stamp | undefined>();
+  const withoutSerializer = createSyncClient({
+    collections: [notes],
+    dbAdapter: notesDb,
+    syncAdapter: stampAdapter([notes]),
+  });
+  expectTypeOf(withoutSerializer.getCheckpoint("notes")).resolves.toEqualTypeOf<
+    Stamp | undefined
+  >();
 });

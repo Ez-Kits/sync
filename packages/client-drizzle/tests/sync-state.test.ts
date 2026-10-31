@@ -87,7 +87,7 @@ function dbSyncClient(
   const client = createSyncClient({
     collections: [dialect.collection()],
     dbAdapter: adapter,
-    checkpoint: {
+    checkpointSerializer: {
       serialize: (stamp: Stamp) => String(stamp.millis),
       deserialize: (value: string) => new Stamp(Number(value)),
     },

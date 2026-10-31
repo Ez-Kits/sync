@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import initSqlJs from "sql.js";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { createSqlJsStorage } from "../src";
+import { createSqlJsDBStorage } from "../src";
 import { openSqlJsEngine, sqlJsConfig } from "../src/worker";
 import { loadSnapshot, saveSnapshot } from "../src/snapshot";
 
@@ -43,7 +43,7 @@ test("runs migrations, binds parameters and returns rows in both row modes", asy
 
 test("persists snapshots to IndexedDB and restores them on the next open", async () => {
   const indexedDBFactory = new IDBFactory();
-  const first = await openSqlJsEngine({ indexedDB: "todos", indexedDBFactory });
+  const first = await openSqlJsEngine({ indexedDBName: "todos", indexedDBFactory });
   await first.exec(run("CREATE TABLE t (v TEXT)"));
   await first.exec(run("INSERT INTO t VALUES (?)", ["kept"]));
   await first.flush!();
@@ -51,7 +51,7 @@ test("persists snapshots to IndexedDB and restores them on the next open", async
 
   // The global IndexedDB is the default.
   vi.stubGlobal("indexedDB", indexedDBFactory);
-  const second = await openSqlJsEngine({ indexedDB: "todos" });
+  const second = await openSqlJsEngine({ indexedDBName: "todos" });
   expect((await second.exec({ sql: "SELECT v FROM t", params: [], method: "all" })).rows).toEqual([
     ["kept"],
   ]);
@@ -144,14 +144,14 @@ test("IndexedDB failures surface", async () => {
 
 test("the page-side storage speaks SQLite to its worker", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createSqlJsStorage({
+  const storage = createSqlJsDBStorage({
     key: "todos",
-    engineOptions: { indexedDB: "todos" },
+    engineOptions: { indexedDBName: "todos" },
     worker: () => endpoint,
   });
   expect(storage.dialect).toBe("sqlite");
   expect(endpoint.postMessage).toHaveBeenCalledWith(
-    expect.objectContaining({ t: "init", key: "todos", engineOptions: { indexedDB: "todos" } }),
+    expect.objectContaining({ t: "init", key: "todos", engineOptions: { indexedDBName: "todos" } }),
   );
 });
 

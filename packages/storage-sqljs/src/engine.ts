@@ -61,9 +61,9 @@ function execute(db: Database, query: DBQuery): DBQueryResult {
 export async function openSqlJsEngine(options: OpenSqlJsEngineOptions = {}): Promise<SqlJsEngine> {
   const SQL = await (options.sqlJs ?? initSqlJs(sqlJsConfig(options.wasmUrl)));
   const location: SnapshotLocation | undefined =
-    options.indexedDB === undefined
+    options.indexedDBName === undefined
       ? undefined
-      : { name: options.indexedDB, factory: options.indexedDBFactory ?? indexedDB };
+      : { name: options.indexedDBName, factory: options.indexedDBFactory ?? indexedDB };
   const snapshot = location ? await loadSnapshot(location) : null;
   const db = new SQL.Database(snapshot ? new Uint8Array(snapshot) : undefined);
   return {

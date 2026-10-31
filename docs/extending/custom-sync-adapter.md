@@ -42,7 +42,7 @@ Rules:
    - `{ type: "delete", collection, id, deletedAt? }`.
 4. **Checkpoints must be safe to resume from.** Changes with equal cursor values, and later updates of an already pulled record, must still be delivered. Prefer a server-assigned, strictly increasing cursor (a sequence number, or a timestamp plus id).
 5. `commitChanges` returns nothing. EzSync queues batches and commits each, with its checkpoint, in one transaction. If one fails, EzSync calls your cleanup, drops later queued batches and calls `pull` again from the last saved checkpoint.
-6. The checkpoint is stored as a string with `JSON.stringify` by default. If yours is not plain JSON, tell users to pass `checkpoint: { serialize, deserialize }` to the client.
+6. The checkpoint is stored as a string with `JSON.stringify` by default. If yours is not plain JSON, set `checkpointSerializer: { serialize, deserialize }` on the adapter; the client uses it for the collections the adapter syncs.
 
 ### `push(options)`
 

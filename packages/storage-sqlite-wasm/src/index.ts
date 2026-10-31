@@ -1,5 +1,5 @@
 import { createWorkerDBStorage, type DBStorage } from "@ez-kits/sync-client-core";
-import type { SqliteWasmStorageOptions } from "./options";
+import type { SqliteWasmDBStorageOptions } from "./options";
 
 export type * from "./options";
 
@@ -8,6 +8,6 @@ export type * from "./options";
  * worker, which must call `startDBStorageWorker` with `openSqliteWasmEngine` from
  * `@ez-kits/sync-storage-sqlite-wasm/worker`.
  */
-export function createSqliteWasmStorage(options: SqliteWasmStorageOptions): DBStorage {
+export function createSqliteWasmDBStorage(options: SqliteWasmDBStorageOptions): DBStorage {
   return createWorkerDBStorage({ ...options, dialect: "sqlite" });
 }

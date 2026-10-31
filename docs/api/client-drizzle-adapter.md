@@ -33,17 +33,6 @@ const todosCollection = defineDrizzleCollection({ name: "todos", table: todos })
 
 Models are inferred from the table: `insert` takes `InferInsertModel<table>`, `update` takes `Partial<InferInsertModel<table>>` (with the primary key), `get` returns `InferSelectModel<table>`.
 
-**Checkpoint type.** To type the collection's pull checkpoint, pass all type parameters:
-
-```ts
-defineDrizzleCollection<"todos", typeof todos, "id", Todo, TodoCheckpoint>({
-  name: "todos",
-  table: todos,
-});
-```
-
-The order is: name, table, primary field, select model, checkpoint.
-
 ---
 
 ## `createDrizzleSqliteDBAdapter(config)`
@@ -68,12 +57,12 @@ For storages with `dialect: "postgres"` (PGlite). Uses `drizzle-orm/pg-proxy`. D
 
 ### Config (both dialects)
 
-| Option          | Type                                  | Required | Description                                                                                                         |
-| --------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `dbStorage`     | `DBStorage`                           | yes      | Must match the adapter's dialect, or the call throws.                                                               |
-| `collections`   | collection array                      | yes      | The same collections you pass to the sync client.                                                                   |
-| `relations`     | result of Drizzle's `defineRelations` | no       | Relations for `db.query`. Default: every collection table, without relations.                                       |
-| `drizzleConfig` | Drizzle options except `relations`    | no       | `logger`, `casing`, `codecs`, ... `codecs` default to Drizzle's sql.js codecs (SQLite) or PGlite codecs (Postgres). |
+| Option           | Type                                  | Required | Description                                                                                                         |
+| ---------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `dbStorage`      | `DBStorage`                           | yes      | Must match the adapter's dialect, or the call throws.                                                               |
+| `collections`    | collection array                      | yes      | The same collections you pass to the sync client.                                                                   |
+| `relations`      | result of Drizzle's `defineRelations` | no       | Relations for `db.query`. Default: every collection table, without relations.                                       |
+| `drizzleOptions` | Drizzle options except `relations`    | no       | `logger`, `casing`, `codecs`, ... `codecs` default to Drizzle's sql.js codecs (SQLite) or PGlite codecs (Postgres). |
 
 ### The returned adapter
 

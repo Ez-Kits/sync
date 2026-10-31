@@ -94,13 +94,13 @@ On the page, create the **DB storage**. It starts the worker from Step 3 and giv
 
 ```ts
 // src/db/storage.ts
-import { createSqlJsStorage } from "@ez-kits/sync-storage-sqljs";
+import { createSqlJsDBStorage } from "@ez-kits/sync-storage-sqljs";
 
-export const dbStorage = createSqlJsStorage({
+export const dbStorage = createSqlJsDBStorage({
   // Every tab that uses the same key shares the same database.
   key: "my-todos",
   // Where sql.js saves the database between visits. Leave it out for an in-memory database.
-  engineOptions: { indexedDB: "my-todos-db" },
+  engineOptions: { indexedDBName: "my-todos-db" },
   worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
 });
 ```
@@ -281,7 +281,7 @@ const syncAdapter = createFirestoreSyncAdapter({
       collectionConfig: todosCollection,
       collectionPath: "todos", // the Firestore collection
       // Which Firestore document each change goes to.
-      resolveDocumentId: (event) =>
+      resolveRemoteId: (event) =>
         event.type === "delete" ? String(event.id) : String(event.data.id),
       // A starting checkpoint. This simple setup watches the whole collection, so it is unused.
       createCheckpoint: () => null,

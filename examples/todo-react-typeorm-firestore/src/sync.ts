@@ -1,5 +1,5 @@
 import { createSyncClientReact } from "@ez-kits/sync-client-react";
-import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
+import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
 import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
 import {
@@ -23,7 +23,7 @@ export interface TodoCheckpoint {
   id: string;
 }
 
-const todosCollection = defineTypeormCollection<"todos", typeof Todo, "id", TodoCheckpoint>({
+const todosCollection = defineTypeOrmCollection({
   name: "todos",
   entity: Todo,
   primaryField: "id",
@@ -71,7 +71,7 @@ function createTodoFirestoreSyncAdapter() {
         createCheckpoint: () => ({ updatedAt: Timestamp.fromMillis(0), id: "" }),
         createPullCheckpoint: ({ snapshot, previousCheckpoint }) =>
           checkpointFromSnapshot(snapshot, previousCheckpoint),
-        resolveDocumentId: (event) => {
+        resolveRemoteId: (event) => {
           if (event.type === "delete") return String(event.id);
           return String(event.data.id);
         },
@@ -124,27 +124,6 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
     dbAdapter,
-    // Checkpoints are stored in the database; a Firestore `Timestamp` is not plain JSON.
-    checkpoint: {
-      serialize: (checkpoint: TodoCheckpoint) =>
-        JSON.stringify({
-          updatedAt: {
-            seconds: checkpoint.updatedAt.seconds,
-            nanoseconds: checkpoint.updatedAt.nanoseconds,
-          },
-          id: checkpoint.id,
-        }),
-      deserialize: (value: string): TodoCheckpoint => {
-        const parsed = JSON.parse(value) as {
-          updatedAt: { seconds: number; nanoseconds: number };
-          id: string;
-        };
-        return {
-          updatedAt: new Timestamp(parsed.updatedAt.seconds, parsed.updatedAt.nanoseconds),
-          id: parsed.id,
-        };
-      },
-    },
     resolveConflict: lastWriteWins({
       getLocalVersion(local) {
         if (!local) return undefined;

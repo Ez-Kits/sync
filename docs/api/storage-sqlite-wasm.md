@@ -6,17 +6,17 @@ The official [SQLite WASM](https://sqlite.org/wasm) build in a leader worker, sa
 npm install @ez-kits/sync-storage-sqlite-wasm @sqlite.org/sqlite-wasm
 ```
 
-| Entry point                                | Use it in  | Contents                  |
-| ------------------------------------------ | ---------- | ------------------------- |
-| `@ez-kits/sync-storage-sqlite-wasm`        | the page   | `createSqliteWasmStorage` |
-| `@ez-kits/sync-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`    |
+| Entry point                                | Use it in  | Contents                    |
+| ------------------------------------------ | ---------- | --------------------------- |
+| `@ez-kits/sync-storage-sqlite-wasm`        | the page   | `createSqliteWasmDBStorage` |
+| `@ez-kits/sync-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`      |
 
 Setup walkthrough: [Choosing a storage engine → SQLite WASM](../guides/storage-engines.md#sqlite-wasm).
 
-## `createSqliteWasmStorage(options)`
+## `createSqliteWasmDBStorage(options)`
 
 ```ts
-function createSqliteWasmStorage(options: SqliteWasmStorageOptions): DBStorage;
+function createSqliteWasmDBStorage(options: SqliteWasmDBStorageOptions): DBStorage;
 ```
 
 `createWorkerDBStorage` with `dialect: "sqlite"`. Takes `worker`, `key`, `engineOptions`, `requestTimeoutMs` and `transactionTimeoutMs`, like [`createWorkerDBStorage`](client-core.md#createworkerdbstorageoptions).
@@ -43,4 +43,4 @@ With Vite, add `optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] }` to `vite
 
 ## Types
 
-`SqliteWasmStorageOptions`, `SqliteWasmEngineOptions` (both entry points), `OpenSqliteWasmEngineOptions`, `SqliteWasmEngine` (`/worker`).
+`SqliteWasmDBStorageOptions`, `SqliteWasmEngineOptions` (both entry points), `OpenSqliteWasmEngineOptions`, `SqliteWasmEngine` (`/worker`).

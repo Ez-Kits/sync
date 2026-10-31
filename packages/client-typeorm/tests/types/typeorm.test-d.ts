@@ -11,7 +11,7 @@ import type { DeepPartial, EntitySchema, Repository } from "typeorm";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   buildSchemaFromCollections,
-  defineTypeormCollection,
+  defineTypeOrmCollection,
   type TypeOrmDatabase,
   type TypeOrmAppliedEventRow,
   type TypeOrmDBAdapter,
@@ -31,8 +31,8 @@ class User {
 }
 declare const dbStorage: DBStorage;
 
-const todoCollection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
-const userCollection = defineTypeormCollection({
+const todoCollection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
+const userCollection = defineTypeOrmCollection({
   name: "users",
   entity: User,
   primaryField: "uid",
@@ -42,7 +42,7 @@ const collections: [typeof todoCollection, typeof userCollection] = [
   userCollection,
 ];
 
-describe("defineTypeormCollection", () => {
+describe("defineTypeOrmCollection", () => {
   test("infers name, models and primary key from the entity", () => {
     type TodoConfig = typeof todoCollection;
     expectTypeOf(todoCollection.name).toEqualTypeOf<"todos">();
@@ -57,7 +57,7 @@ describe("defineTypeormCollection", () => {
 
   test("rejects primary fields that are not entity properties", () => {
     // @ts-expect-error primary field must be a property of the entity
-    defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "missing" });
+    defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "missing" });
   });
 });
 

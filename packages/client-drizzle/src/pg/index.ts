@@ -159,7 +159,7 @@ export function createDrizzlePgDBAdapter<
 >(
   config: DrizzlePgDBAdapterConfig<C, TRelations>,
 ): DrizzleDBAdapter<C, PgRemoteDatabase<TRelations>, BuildSchemaFromCollections<C>> {
-  const drizzleConfig = config.drizzleConfig ?? {};
+  const drizzleOptions = config.drizzleOptions ?? {};
   return createDrizzleProxyDBAdapter(config, {
     dialect: "postgres",
     createDatabase: (executor, relations: TRelations) =>
@@ -171,7 +171,7 @@ export function createDrizzlePgDBAdapter<
             method: "all",
             rowMode: method === "all" ? "array" : "object",
           }),
-        { ...drizzleConfig, relations, codecs: drizzleConfig.codecs ?? pgliteCodecs },
+        { ...drizzleOptions, relations, codecs: drizzleOptions.codecs ?? pgliteCodecs },
       ),
     createLocalChangeStore: (db, dbStorage) =>
       createDrizzleLocalChangeStore({

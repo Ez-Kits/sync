@@ -119,9 +119,15 @@ export class SyncClientImpl<
     this.localOnly = localOnlyCollections(config.collections, config.syncAdapter);
     this.dbAdapter = config.dbAdapter;
     // In the adapter's own store, so a pulled checkpoint commits in the transaction of its rows.
+    // Serialized by the client's `checkpointSerializer`, else by the adapter that syncs the collection.
+    const ownAdapters = new Map(
+      config.collections.map((collection) => [String(collection.name), collection.syncAdapter]),
+    );
     this.checkpoints = createCheckpointStorage(
       config.dbAdapter.localChangeStore,
-      config.checkpoint,
+      (collectionName) =>
+        config.checkpointSerializer ??
+        (ownAdapters.get(collectionName) ?? config.syncAdapter)?.checkpointSerializer,
     );
     this.dbStorage = config.dbAdapter.dbStorage;
     this.tabs = new SyncTabChannel(this.dbStorage.key);
@@ -383,7 +389,7 @@ export class SyncClientImpl<
       syncAdapter: this.config.syncAdapter,
       onSyncError: (error) => this.setStatus("error", error),
       onSyncSuccess: () => this.setStatus("syncing"),
-      conflictResolver: this.config.resolveConflict,
+      resolveConflict: this.config.resolveConflict,
       onRemoteChangesCommitted: (changes) => this.tabs.broadcastChanges(changes, "pull"),
       onPushRejected: (rejection) => {
         try {

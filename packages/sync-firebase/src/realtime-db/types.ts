@@ -1,8 +1,8 @@
 import type {
   ChangeBusEvent,
   ChangeBusEventDataMap,
+  CheckpointSerializer,
   CollectionConfig,
-  InferCollectionCheckpoint,
   InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
@@ -25,7 +25,7 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
    * Narrow the pull listener (e.g. `query(ref, orderByChild('updatedAt'), startAt(ts))`)
    * for incremental sync. Defaults to the collection root `ref`.
    */
-  buildRealtimePullQuery?: (args: {
+  buildPullQuery?: (args: {
     db: Database;
     collectionPath: string;
     checkpoint?: TCheckpoint;
@@ -38,7 +38,7 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
     snapshot: DataSnapshot;
     previousCheckpoint?: TCheckpoint;
   }) => TCheckpoint;
-  resolveRecordId: (event: ChangeBusEvent<C, N>) => string;
+  resolveRemoteId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["create"];
   deserializeUpdate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["update"];
   deserializeDeleteId?: (context: { snapshot: DataSnapshot }) => C[N]["delete"];
@@ -56,6 +56,10 @@ export interface RealtimeDBCollectionSyncAdapterConfig<
   TCheckpoint,
 > extends RealtimeDBSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Database;
+  /**
+   * How the adapter's checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer`.
+   */
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   /**
    * Local collection name used in change-bus events.
    * Defaults to the last segment of {@link collectionPath}.
@@ -82,16 +86,20 @@ type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, an
     }
   >;
 
-/** Collection mapping input used by the client-level RTDB adapter. */
+/**
+ * Collection mapping input used by the client-level RTDB adapter. The checkpoint type is
+ * inferred from the handlers (`createCheckpoint`, `createPullCheckpoint`).
+ */
 export type RealtimeDBCollectionSyncAdapterConfigInput<
   Col extends CollectionConfig<any, any, any, any, any, any, any>,
+  TCheckpoint = unknown,
 > = {
   collectionConfig: Col;
   collectionPath: string;
 } & RealtimeDBSyncAdapterCollectionHandlers<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
-  InferCollectionCheckpoint<Col>
+  TCheckpoint
 >;
 
 /** Resolved per-collection sync config returned by {@link defineRealtimeDBCollectionSyncAdapterConfig}. */
@@ -111,6 +119,10 @@ export interface RealtimeDBSyncAdapterConfig<
   TCheckpoint,
 > extends RealtimeDBSyncCommonAdapterConfig {
   collections: readonly RealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
+  /**
+   * How the adapter's checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer`.
+   */
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
 }
 
 /** Internal resolved shape used by pull/push. */

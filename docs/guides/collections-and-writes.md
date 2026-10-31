@@ -20,10 +20,10 @@ export const todosCollection = defineDrizzleCollection({
 ### With TypeORM
 
 ```ts
-import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
+import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { Todo } from "./db/schema"; // an @Entity class
 
-export const todosCollection = defineTypeormCollection({
+export const todosCollection = defineTypeOrmCollection({
   name: "todos",
   entity: Todo,
   primaryField: "id", // required; must match the entity's @PrimaryColumn

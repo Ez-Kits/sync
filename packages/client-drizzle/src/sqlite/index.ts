@@ -173,14 +173,14 @@ export function createDrizzleSqliteDBAdapter<
 >(
   config: DrizzleSqliteDBAdapterConfig<C, TRelations>,
 ): DrizzleDBAdapter<C, SqliteRemoteDatabase<unknown, TRelations>, BuildSchemaFromCollections<C>> {
-  const drizzleConfig = config.drizzleConfig ?? {};
+  const drizzleOptions = config.drizzleOptions ?? {};
   return createDrizzleProxyDBAdapter(config, {
     dialect: "sqlite",
     createDatabase: (executor, relations: TRelations) =>
       drizzle(sqliteProxyExecutors(executor), {
-        ...drizzleConfig,
+        ...drizzleOptions,
         relations,
-        codecs: drizzleConfig.codecs ?? sqlJsCodecs,
+        codecs: drizzleOptions.codecs ?? sqlJsCodecs,
       }),
     createLocalChangeStore: (db, dbStorage) =>
       createDrizzleLocalChangeStore({

@@ -5,7 +5,7 @@ export interface SqlJsEngineOptions {
   /** URL of `sql-wasm.wasm`; bundlers can provide it with an `?url` import. */
   wasmUrl?: string;
   /** IndexedDB database holding the snapshot. Omit for an in-memory database. */
-  indexedDB?: string;
+  indexedDBName?: string;
 }
 
-export type SqlJsStorageOptions = Omit<WorkerDBStorageOptions<SqlJsEngineOptions>, "dialect">;
+export type SqlJsDBStorageOptions = Omit<WorkerDBStorageOptions<SqlJsEngineOptions>, "dialect">;

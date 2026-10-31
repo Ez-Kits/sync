@@ -44,7 +44,8 @@ function setTreePath(tree: Record<string, unknown>, path: string, value: unknown
   else node[last] = structuredClone(value);
 }
 
-vi.mock("firebase/firestore", () => ({
+vi.mock("firebase/firestore", async (importOriginal) => ({
+  Timestamp: (await importOriginal<typeof import("firebase/firestore")>()).Timestamp,
   collection: (_db: unknown, path: string) => ({ path }),
   query: (ref: unknown, ...constraints: unknown[]) => ({ ref, constraints }),
   doc: (_db: unknown, path: string, id: string) => ({ path: `${path}/${id}`, id }),
@@ -386,7 +387,7 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
         serializeCreate: (data: any) => ({ ...data, remote: true }),
         serializeUpdate: (data: any) => data,
         serializeDelete,
-        resolveDocumentId: (e: any) => (e.type === "delete" ? "deleted" : String(e.data.id)),
+        resolveRemoteId: (e: any) => (e.type === "delete" ? "deleted" : String(e.data.id)),
       },
     ],
   } as never);
@@ -420,7 +421,7 @@ test("Firestore push serializes events, skips unknown collections, batches at 50
 });
 
 test("Firestore default push mappings write resolved document IDs and soft-delete documents", async () => {
-  const resolveDocumentId = vi.fn((event: any) =>
+  const resolveRemoteId = vi.fn((event: any) =>
     event.type === "delete" ? `doc-${event.id}` : (event.data.id ?? "resolved-two"),
   );
   const adapter = createFirestoreCollectionSyncAdapter({
@@ -428,7 +429,7 @@ test("Firestore default push mappings write resolved document IDs and soft-delet
     collectionName: "todos",
     collectionPath: "todos",
     createCheckpoint: () => 1,
-    resolveDocumentId,
+    resolveRemoteId,
   } as never);
   const commit = vi.fn();
   await adapter.push({
@@ -444,7 +445,7 @@ test("Firestore default push mappings write resolved document IDs and soft-delet
   expect(sdk.firestoreSets[1]?.[0]).toEqual({ path: "todos/resolved-two", id: "resolved-two" });
   expect(sdk.firestoreSets[1]?.[1]).toEqual({ title: "two" });
   // Deletes go through the resolver too, so they reach the document the writes created.
-  expect(resolveDocumentId.mock.calls.map(([event]) => event.type)).toEqual([
+  expect(resolveRemoteId.mock.calls.map(([event]) => event.type)).toEqual([
     "create",
     "update",
     "delete",
@@ -461,7 +462,7 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
         collectionName: "todos",
         collectionPath: "todos",
         createCheckpoint: () => "fallback",
-        buildRealtimePullQuery: () => ({}) as never,
+        buildPullQuery: () => ({}) as never,
         createPullCheckpoint: ({ previousCheckpoint }: any) => `${previousCheckpoint ?? "first"}!`,
       },
     ],
@@ -558,7 +559,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
     serializeCreate: (data: any) => ({ ...data, encoded: true }),
     serializeUpdate: () => ({ nested: { value: 2 } }),
     serializeDelete,
-    resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+    resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
   } as never);
   const commit = vi.fn();
   await adapter.push({
@@ -587,7 +588,7 @@ test("Realtime Database push merges update paths, replaces non-objects, skips un
 });
 
 test("Realtime Database default push handles no-op batches, resolved IDs, tombstones, and array replacement", async () => {
-  const resolveRecordId = vi.fn((event: any) => {
+  const resolveRemoteId = vi.fn((event: any) => {
     if (event.type === "delete") return `record-${event.id}`;
     return Array.isArray(event.data) ? "resolved-list" : event.data.id;
   });
@@ -598,7 +599,7 @@ test("Realtime Database default push handles no-op batches, resolved IDs, tombst
         collectionName: "todos",
         collectionPath: "todos",
         createCheckpoint: () => 1,
-        resolveRecordId,
+        resolveRemoteId,
       },
     ],
   } as never);
@@ -621,7 +622,7 @@ test("Realtime Database default push handles no-op batches, resolved IDs, tombst
   expect(updates["todos/one"]).toEqual({ id: "one" });
   // Arrays replace the record instead of merging field by field.
   expect(updates["todos/resolved-list"]).toEqual([1, 2]);
-  expect(resolveRecordId.mock.calls.map(([event]) => event.type)).toEqual([
+  expect(resolveRemoteId.mock.calls.map(([event]) => event.type)).toEqual([
     "create",
     "update",
     "delete",
@@ -654,8 +655,7 @@ test("Firebase pushes resolve only after core has acknowledged the pushed events
     db: {} as never,
     collectionPath: "todos",
     createCheckpoint: () => 1,
-    resolveDocumentId: (event: any) => String(event.data.id),
-    resolveRecordId: (event: any) => String(event.data.id),
+    resolveRemoteId: (event: any) => String(event.data.id),
   };
   for (const adapter of [
     createFirestoreCollectionSyncAdapter(config as never),
@@ -693,7 +693,7 @@ const realtimeTodos = (overrides: Record<string, unknown> = {}) =>
     collectionName: "todos",
     collectionPath: "todos",
     createCheckpoint: () => 1,
-    resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+    resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
     ...overrides,
   } as never);
 
@@ -794,13 +794,13 @@ test("Realtime Database push splits records whose paths nest into ordered update
         collectionPath: "todos",
         createCheckpoint: () => 1,
         // User-chosen ids may contain slashes, so one record can sit inside another.
-        resolveRecordId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+        resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
       },
       {
         collectionName: "comments",
         collectionPath: "todos/1/comments",
         createCheckpoint: () => 1,
-        resolveRecordId: (event: any) => String(event.data.id),
+        resolveRemoteId: (event: any) => String(event.data.id),
       },
     ],
   } as never);
@@ -894,7 +894,7 @@ test("Realtime Database deletes use the configured record id resolver", async ()
   }));
   const adapter = realtimeTodos({
     serializeDelete,
-    resolveRecordId: (event: any) => `remote-${event.type === "delete" ? event.id : event.data.id}`,
+    resolveRemoteId: (event: any) => `remote-${event.type === "delete" ? event.id : event.data.id}`,
   });
   await pushRealtime(adapter, [
     { type: "create", collection: "todos", data: { id: "1", title: "a" } },
@@ -914,8 +914,7 @@ test("Firestore deletes use the configured document id resolver", async () => {
     collectionPath: "todos",
     createCheckpoint: () => 1,
     serializeDelete,
-    resolveDocumentId: (event: any) =>
-      `remote-${event.type === "delete" ? event.id : event.data.id}`,
+    resolveRemoteId: (event: any) => `remote-${event.type === "delete" ? event.id : event.data.id}`,
   } as never);
   await adapter.push({
     events: [
@@ -937,7 +936,7 @@ test("Firestore push acknowledges each committed batch, so a retry after a faile
     collectionName: "todos",
     collectionPath: "todos",
     createCheckpoint: () => 1,
-    resolveDocumentId: (event: any) => String(event.data.id),
+    resolveRemoteId: (event: any) => String(event.data.id),
   } as never);
   const events = Array.from({ length: 1001 }, (_, i) => ({
     type: "create",
@@ -974,7 +973,7 @@ const firestoreTodos = () =>
     collectionName: "todos",
     collectionPath: "todos",
     createCheckpoint: () => 1,
-    resolveDocumentId: (event: any) => String(event.data.id),
+    resolveRemoteId: (event: any) => String(event.data.id),
   } as never);
 
 const todoCreate = (id: string) => ({ type: "create", collection: "todos", data: { id } });

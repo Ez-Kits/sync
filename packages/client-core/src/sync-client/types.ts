@@ -13,6 +13,7 @@ import type {
 } from "../collection";
 import type { BaseDBAdapter } from "../db-adapter/types";
 import type {
+  CheckpointSerializer,
   ConflictResolution,
   PushRejection,
   SyncAdapter,
@@ -31,7 +32,7 @@ export type SyncAdapterFor<C extends CollectionConfigMap, TCheckpoint = unknown>
 >;
 
 export interface SyncClientConfig<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > {
@@ -46,14 +47,12 @@ export interface SyncClientConfig<
    * together. A database that is lost or reset loses its checkpoints with its rows, and the
    * next pull starts from scratch and fetches everything again.
    *
-   * Defaults to `JSON.stringify` / `JSON.parse`, which only round-trips plain JSON values.
-   * A checkpoint that holds anything else, such as a Firestore `Timestamp` or a `Date`, needs
-   * a serializer that rebuilds it, otherwise the next pull resumes from a plain object.
+   * Defaults to the `checkpointSerializer` of the sync adapter that syncs the collection, else
+   * to `JSON.stringify` / `JSON.parse`, which only round-trips plain JSON values. A checkpoint
+   * that holds anything else, such as a `Date`, needs a serializer that rebuilds it, otherwise
+   * the next pull resumes from a plain object. Set here, it replaces the adapters'.
    */
-  checkpoint?: {
-    serialize: (checkpoint: TCheckpoint) => string;
-    deserialize: (value: string) => TCheckpoint;
-  };
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   /** Optional lifecycle notifications. Sync errors never include document payloads. */
   onSyncStatus?: (event: SyncStatusEvent) => void;
   /**

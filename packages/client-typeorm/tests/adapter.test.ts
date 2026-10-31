@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { expect, test, vi } from "vite-plus/test";
 import { PrimaryColumn } from "typeorm";
-import { buildSchemaFromCollections, defineTypeormCollection } from "../src/collection";
+import { buildSchemaFromCollections, defineTypeOrmCollection } from "../src/collection";
 import { createTypeOrmProxyDBAdapter } from "../src/core/create-typeorm-proxy-db-adapter";
 import { createTypeOrmLocalChangeStore } from "../src/core/local-change-store";
 import type { DirtyRecord, StoredChangeBusEvent } from "@ez-kits/sync-client-core";
@@ -32,7 +32,7 @@ class AppliedEventEntity {
   appliedAt!: number;
 }
 PrimaryColumn("integer")(Todo.prototype, "id");
-const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
+const collection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
 /** Stand-ins for the dialect's outbox entities; only their identity matters here. */
 const entities = {
   events: OutboxEvent,
@@ -95,13 +95,13 @@ test("TypeORM collection validates metadata primary key and builds entity schema
   expect(collection.primaryField).toBe("id");
   expect(buildSchemaFromCollections([collection])).toEqual({ todos: Todo });
   expect(() =>
-    defineTypeormCollection({ name: "bad", entity: Todo, primaryField: "title" } as never),
+    defineTypeOrmCollection({ name: "bad", entity: Todo, primaryField: "title" } as never),
   ).toThrow("Primary field mismatch");
   class NoPrimary {
     value!: string;
   }
   expect(() =>
-    defineTypeormCollection({ name: "none", entity: NoPrimary, primaryField: "value" } as never),
+    defineTypeOrmCollection({ name: "none", entity: NoPrimary, primaryField: "value" } as never),
   ).toThrow("Primary field not found");
 });
 
