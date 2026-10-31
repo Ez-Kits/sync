@@ -5,8 +5,8 @@ import {
   type StoredChangeBusEvent,
   type SyncStatusEvent,
 } from "@ez-kits/sync-client-core";
-import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openPGliteEngine } from "@ez-kits/sync-client-storage-pglite/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { pgTable, text as pgText } from "drizzle-orm/pg-core";
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { expect, test, vi } from "vite-plus/test";

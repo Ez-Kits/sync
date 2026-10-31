@@ -1,7 +1,7 @@
 import { createLocalDBStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 import { createTypeOrmSqliteDBAdapter } from "@ez-kits/sync-client-typeorm-adapter/sqlite";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import "reflect-metadata";
 import { Post, User, UsersPosts } from "./entities/index.ts";
 

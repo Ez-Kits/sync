@@ -19,10 +19,10 @@
     "packages/client-drizzle": {},
     "packages/client-react": {},
     "packages/client-typeorm": {},
-    "packages/storage-pglite": {},
-    "packages/storage-sqlite-wasm": {},
-    "packages/storage-sqljs": {},
-    "packages/sync-conflict-resolution": {},
-    "packages/sync-firebase": {}
+    "packages/client-storage-pglite": {},
+    "packages/client-storage-sqlite-wasm": {},
+    "packages/client-storage-sqljs": {},
+    "packages/client-conflict-resolution": {},
+    "packages/client-firebase": {}
   }
 }

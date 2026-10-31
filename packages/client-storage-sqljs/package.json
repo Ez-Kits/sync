@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/package",
-  "name": "@ez-kits/sync-storage-sqlite-wasm",
+  "name": "@ez-kits/sync-client-storage-sqljs",
   "version": "0.0.0",
-  "description": "SQLite storage for EzSync in the browser, saved to OPFS",
-  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-sqlite-wasm#readme",
+  "description": "SQLite storage for EzSync in the browser, saved to IndexedDB",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-storage-sqljs#readme",
   "bugs": {
     "url": "https://github.com/Ez-Kits/sync/issues"
   },
@@ -12,7 +12,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ez-Kits/sync.git",
-    "directory": "packages/storage-sqlite-wasm"
+    "directory": "packages/client-storage-sqljs"
   },
   "files": [
     "dist"
@@ -37,14 +37,16 @@
   },
   "devDependencies": {
     "@ez-kits/sync-client-core": "workspace:*",
-    "@sqlite.org/sqlite-wasm": "catalog:",
     "@types/node": "^25.5.0",
+    "@types/sql.js": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "fake-indexeddb": "catalog:",
+    "sql.js": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "@ez-kits/sync-client-core": "workspace:^",
-    "@sqlite.org/sqlite-wasm": "catalog:"
+    "sql.js": "catalog:"
   }
 }

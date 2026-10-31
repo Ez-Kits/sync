@@ -12,7 +12,7 @@ application
    ▼
 sync client (@ez-kits/sync-client-core)
    │  change bus · sync handlers (pull / push) · tab channel
-   ├──────────────► SyncAdapter (provider: @ez-kits/sync-firebase, ...)
+   ├──────────────► SyncAdapter (provider: @ez-kits/sync-client-firebase, ...)
    ▼
 DB adapter (ORM bridge: Drizzle, TypeORM)
    │  collection CRUD · local-change store (outbox, dirty records, checkpoints, skipped remote events)
@@ -54,7 +54,7 @@ DB engine (sql.js, SQLite WASM, PGlite), opened only by the leader
 
 **Context.** Applications pick their local database, ORM and backend independently. A core that imports Firebase or an ORM would force those dependencies on every user and couple sync logic to one provider's semantics.
 
-**Decision.** `@ez-kits/sync-client-core` defines contracts only: collections, `BaseDBAdapter`, `ILocalChangeStore`, `DBStorage`, `SyncAdapter`, conflict resolution, and the runtime that drives them. ORM bridges (`sync-client-drizzle-adapter`, `sync-client-typeorm-adapter`), storage engines (`sync-storage-*`), providers (`sync-firebase`), framework bindings (`sync-client-react`) and conflict policies (`sync-conflict-resolution`) live in their own packages. Packages that support several dialects or providers expose one entry point each (`/sqlite`, `/pg`, `/sync-firestore`, `/sync-realtime-db`), so an app bundles only what it uses.
+**Decision.** `@ez-kits/sync-client-core` defines contracts only: collections, `BaseDBAdapter`, `ILocalChangeStore`, `DBStorage`, `SyncAdapter`, conflict resolution, and the runtime that drives them. ORM bridges (`sync-client-drizzle-adapter`, `sync-client-typeorm-adapter`), storage engines (`sync-client-storage-*`), providers (`sync-client-firebase`), framework bindings (`sync-client-react`) and conflict policies (`sync-client-conflict-resolution`) live in their own packages. Packages that support several dialects or providers expose one entry point each (`/sqlite`, `/pg`, `/sync-firestore`, `/sync-realtime-db`), so an app bundles only what it uses.
 
 **Consequences.**
 
@@ -263,7 +263,7 @@ Records without pending writes always take remote changes. A skipped remote even
 
 **Context.** Common policies (last write wins, field merge, delete vs update) are reusable but opinionated; core should only define the resolver contract.
 
-**Decision.** `@ez-kits/sync-conflict-resolution` exports `localWins`, `remoteWins`, `lastWriteWins`, `mergeFields`, `deleteVsUpdate` and `manualResolution`, all plain `resolveConflict` functions. Edge cases (`onMissingVersion`, `onTie`) are required options so they are chosen deliberately.
+**Decision.** `@ez-kits/sync-client-conflict-resolution` exports `localWins`, `remoteWins`, `lastWriteWins`, `mergeFields`, `deleteVsUpdate` and `manualResolution`, all plain `resolveConflict` functions. Edge cases (`onMissingVersion`, `onTie`) are required options so they are chosen deliberately.
 
 **Consequences.** There is no durable deferred-conflict state in core; an application that defers decisions stores and replays them itself.
 
@@ -314,9 +314,9 @@ Records without pending writes always take remote changes. A skipped remote even
 
 **Decision.** Ship one engine per package, each opened only by the leader's worker (ADR-6) through `startDBStorageWorker(open)`:
 
-- **`sync-storage-sqljs`**: sql.js in memory, snapshotted to IndexedDB after every commit and every write outside a transaction (`DBEngine.flush`). A new leader reopens the last snapshot. Statements without parameters may contain several statements, to keep migrations simple.
-- **`sync-storage-sqlite-wasm`**: the official SQLite WASM build on the `opfs-sahpool` VFS, which needs no COOP/COEP headers. The pool allows one holder per origin, so the leader releases it when it steps down.
-- **`sync-storage-pglite`**: PGlite (Postgres dialect) persisted to IndexedDB (`idb://...`).
+- **`sync-client-storage-sqljs`**: sql.js in memory, snapshotted to IndexedDB after every commit and every write outside a transaction (`DBEngine.flush`). A new leader reopens the last snapshot. Statements without parameters may contain several statements, to keep migrations simple.
+- **`sync-client-storage-sqlite-wasm`**: the official SQLite WASM build on the `opfs-sahpool` VFS, which needs no COOP/COEP headers. The pool allows one holder per origin, so the leader releases it when it steps down.
+- **`sync-client-storage-pglite`**: PGlite (Postgres dialect) persisted to IndexedDB (`idb://...`).
 
 The application's worker module opens the engine and may run its own table migrations there.
 

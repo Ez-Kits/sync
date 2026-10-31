@@ -1,9 +1,8 @@
 {
-  "$schema": "https://json.schemastore.org/package",
-  "name": "@ez-kits/sync-storage-sqljs",
+  "name": "@ez-kits/sync-client-firebase",
   "version": "0.0.0",
-  "description": "SQLite storage for EzSync in the browser, saved to IndexedDB",
-  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-sqljs#readme",
+  "description": "Sync EzSync data with Cloud Firestore or Firebase Realtime Database",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-firebase#readme",
   "bugs": {
     "url": "https://github.com/Ez-Kits/sync/issues"
   },
@@ -12,15 +11,15 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ez-Kits/sync.git",
-    "directory": "packages/storage-sqljs"
+    "directory": "packages/client-firebase"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "exports": {
-    ".": "./dist/index.mjs",
-    "./worker": "./dist/worker.mjs",
+    "./sync-firestore": "./dist/sync-firestore.mjs",
+    "./sync-realtime-db": "./dist/sync-realtime-db.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -32,21 +31,20 @@
     "test": "vp test",
     "test:types": "vp test run --typecheck.only",
     "test:coverage": "vp test run --coverage",
+    "test:emulator": "firebase emulators:exec --config ../../firebase.json --project demo-ezsync --only auth,firestore,database 'EZSYNC_FIREBASE_EMULATOR=1 vp test run tests/emulator.integration.test.ts'",
     "check": "vp check",
     "prepublishOnly": "vp run build"
   },
   "devDependencies": {
-    "@ez-kits/sync-client-core": "workspace:*",
     "@types/node": "^25.5.0",
-    "@types/sql.js": "catalog:",
     "@typescript/native-preview": "catalog:",
-    "fake-indexeddb": "catalog:",
-    "sql.js": "catalog:",
+    "firebase": "catalog:",
+    "firebase-tools": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "@ez-kits/sync-client-core": "workspace:^",
-    "sql.js": "catalog:"
+    "firebase": "^12.12.1"
   }
 }

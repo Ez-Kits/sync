@@ -6,7 +6,7 @@ In the browser, the database runs in a worker shared by all tabs. In Node.js scr
 
 ```ts
 import { createLocalDBStorage } from "@ez-kits/sync-client-core";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { migrate } from "./db/migrations";
 
 const dbStorage = createLocalDBStorage({
@@ -27,7 +27,7 @@ const dbStorage = createLocalDBStorage({
 With PGlite (Postgres):
 
 ```ts
-import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
+import { openPGliteEngine } from "@ez-kits/sync-client-storage-pglite/worker";
 
 const dbStorage = createLocalDBStorage({
   dialect: "postgres",
@@ -45,7 +45,7 @@ import { afterEach, expect, test } from "vitest";
 import { createLocalDBStorage, createSyncClient } from "@ez-kits/sync-client-core";
 import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
 import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { todos } from "../src/db/schema";
 import { migrate } from "../src/db/migrations";
 

@@ -1,4 +1,4 @@
-import { createSqlJsDBStorage } from "@ez-kits/sync-storage-sqljs";
+import { createSqlJsDBStorage } from "@ez-kits/sync-client-storage-sqljs";
 
 /**
  * The local database of one account. Each account gets its own storage key and IndexedDB

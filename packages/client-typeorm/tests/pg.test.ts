@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { createLocalDBStorage, createSyncClient, type DBStorage } from "@ez-kits/sync-client-core";
-import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
+import { openPGliteEngine } from "@ez-kits/sync-client-storage-pglite/worker";
 import { Column, Entity, PrimaryColumn } from "typeorm";
 import { expect, test, vi } from "vite-plus/test";
 import { defineTypeOrmCollection } from "../src/collection";

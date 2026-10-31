@@ -4,15 +4,15 @@ The storage engine is the real database in the browser. EzSync ships three. All 
 
 ## At a glance
 
-|                         | sql.js                          | SQLite WASM                         | PGlite                         |
-| ----------------------- | ------------------------------- | ----------------------------------- | ------------------------------ |
-| Package                 | `@ez-kits/sync-storage-sqljs`   | `@ez-kits/sync-storage-sqlite-wasm` | `@ez-kits/sync-storage-pglite` |
-| SQL dialect             | SQLite                          | SQLite                              | Postgres                       |
-| Saved to                | IndexedDB (whole-file snapshot) | OPFS (incremental writes)           | IndexedDB                      |
-| Cost of a write         | Grows with database size        | Small                               | Small                          |
-| Needs COOP/COEP headers | No                              | No                                  | No                             |
-| Download size           | Small                           | Medium                              | Large                          |
-| Good for                | Getting started, small data     | Most production apps on SQLite      | Postgres features and types    |
+|                         | sql.js                               | SQLite WASM                                | PGlite                                |
+| ----------------------- | ------------------------------------ | ------------------------------------------ | ------------------------------------- |
+| Package                 | `@ez-kits/sync-client-storage-sqljs` | `@ez-kits/sync-client-storage-sqlite-wasm` | `@ez-kits/sync-client-storage-pglite` |
+| SQL dialect             | SQLite                               | SQLite                                     | Postgres                              |
+| Saved to                | IndexedDB (whole-file snapshot)      | OPFS (incremental writes)                  | IndexedDB                             |
+| Cost of a write         | Grows with database size             | Small                                      | Small                                 |
+| Needs COOP/COEP headers | No                                   | No                                         | No                                    |
+| Download size           | Small                                | Medium                                     | Large                                 |
+| Good for                | Getting started, small data          | Most production apps on SQLite             | Postgres features and types           |
 
 **How to choose:**
 
@@ -32,7 +32,10 @@ The `key` option names the database: every tab with the same key shares it. `eng
 ```ts
 // db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
-import { openSqlJsEngine, type SqlJsEngineOptions } from "@ez-kits/sync-storage-sqljs/worker";
+import {
+  openSqlJsEngine,
+  type SqlJsEngineOptions,
+} from "@ez-kits/sync-client-storage-sqljs/worker";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./migrations";
 
@@ -45,7 +48,7 @@ startDBStorageWorker<SqlJsEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createSqlJsDBStorage } from "@ez-kits/sync-storage-sqljs";
+import { createSqlJsDBStorage } from "@ez-kits/sync-client-storage-sqljs";
 
 export const dbStorage = createSqlJsDBStorage({
   key: "my-app",
@@ -72,7 +75,7 @@ import { startDBStorageWorker } from "@ez-kits/sync-client-core";
 import {
   openSqliteWasmEngine,
   type SqliteWasmEngineOptions,
-} from "@ez-kits/sync-storage-sqlite-wasm/worker";
+} from "@ez-kits/sync-client-storage-sqlite-wasm/worker";
 import { migrate } from "./migrations";
 
 startDBStorageWorker<SqliteWasmEngineOptions>(async (options) => {
@@ -84,7 +87,7 @@ startDBStorageWorker<SqliteWasmEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createSqliteWasmDBStorage } from "@ez-kits/sync-storage-sqlite-wasm";
+import { createSqliteWasmDBStorage } from "@ez-kits/sync-client-storage-sqlite-wasm";
 
 export const dbStorage = createSqliteWasmDBStorage({
   key: "my-app",
@@ -119,7 +122,10 @@ Postgres compiled to WebAssembly.
 ```ts
 // db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
-import { openPGliteEngine, type PGliteEngineOptions } from "@ez-kits/sync-storage-pglite/worker";
+import {
+  openPGliteEngine,
+  type PGliteEngineOptions,
+} from "@ez-kits/sync-client-storage-pglite/worker";
 import { migrate } from "./migrations";
 
 startDBStorageWorker<PGliteEngineOptions>(async (options) => {
@@ -131,7 +137,7 @@ startDBStorageWorker<PGliteEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createPGliteDBStorage } from "@ez-kits/sync-storage-pglite";
+import { createPGliteDBStorage } from "@ez-kits/sync-client-storage-pglite";
 
 export const dbStorage = createPGliteDBStorage({
   key: "my-app",

@@ -39,8 +39,8 @@
   "devDependencies": {
     "@electric-sql/pglite": "catalog:",
     "@ez-kits/sync-client-core": "workspace:*",
-    "@ez-kits/sync-storage-pglite": "workspace:*",
-    "@ez-kits/sync-storage-sqljs": "workspace:*",
+    "@ez-kits/sync-client-storage-pglite": "workspace:*",
+    "@ez-kits/sync-client-storage-sqljs": "workspace:*",
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "catalog:",
     "drizzle-orm": "catalog:",

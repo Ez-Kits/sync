@@ -74,7 +74,10 @@ The database runs inside a **Web Worker**, so heavy queries never freeze your pa
 ```ts
 // src/db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
-import { openSqlJsEngine, type SqlJsEngineOptions } from "@ez-kits/sync-storage-sqljs/worker";
+import {
+  openSqlJsEngine,
+  type SqlJsEngineOptions,
+} from "@ez-kits/sync-client-storage-sqljs/worker";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./migrations";
 
@@ -94,7 +97,7 @@ On the page, create the **DB storage**. It starts the worker from Step 3 and giv
 
 ```ts
 // src/db/storage.ts
-import { createSqlJsDBStorage } from "@ez-kits/sync-storage-sqljs";
+import { createSqlJsDBStorage } from "@ez-kits/sync-client-storage-sqljs";
 
 export const dbStorage = createSqlJsDBStorage({
   // Every tab that uses the same key shares the same database.
@@ -257,7 +260,7 @@ import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapt
 import {
   createFirestoreSyncAdapter,
   defineFirestoreCollectionSyncAdapterConfig,
-} from "@ez-kits/sync-firebase/sync-firestore";
+} from "@ez-kits/sync-client-firebase/sync-firestore";
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { dbStorage } from "./db/storage";

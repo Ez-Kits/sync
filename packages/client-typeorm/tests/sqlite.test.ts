@@ -5,7 +5,7 @@ import {
   LeaderChangedError,
   type DBStorage,
 } from "@ez-kits/sync-client-core";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { Column, Entity, PrimaryColumn } from "typeorm";
 import { expect, test, vi } from "vite-plus/test";
 import { defineTypeOrmCollection } from "../src/collection";

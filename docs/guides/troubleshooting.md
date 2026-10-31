@@ -106,7 +106,7 @@ sql.js saves the **whole** database to IndexedDB after every commit, which costs
 The storage worker script itself failed to load, for example because an import inside it could not be resolved, or the URL passed to `new Worker(...)` is wrong. `dbStorage.ready` rejects with `DBStorageWorkerError`, `dbStorage.onError` listeners get it, every read and write rejects with it, and the sync status becomes `error`. The browser rarely says why: look for the failed worker request in the Network tab, or for the error in your dev server's terminal (Vite prints `Failed to resolve import ...`). Check that:
 
 - the worker file path in `new URL("./worker.ts", import.meta.url)` is right, relative to the file that contains it;
-- the worker imports the engine from the `/worker` entry point (`@ez-kits/sync-storage-sqljs/worker`, ...) and the package is installed;
+- the worker imports the engine from the `/worker` entry point (`@ez-kits/sync-client-storage-sqljs/worker`, ...) and the package is installed;
 - for SQLite WASM and PGlite with Vite, the package is in `optimizeDeps.exclude`.
 
 ### Reset everything during development

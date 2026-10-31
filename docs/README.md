@@ -34,17 +34,17 @@ Task-focused pages. Read them when you need them.
 
 One page per package, listing every export with its options.
 
-| Package                                                                 | What it gives you                                      |
-| ----------------------------------------------------------------------- | ------------------------------------------------------ |
-| [`@ez-kits/sync-client-core`](api/client-core.md)                       | `createSyncClient`, storage helpers, all the contracts |
-| [`@ez-kits/sync-client-drizzle-adapter`](api/client-drizzle-adapter.md) | Drizzle ORM adapter (SQLite and Postgres)              |
-| [`@ez-kits/sync-client-typeorm-adapter`](api/client-typeorm-adapter.md) | TypeORM adapter (SQLite and Postgres)                  |
-| [`@ez-kits/sync-client-react`](api/client-react.md)                     | React provider and hooks                               |
-| [`@ez-kits/sync-storage-sqljs`](api/storage-sqljs.md)                   | SQLite (sql.js) in a worker, saved to IndexedDB        |
-| [`@ez-kits/sync-storage-sqlite-wasm`](api/storage-sqlite-wasm.md)       | Official SQLite WASM in a worker, saved to OPFS        |
-| [`@ez-kits/sync-storage-pglite`](api/storage-pglite.md)                 | Postgres (PGlite) in a worker, saved to IndexedDB      |
-| [`@ez-kits/sync-firebase`](api/sync-firebase.md)                        | Sync adapters for Firestore and Realtime Database      |
-| [`@ez-kits/sync-conflict-resolution`](api/sync-conflict-resolution.md)  | Ready-made conflict policies                           |
+| Package                                                                         | What it gives you                                      |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| [`@ez-kits/sync-client-core`](api/client-core.md)                               | `createSyncClient`, storage helpers, all the contracts |
+| [`@ez-kits/sync-client-drizzle-adapter`](api/client-drizzle-adapter.md)         | Drizzle ORM adapter (SQLite and Postgres)              |
+| [`@ez-kits/sync-client-typeorm-adapter`](api/client-typeorm-adapter.md)         | TypeORM adapter (SQLite and Postgres)                  |
+| [`@ez-kits/sync-client-react`](api/client-react.md)                             | React provider and hooks                               |
+| [`@ez-kits/sync-client-storage-sqljs`](api/client-storage-sqljs.md)             | SQLite (sql.js) in a worker, saved to IndexedDB        |
+| [`@ez-kits/sync-client-storage-sqlite-wasm`](api/client-storage-sqlite-wasm.md) | Official SQLite WASM in a worker, saved to OPFS        |
+| [`@ez-kits/sync-client-storage-pglite`](api/client-storage-pglite.md)           | Postgres (PGlite) in a worker, saved to IndexedDB      |
+| [`@ez-kits/sync-client-firebase`](api/client-firebase.md)                       | Sync adapters for Firestore and Realtime Database      |
+| [`@ez-kits/sync-client-conflict-resolution`](api/client-conflict-resolution.md) | Ready-made conflict policies                           |
 
 ## Extending EzSync
 

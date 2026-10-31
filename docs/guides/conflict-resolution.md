@@ -14,10 +14,10 @@ Without a resolver, the **local** writes win. The remote change is set aside, an
 
 ## Choosing a policy
 
-Pass `resolveConflict` to the client. The `@ez-kits/sync-conflict-resolution` package has ready-made policies:
+Pass `resolveConflict` to the client. The `@ez-kits/sync-client-conflict-resolution` package has ready-made policies:
 
 ```bash
-npm install @ez-kits/sync-conflict-resolution
+npm install @ez-kits/sync-client-conflict-resolution
 ```
 
 ### Last write wins (recommended for most apps)
@@ -25,7 +25,7 @@ npm install @ez-kits/sync-conflict-resolution
 The newer edit wins, by a version you choose, typically an `updatedAt` timestamp you set on every write:
 
 ```ts
-import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
+import { lastWriteWins } from "@ez-kits/sync-client-conflict-resolution";
 
 const client = createSyncClient({
   collections: [todosCollection],
@@ -50,7 +50,7 @@ Versions may be numbers, strings (compared alphabetically) or `Date`s. `onMissin
 Start from the remote record and merge chosen fields with your own function:
 
 ```ts
-import { mergeFields } from "@ez-kits/sync-conflict-resolution";
+import { mergeFields } from "@ez-kits/sync-client-conflict-resolution";
 
 resolveConflict: mergeFields({
   fields: {
@@ -75,7 +75,7 @@ The merged record is saved locally **and pushed**, so both sides end up with it.
 | `deleteVsUpdate({ onRemoteDelete, onMissingLocal })` | Decide delete-versus-edit cases; other conflicts take remote.          |
 | `manualResolution({ onConflict, fallback })`         | Call your function; use `fallback` when it returns `undefined`.        |
 
-See the [API reference](../api/sync-conflict-resolution.md) for every option.
+See the [API reference](../api/client-conflict-resolution.md) for every option.
 
 > **Tip: write the policy inline**, as `resolveConflict: lastWriteWins({ ... })`. TypeScript then infers your collections' types for `local` and `remote` in the callbacks. A policy stored in a variable first (`const policy = mergeFields({ ... })`) is accepted too, with untyped (`any`) `local` and `remote`; give it the type argument (`lastWriteWins<DataMap>({ ... })`) to keep them typed.
 
