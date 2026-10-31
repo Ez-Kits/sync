@@ -49,3 +49,5 @@ Use one line message. Add no brand identifies to commit message. Such as: claude
 - New feature: `feat: <describe the task>`
 - Refactor: `refactor: <describe the task>`
 - Other: `chore: <describe the task>`
+
+PRs are squash-merged, so the PR title follows the same format and becomes the commit on `main`. release-please reads those commits to bump versions and write changelogs: `feat` bumps patch, `fix` bumps patch, and `!`/`BREAKING CHANGE` bumps minor while packages are below 1.0. `refactor` and `chore` do not release.

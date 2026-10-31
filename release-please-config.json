@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "initial-version": "0.1.0",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "pull-request-title-pattern": "chore: release${component} ${version}",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "refactor", "section": "Refactors", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous", "hidden": true }
+  ],
+  "plugins": ["node-workspace"],
+  "packages": {
+    "packages/client-core": {},
+    "packages/client-drizzle": {},
+    "packages/client-react": {},
+    "packages/client-typeorm": {},
+    "packages/storage-pglite": {},
+    "packages/storage-sqlite-wasm": {},
+    "packages/storage-sqljs": {},
+    "packages/sync-conflict-resolution": {},
+    "packages/sync-firebase": {}
+  }
+}

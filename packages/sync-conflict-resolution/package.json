@@ -2,8 +2,18 @@
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-conflict-resolution",
   "version": "0.0.0",
-  "description": "Built-in conflict resolution policies for EzSync",
+  "description": "Ready-made conflict resolution strategies for EzSync",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/sync-conflict-resolution#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
   "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/sync-conflict-resolution"
+  },
   "files": [
     "dist"
   ],
@@ -32,6 +42,6 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@ez-kits/sync-client-core": "workspace:*"
+    "@ez-kits/sync-client-core": "workspace:^"
   }
 }

@@ -2,8 +2,18 @@
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-storage-sqlite-wasm",
   "version": "0.0.0",
-  "description": "SQLite WASM DB storage for EzSync: official SQLite build in a leader worker, persisted to OPFS",
+  "description": "SQLite storage for EzSync in the browser, saved to OPFS",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-sqlite-wasm#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
   "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/storage-sqlite-wasm"
+  },
   "files": [
     "dist"
   ],
@@ -34,7 +44,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@ez-kits/sync-client-core": "workspace:*",
+    "@ez-kits/sync-client-core": "workspace:^",
     "@sqlite.org/sqlite-wasm": "catalog:"
   }
 }

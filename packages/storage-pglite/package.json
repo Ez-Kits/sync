@@ -2,8 +2,18 @@
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-storage-pglite",
   "version": "0.0.0",
-  "description": "PGlite DB storage for EzSync: Postgres (PGlite) in a leader worker",
+  "description": "Postgres storage for EzSync in the browser, powered by PGlite",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-pglite#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
   "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/storage-pglite"
+  },
   "files": [
     "dist"
   ],
@@ -35,6 +45,6 @@
   },
   "peerDependencies": {
     "@electric-sql/pglite": "catalog:",
-    "@ez-kits/sync-client-core": "workspace:*"
+    "@ez-kits/sync-client-core": "workspace:^"
   }
 }
