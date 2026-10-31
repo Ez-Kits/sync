@@ -1,16 +1,17 @@
 {
   "name": "@ez-kits/sync-client-react",
   "version": "0.0.0",
-  "description": "A starter for creating a TypeScript package.",
-  "homepage": "https://github.com/author/library#readme",
+  "description": "React integration for EzSync with live queries",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-react#readme",
   "bugs": {
-    "url": "https://github.com/author/library/issues"
+    "url": "https://github.com/Ez-Kits/sync/issues"
   },
   "license": "MIT",
-  "author": "Author Name <author.name@mail.com>",
+  "author": "Ez Kits",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/author/library.git"
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/client-react"
   },
   "files": [
     "dist"
@@ -43,7 +44,6 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@typescript/native-preview": "catalog:",
-    "bumpp": "^11.0.1",
     "jsdom": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

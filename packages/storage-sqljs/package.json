@@ -2,8 +2,18 @@
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-storage-sqljs",
   "version": "0.0.0",
-  "description": "sql.js DB storage for EzSync: SQLite (sql.js) in a leader worker, persisted to IndexedDB",
+  "description": "SQLite storage for EzSync in the browser, saved to IndexedDB",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-sqljs#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
   "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/storage-sqljs"
+  },
   "files": [
     "dist"
   ],
@@ -36,7 +46,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@ez-kits/sync-client-core": "workspace:*",
+    "@ez-kits/sync-client-core": "workspace:^",
     "sql.js": "catalog:"
   }
 }
