@@ -109,14 +109,6 @@ function createTodoFirestoreSyncAdapter(account: string) {
         deserializeDeleteId: ({ snapshot }) => snapshot.id,
       }),
     ],
-    checkpointSerializer: {
-      serialize: (checkpoint) => JSON.stringify(checkpoint),
-      deserialize: (value) =>
-        JSON.parse(value, (key, val) => {
-          if (key === "updatedAt") return val ? Timestamp.fromMillis(val) : undefined;
-          return val;
-        }),
-    },
   });
 }
 
