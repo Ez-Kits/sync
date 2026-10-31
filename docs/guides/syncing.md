@@ -103,7 +103,7 @@ A **checkpoint** is a bookmark that tells the sync adapter where the last pull s
 
 - What a checkpoint contains is up to the sync adapter (for example `{ updatedAt, id }` of the last document).
 - Its type comes from the sync adapter, so `getCheckpoint` and `saveCheckpoint` are typed without annotations.
-- It is saved as a string, by the serializer of the adapter that syncs the collection. The Firestore adapters default to one that keeps `Timestamp`s, the Realtime Database adapters to JSON; both take a `checkpointSerializer` option to change it. A sync adapter without one uses `JSON.stringify` / `JSON.parse`. To store checkpoints differently, for example one holding a `Date`, pass your own; it replaces the adapter's for every collection:
+- It is saved as a string, with `JSON.stringify` / `JSON.parse` unless the sync adapter that syncs the collection has a `checkpointSerializer` (the Firestore and Realtime Database adapters take one as an option). A Firestore checkpoint holding a `Timestamp` needs one, see [Firestore](firestore.md). To store checkpoints differently, for example one holding a `Date`, pass your own; it replaces the adapter's for every collection:
 
   ```ts
   createSyncClient({

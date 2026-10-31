@@ -75,7 +75,9 @@ export interface FirestoreCollectionSyncAdapterConfig<
 > extends FirestoreSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Firestore;
   /**
-   * How the adapter's checkpoints are stored in the database. Default: `firestoreCheckpointSerializer`.
+   * How the adapter's checkpoints are stored in the database. Default: the sync client's
+   * `JSON.stringify` / `JSON.parse`, which turns a `Timestamp` into a plain object: set one
+   * that rebuilds it when the checkpoint holds `Timestamp`s.
    */
   checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   /**
@@ -139,7 +141,9 @@ export interface FirestoreSyncAdapterConfig<
 > extends FirestoreSyncCommonAdapterConfig {
   collections: readonly FirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
   /**
-   * How the adapter's checkpoints are stored in the database. Default: `firestoreCheckpointSerializer`.
+   * How the adapter's checkpoints are stored in the database. Default: the sync client's
+   * `JSON.stringify` / `JSON.parse`, which turns a `Timestamp` into a plain object: set one
+   * that rebuilds it when the checkpoint holds `Timestamp`s.
    */
   checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
 }

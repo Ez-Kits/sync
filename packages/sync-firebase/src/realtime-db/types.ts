@@ -57,7 +57,8 @@ export interface RealtimeDBCollectionSyncAdapterConfig<
 > extends RealtimeDBSyncAdapterCollectionHandlers<C, N, TCheckpoint> {
   db: Database;
   /**
-   * How the adapter's checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer`.
+   * How the adapter's checkpoints are stored in the database. Default: the sync client's
+   * `JSON.stringify` / `JSON.parse`.
    */
   checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   /**
@@ -120,7 +121,8 @@ export interface RealtimeDBSyncAdapterConfig<
 > extends RealtimeDBSyncCommonAdapterConfig {
   collections: readonly RealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[];
   /**
-   * How the adapter's checkpoints are stored in the database. Default: `realtimeDBCheckpointSerializer`.
+   * How the adapter's checkpoints are stored in the database. Default: the sync client's
+   * `JSON.stringify` / `JSON.parse`.
    */
   checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
 }

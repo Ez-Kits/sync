@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { Component, createElement, StrictMode, useState, type ReactNode } from "react";
 import { createScopedSyncClientReact, createSyncClientReact } from "../src/index";
+import { createScopedClients } from "../src/scoped-clients";
 import { createLocalDBStorage } from "@ez-kits/sync-client-core";
 
 const todoCollection = { name: "todos", adapterConfig: {}, primaryField: "id" };
@@ -318,4 +319,168 @@ test("a scope whose database cannot open throws to the error boundary", async ()
   vi.spyOn(console, "error").mockImplementation(() => {});
   render(createElement(Boundary, null, provide("alice", createElement(ClientId))));
   await waitFor(() => expect(screen.getByText("cannot open")).toBeTruthy());
+});
+
+test("a live query that first runs after unmount leaves no state behind", async () => {
+  const { client } = setup();
+  let reject!: (error: Error) => void;
+  const query = vi.fn(
+    () =>
+      new Promise<string>((_resolve, fail) => {
+        reject = fail;
+      }),
+  );
+  const view = renderHook(() => client.useLiveQuery({ query } as never), {
+    wrapper: client.SyncClientProvider,
+  });
+  // The client runs the query once it is initialized, after the component is gone.
+  view.unmount();
+  await waitFor(() => expect(query).toHaveBeenCalledOnce());
+  await act(async () => {
+    reject(new Error("late"));
+    await tick();
+  });
+  expect(view.result.current).toMatchObject({ data: undefined, error: undefined });
+});
+
+test("live query restarts only when deps change by length or value", async () => {
+  const { client } = setup();
+  const liveQuery = vi.spyOn(client.syncClient, "liveQuery");
+  const { rerender } = renderHook(
+    ({ deps }: { deps?: unknown[] }) =>
+      client.useLiveQuery({ query: async () => "ok", deps } as never),
+    {
+      wrapper: client.SyncClientProvider,
+      initialProps: { deps: undefined } as { deps?: unknown[] },
+    },
+  );
+  rerender({ deps: [1] });
+  rerender({ deps: [1, 2] });
+  rerender({ deps: [1, 2] });
+  rerender({ deps: undefined });
+  // Mount, then each change: none, [1], [1, 2] (same again: no restart), none.
+  expect(liveQuery).toHaveBeenCalledTimes(4);
+});
+
+const scopedConfig = (db = createDB()) => ({
+  config: { collections: [todoCollection], dbAdapter: db } as never,
+  db,
+});
+
+test("providers of one scope share its client until the last one unmounts", async () => {
+  const { createConfig, dbs, provide, ClientId } = setupScoped();
+  const view = render(
+    createElement(
+      "div",
+      null,
+      provide("alice", createElement(ClientId)),
+      provide("alice", createElement(ClientId)),
+    ),
+  );
+  await waitFor(() => expect(screen.getAllByText("client-1")).toHaveLength(2));
+  expect(createConfig).toHaveBeenCalledOnce();
+  const close = vi.spyOn(dbs.get("alice")![0]!.dbStorage, "close");
+  view.rerender(createElement("div", null, provide("alice", createElement(ClientId))));
+  await act(tick);
+  expect(close).not.toHaveBeenCalled();
+  view.unmount();
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+});
+
+test("a scope error that arrives after switching scope is ignored", async () => {
+  let fail!: (error: Error) => void;
+  const { provide, ClientId } = setupScoped((scope) => {
+    const db = createDB();
+    if (scope === "alice") {
+      const ready = new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      });
+      ready.catch(() => undefined);
+      Object.defineProperty(db.dbStorage, "ready", { value: ready });
+    }
+    return db;
+  });
+  const view = render(provide("alice", createElement(ClientId)));
+  await waitFor(() => expect(fail).toBeDefined());
+  view.rerender(provide("bob", createElement(ClientId)));
+  await waitFor(() => expect(screen.getByText("client-1")).toBeTruthy());
+  await act(async () => {
+    fail(new Error("alice cannot open"));
+    await tick();
+  });
+  expect(screen.getByText("client-1")).toBeTruthy();
+});
+
+test("releasing a lease twice releases it once", async () => {
+  const { config, db } = scopedConfig();
+  const clients = createScopedClients({ createConfig: () => config });
+  const first = clients.acquire("alice");
+  const second = clients.acquire("alice");
+  await first.client;
+  const close = vi.spyOn(db.dbStorage, "close");
+  first.release();
+  first.release();
+  await tick();
+  expect(close).not.toHaveBeenCalled();
+  second.release();
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+});
+
+test("a scope reopens after its client failed to open or to close", async () => {
+  const failing = createDB();
+  Object.defineProperty(failing.dbStorage, "ready", { value: Promise.reject(new Error("no")) });
+  failing.dbStorage.ready.catch(() => undefined);
+  // Its cleanup fails too; the open error is the one reported.
+  vi.spyOn(failing.dbStorage, "close").mockRejectedValue(new Error("cleanup failed"));
+  const closingFails = createDB();
+  vi.spyOn(closingFails.dbStorage, "close").mockRejectedValue(new Error("close failed"));
+  const queue = [failing, closingFails, createDB()];
+  const createConfig = vi.fn(() => scopedConfig(queue.shift()).config);
+  const clients = createScopedClients({ createConfig });
+
+  const notOpened = clients.acquire("alice");
+  await expect(notOpened.client).rejects.toThrow("no");
+  notOpened.release();
+  await tick();
+
+  const notClosed = clients.acquire("alice");
+  await notClosed.client;
+  notClosed.release();
+  await tick();
+
+  const reopened = clients.acquire("alice");
+  await expect(reopened.client).resolves.toBeDefined();
+  expect(createConfig).toHaveBeenCalledTimes(3);
+});
+
+test("a scope closed twice in a row is reopened only after both closes", async () => {
+  const closes: Array<() => void> = [];
+  const createConfig = vi.fn(() => {
+    const db = createDB();
+    vi.spyOn(db.dbStorage, "close").mockImplementation(
+      () => new Promise<void>((resolve) => closes.push(resolve)),
+    );
+    return scopedConfig(db).config;
+  });
+  const clients = createScopedClients({ createConfig });
+
+  const first = clients.acquire("alice");
+  await first.client;
+  first.release();
+  await waitFor(() => expect(closes).toHaveLength(1));
+
+  // Leased and released while the first close runs: its own close waits for its open.
+  const second = clients.acquire("alice");
+  second.release();
+  await tick();
+  closes[0]!();
+  await waitFor(() => expect(closes).toHaveLength(2));
+
+  // The first close ended; the second one has not: a new lease must still wait.
+  const third = clients.acquire("alice");
+  await tick();
+  expect(createConfig).toHaveBeenCalledTimes(2);
+  closes[1]!();
+  await third.client;
+  expect(createConfig).toHaveBeenCalledTimes(3);
 });

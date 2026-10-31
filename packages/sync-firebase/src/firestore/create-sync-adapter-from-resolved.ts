@@ -21,7 +21,6 @@ import {
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import { firestorePushError } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
-import { firestoreCheckpointSerializer } from "./checkpoint-serializer.ts";
 import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Firestore allows at most 500 writes per batch. */
@@ -71,8 +70,7 @@ export function createFirestoreSyncAdapterFromResolved<
   return {
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
-    // Checkpoints usually hold a `Timestamp`, which plain JSON would turn into an object.
-    checkpointSerializer: common.checkpointSerializer ?? firestoreCheckpointSerializer,
+    checkpointSerializer: common.checkpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribes = collections.map((collectionConfig) => {

@@ -23,5 +23,11 @@ export default defineConfig({
       include: ["tests/types/**/*.test-d.ts"],
       tsconfig: "./tsconfig.test.json",
     },
+    coverage: {
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.d.ts", "src/**/types.ts"],
+      reporter: ["text", "html"],
+      thresholds: { statements: 100, branches: 100, functions: 100, lines: 100 },
+    },
   },
 });

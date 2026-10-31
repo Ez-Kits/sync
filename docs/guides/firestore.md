@@ -121,13 +121,23 @@ const syncAdapter = createFirestoreSyncAdapter({
       deserializeUpdate: (data) => ({ ...data, updatedAt: toMillis(data.updatedAt) }) as Todo,
     }),
   ],
+
+  // 6. Checkpoints are stored as JSON, which reads a Timestamp back as a plain
+  //    { seconds, nanoseconds } object: rebuild it for startAfter.
+  checkpointSerializer: {
+    serialize: (checkpoint) => JSON.stringify(checkpoint),
+    deserialize: (value) => {
+      const { updatedAt, id } = JSON.parse(value);
+      return { updatedAt: new Timestamp(updatedAt.seconds, updatedAt.nanoseconds), id };
+    },
+  },
 });
 
 function toMillis(value: unknown): number {
   return value instanceof Timestamp ? value.toMillis() : Number(value ?? 0);
 }
 
-// The adapter stores the checkpoint with its Timestamp, and types `client.getCheckpoint`.
+// The adapter types `client.getCheckpoint`; its serializer keeps the Timestamp.
 const client = createSyncClient({ collections: [todosCollection], dbAdapter, syncAdapter });
 ```
 
@@ -136,6 +146,7 @@ Why each piece matters:
 - **Ordering by `updatedAt` and then by document id** makes the order stable even when two documents have the same timestamp. `startAfter(updatedAt, id)` then continues exactly after the last document seen.
 - **Server timestamps** come from one clock, so a device with a wrong clock cannot hide its changes.
 - **Deletes must update `updatedAt` too**, or they would never match the query.
+- **A checkpoint holding a `Timestamp` needs a `checkpointSerializer`.** Without one it is stored with `JSON.stringify` / `JSON.parse`, and the next pull would pass a plain object to `startAfter`.
 - The query on two fields needs a **composite index** in Firestore. The first time it runs, the Firestore error message contains a link that creates it.
 
 The complete version of this setup is in the [Drizzle + Firestore example](../../examples/todo-react-drizzle-firestore/src/sync.ts).
