@@ -75,9 +75,8 @@ export function createScopedClients<
           if (released) return;
           released = true;
           if (--owned.refs > 0) return;
-          owned.releaseTimer = setTimeout(() => {
-            if (owned.refs === 0 && entries.get(scope) === owned) dispose(scope, owned);
-          }, 0);
+          // A new lease of the scope clears the timer, so it only fires for an unused entry.
+          owned.releaseTimer = setTimeout(() => dispose(scope, owned), 0);
         },
       };
     },
