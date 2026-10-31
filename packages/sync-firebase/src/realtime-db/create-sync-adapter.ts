@@ -15,6 +15,6 @@ export function createRealtimeDBSyncAdapter<
   N extends CollectionKey<C>,
   TCheckpoint,
 >(config: RealtimeDBSyncAdapterConfig<C, N, TCheckpoint>): SyncAdapter<C, N, TCheckpoint> {
-  const { db, collections } = config;
-  return createRealtimeDBSyncAdapterFromResolved(db, collections);
+  const { db, collections, checkpointSerializer } = config;
+  return createRealtimeDBSyncAdapterFromResolved(db, collections, { checkpointSerializer });
 }

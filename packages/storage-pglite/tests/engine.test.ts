@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vite-plus/test";
-import { createPGliteStorage } from "../src";
+import { createPGliteDBStorage } from "../src";
 import { openPGliteEngine } from "../src/worker";
 
 test("runs migrations, binds parameters and returns rows in both row modes", async () => {
@@ -38,7 +38,7 @@ test("PGlite options are passed through", async () => {
 
 test("the page-side storage speaks Postgres to its worker", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createPGliteStorage({
+  const storage = createPGliteDBStorage({
     engineOptions: { dataDir: "idb://todos" },
     worker: () => endpoint,
   });

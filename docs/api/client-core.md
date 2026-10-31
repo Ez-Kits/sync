@@ -44,15 +44,15 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 
 ### `SyncClientConfig`
 
-| Option            | Type                                                | Required | Description                                                                                                                                                                      |
-| ----------------- | --------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collections`     | `CollectionConfigMap` (an array)                    | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                                                 |
-| `dbAdapter`       | `BaseDBAdapter`                                     | yes      | The DB adapter; the client uses its `dbStorage` and `localChangeStore`.                                                                                                          |
-| `syncAdapter`     | `SyncAdapter`                                       | no       | The backend for the collections it lists in `collections` (all of them when it lists none), except those with their own adapter. Writes no adapter syncs never enter the outbox. |
-| `checkpoint`      | `{ serialize(cp): string; deserialize(value): cp }` | no       | How pull checkpoints are stored as strings. Default: `JSON.stringify` / `JSON.parse`.                                                                                            |
-| `resolveConflict` | `ConflictResolution`                                | no       | Decides conflicts (a remote change for a record with unpushed local writes). Default: local wins. See [Conflict resolution](../guides/conflict-resolution.md).                   |
-| `onSyncStatus`    | `(event: SyncStatusEvent) => void`                  | no       | Called on every status change.                                                                                                                                                   |
-| `onPushRejected`  | `(rejection: PushRejection) => void`                | no       | Called once for each write the backend refused for good. See [Rejected writes](../guides/rejected-writes.md).                                                                    |
+| Option                 | Type                                 | Required | Description                                                                                                                                                                      |
+| ---------------------- | ------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collections`          | `CollectionConfigMap` (an array)     | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                                                 |
+| `dbAdapter`            | `BaseDBAdapter`                      | yes      | The DB adapter; the client uses its `dbStorage` and `localChangeStore`.                                                                                                          |
+| `syncAdapter`          | `SyncAdapter`                        | no       | The backend for the collections it lists in `collections` (all of them when it lists none), except those with their own adapter. Writes no adapter syncs never enter the outbox. |
+| `checkpointSerializer` | `CheckpointSerializer`               | no       | How pull checkpoints are stored as strings. Default: the serializer of the adapter that syncs the collection, else JSON.                                                         |
+| `resolveConflict`      | `ConflictResolution`                 | no       | Decides conflicts (a remote change for a record with unpushed local writes). Default: local wins. See [Conflict resolution](../guides/conflict-resolution.md).                   |
+| `onSyncStatus`         | `(event: SyncStatusEvent) => void`   | no       | Called on every status change.                                                                                                                                                   |
+| `onPushRejected`       | `(rejection: PushRejection) => void` | no       | Called once for each write the backend refused for good. See [Rejected writes](../guides/rejected-writes.md).                                                                    |
 
 ### `SyncClient`
 
@@ -240,7 +240,7 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 
 ## Collections
 
-You normally create collections with `defineDrizzleCollection` or `defineTypeormCollection`. Their shape:
+You normally create collections with `defineDrizzleCollection` or `defineTypeOrmCollection`. Their shape:
 
 ```ts
 interface CollectionConfig<TName, AdapterConfig, UpdateModel, InsertModel, SelectModel, PrimaryField, TCheckpoint> {
@@ -260,8 +260,8 @@ interface CollectionConfig<TName, AdapterConfig, UpdateModel, InsertModel, Selec
 | `InferCollectionUpdateModel<Col>`      | What `update` accepts.                                 |
 | `InferCollectionSelectModel<Col>`      | What `get` returns.                                    |
 | `InferCollectionPrimaryFieldType<Col>` | The primary key type.                                  |
-| `InferCollectionCheckpoint<Col>`       | The collection's checkpoint type.                      |
-| `InferCheckpointMap<C>`                | The union of all collections' checkpoint types.        |
+| `InferCollectionCheckpoint<Col>`       | The checkpoint type of the collection's own adapter.   |
+| `InferCheckpointMap<C>`                | The union of those, over all collections.              |
 | `TCollectionRuntime<Col>`              | The `insert / update / delete / get / getMany` object. |
 | `TCollectionRuntimeRecord<C>`          | `client.collections`.                                  |
 
@@ -351,6 +351,7 @@ Implemented by `@ez-kits/sync-firebase`. Implement it yourself for another backe
 ```ts
 interface SyncAdapter<C, N, TCheckpoint> {
   collections?: readonly N[]; // the collections it syncs; omitted: every one without its own adapter
+  checkpointSerializer?: CheckpointSerializer<TCheckpoint>; // how its checkpoints are stored; default JSON
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
   push(options: PushOptions<C, N>): void | Promise<void>;
 }
@@ -375,6 +376,7 @@ interface PushOptions<C, N> {
 
 | Type                                                   | Description                                                                     |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `CheckpointSerializer<TCheckpoint>`                    | `{ serialize(checkpoint): string; deserialize(value): TCheckpoint }`            |
 | `SyncAdapterFor<Collections, TCheckpoint>`             | The `SyncAdapter` for an array of collection configs: their data map and names. |
 | `PullCheckpointMap<C, N, TCheckpoint>`                 | `Partial<Record<N, TCheckpoint>>`                                               |
 | `PullCommitChangesOptions`, `PushCommitChangesOptions` | The `commitChanges` arguments above.                                            |

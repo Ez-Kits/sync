@@ -10,18 +10,18 @@ Enable `experimentalDecorators` and `emitDecoratorMetadata` in `tsconfig.json`, 
 
 | Entry point                                   | Contents                                                    |
 | --------------------------------------------- | ----------------------------------------------------------- |
-| `@ez-kits/sync-client-typeorm-adapter`        | `defineTypeormCollection`, types, low-level building blocks |
+| `@ez-kits/sync-client-typeorm-adapter`        | `defineTypeOrmCollection`, types, low-level building blocks |
 | `@ez-kits/sync-client-typeorm-adapter/sqlite` | `createTypeOrmSqliteDBAdapter` (for sql.js and SQLite WASM) |
 | `@ez-kits/sync-client-typeorm-adapter/pg`     | `createTypeOrmPgDBAdapter` (for PGlite)                     |
 
 ---
 
-## `defineTypeormCollection(options)`
+## `defineTypeOrmCollection(options)`
 
 ```ts
 import "reflect-metadata";
 import { Column, Entity, PrimaryColumn } from "typeorm";
-import { defineTypeormCollection } from "@ez-kits/sync-client-typeorm-adapter";
+import { defineTypeOrmCollection } from "@ez-kits/sync-client-typeorm-adapter";
 
 @Entity("todos")
 export class Todo {
@@ -31,7 +31,7 @@ export class Todo {
   @Column("integer") updatedAt!: number;
 }
 
-export const todosCollection = defineTypeormCollection({
+export const todosCollection = defineTypeOrmCollection({
   name: "todos",
   entity: Todo,
   primaryField: "id",
@@ -46,8 +46,6 @@ export const todosCollection = defineTypeormCollection({
 | `syncAdapter`  | `SyncAdapter`    | no       | A sync adapter for this collection only.                                          |
 
 Models: `insert` takes `DeepPartial<Todo>`, `update` takes `Partial<Todo>` (with the primary key), `get` returns `Todo`.
-
-To type the checkpoint, pass all type parameters: `defineTypeormCollection<"todos", typeof Todo, "id", TodoCheckpoint>({...})`.
 
 ---
 
@@ -127,5 +125,5 @@ They are registered and created by the adapter. Read them for debugging only.
 | `createTypeOrmSqliteDriver(dbStorage)` (`/sqlite`)                                                                                                                                                                                                                                                                                                                    | The SQLite driver object TypeORM's `expo` data source runs on.                                                                                           |
 | `createTypeOrmPgDriver(dbStorage)` (`/pg`)                                                                                                                                                                                                                                                                                                                            | The `pg`-compatible module TypeORM's `postgres` data source runs on.                                                                                     |
 | `buildSchemaFromCollections(collections)`                                                                                                                                                                                                                                                                                                                             | `{ [name]: entity }`                                                                                                                                     |
-| `TypeOrmDBAdapter`, `TypeOrmDatabase`, `TypeOrmRepositories`, `TypeOrmQueryResult`, `TypeOrmCollectionConfig`, `DefineTypeormCollectionOptions`, `EntityClass`, `BuildSchemaFromCollections`, `TypeOrmEntity`, `TypeOrmProxyDBAdapterConfig`, `TypeOrmProxyDriver`, `TypeOrmLocalChangeEntities`, `TypeOrmEventRow`, `TypeOrmAppliedEventRow`, `TypeOrmCheckpointRow` | Types.                                                                                                                                                   |
+| `TypeOrmDBAdapter`, `TypeOrmDatabase`, `TypeOrmRepositories`, `TypeOrmQueryResult`, `TypeOrmCollectionConfig`, `DefineTypeOrmCollectionOptions`, `EntityClass`, `BuildSchemaFromCollections`, `TypeOrmEntity`, `TypeOrmProxyDBAdapterConfig`, `TypeOrmProxyDriver`, `TypeOrmLocalChangeEntities`, `TypeOrmEventRow`, `TypeOrmAppliedEventRow`, `TypeOrmCheckpointRow` | Types.                                                                                                                                                   |
 | `TypeOrmSqliteDBAdapterConfig`, `TypeOrmSqliteDataSourceOptions` (`/sqlite`), `TypeOrmPgDBAdapterConfig`, `TypeOrmPgDataSourceOptions` (`/pg`)                                                                                                                                                                                                                        | Config types of the dialect adapters.                                                                                                                    |

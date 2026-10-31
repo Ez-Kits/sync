@@ -94,7 +94,7 @@ for (const scope of ["global", "collection"] as const) {
   });
 
   test(`${scope}: a "remote" resolution drops the record's pending writes`, async () => {
-    const f = fixture(scope, { conflictResolver: () => "remote" });
+    const f = fixture(scope, { resolveConflict: () => "remote" });
     await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
     const release = f.holdPushes();
     f.start();
@@ -119,7 +119,7 @@ for (const scope of ["global", "collection"] as const) {
 
   test(`${scope}: a merge replaces the pending writes with one pushed merged event`, async () => {
     const merged = { id: 1, title: "merged" };
-    const f = fixture(scope, { conflictResolver: () => ({ data: merged }) });
+    const f = fixture(scope, { resolveConflict: () => ({ data: merged }) });
     await f.writeLocally(localEvent("e1", "create", { id: 1, title: "local" }));
     await f.writeLocally(localEvent("e2", "update", { id: 1, title: "local again" }));
     const release = f.holdPushes();
@@ -171,7 +171,7 @@ for (const scope of ["global", "collection"] as const) {
 
   test(`${scope}: a merge of a remote delete recreates the record`, async () => {
     const merged = { id: 1, title: "kept" };
-    const f = fixture(scope, { conflictResolver: () => ({ data: merged }) });
+    const f = fixture(scope, { resolveConflict: () => ({ data: merged }) });
     await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
     f.adapter.push.mockImplementation(async ({ events }: any) => {
       f.pushed.push(events);
@@ -197,7 +197,7 @@ for (const scope of ["global", "collection"] as const) {
   });
 
   test(`${scope}: a "local" resolution keeps the row and the outbox`, async () => {
-    const f = fixture(scope, { conflictResolver: () => "local" });
+    const f = fixture(scope, { resolveConflict: () => "local" });
     await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
     f.holdPushes();
     f.start();
@@ -235,7 +235,7 @@ for (const scope of ["global", "collection"] as const) {
 
   for (const resolver of [undefined, "local"] as const) {
     test(`${scope}: the echo of a push pulled before its acknowledgement is applied by it (${resolver ?? "no resolver"})`, async () => {
-      const f = fixture(scope, resolver ? { conflictResolver: () => resolver } : {});
+      const f = fixture(scope, resolver ? { resolveConflict: () => resolver } : {});
       await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
       const release = f.holdPushes();
       f.start();
@@ -346,11 +346,11 @@ for (const scope of ["global", "collection"] as const) {
   for (const decision of ["remote", "merge"] as const) {
     test(`${scope}: a "${decision}" decision forgets the remote event skipped before it`, async () => {
       const merged = { id: 1, title: "merged" };
-      const conflictResolver = vi
+      const resolveConflict = vi
         .fn()
         .mockReturnValueOnce("local")
         .mockReturnValueOnce(decision === "remote" ? "remote" : { data: merged });
-      const f = fixture(scope, { conflictResolver });
+      const f = fixture(scope, { resolveConflict });
       await f.writeLocally(localEvent("e1", "update", { id: 1, title: "local" }));
       const release = f.holdPushes();
       f.start();

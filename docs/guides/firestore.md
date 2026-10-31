@@ -24,8 +24,9 @@ const syncAdapter = createFirestoreSyncAdapter({
     defineFirestoreCollectionSyncAdapterConfig({
       collectionConfig: todosCollection, // your EzSync collection
       collectionPath: "todos", // the Firestore collection
-      resolveDocumentId: (event) =>
+      resolveRemoteId: (event) =>
         event.type === "delete" ? String(event.id) : String(event.data.id),
+      // The checkpoint type is inferred from createCheckpoint and createPullCheckpoint.
       createCheckpoint: () => null,
     }),
   ],
@@ -64,13 +65,12 @@ interface TodoCheckpoint {
   id: string;
 }
 
-// 2. Tell the collection about its checkpoint type (the 5th type parameter).
-const todosCollection = defineDrizzleCollection<"todos", typeof todos, "id", Todo, TodoCheckpoint>({
+const todosCollection = defineDrizzleCollection({
   name: "todos",
   table: todos,
 });
 
-// 3. Compute the next checkpoint from a snapshot.
+// 2. Compute the next checkpoint from a snapshot.
 function nextCheckpoint(snapshot: QuerySnapshot, previous?: TodoCheckpoint): TodoCheckpoint {
   let next = previous;
   for (const change of snapshot.docChanges()) {
@@ -94,10 +94,10 @@ const syncAdapter = createFirestoreSyncAdapter({
     defineFirestoreCollectionSyncAdapterConfig({
       collectionConfig: todosCollection,
       collectionPath: "todos",
-      resolveDocumentId: (event) =>
+      resolveRemoteId: (event) =>
         event.type === "delete" ? String(event.id) : String(event.data.id),
 
-      // 4. Only documents after the checkpoint, in a stable order.
+      // 3. Only documents after the checkpoint, in a stable order.
       buildPullQueryConstraints: ({ checkpoint }) => [
         orderBy("updatedAt", "asc"),
         orderBy(documentId(), "asc"),
@@ -107,7 +107,7 @@ const syncAdapter = createFirestoreSyncAdapter({
       createPullCheckpoint: ({ snapshot, previousCheckpoint }) =>
         nextCheckpoint(snapshot, previousCheckpoint),
 
-      // 5. Every write stamps updatedAt on the server.
+      // 4. Every write stamps updatedAt on the server.
       serializeCreate: (data) => ({ ...data, updatedAt: serverTimestamp(), deleted: false }),
       serializeUpdate: (data) => ({ ...data, updatedAt: serverTimestamp(), deleted: false }),
       serializeDelete: (_id, { deletedAt }) => ({
@@ -116,7 +116,7 @@ const syncAdapter = createFirestoreSyncAdapter({
         updatedAt: serverTimestamp(),
       }),
 
-      // 6. Turn Firestore timestamps back into the numbers your table stores.
+      // 5. Turn Firestore timestamps back into the numbers your table stores.
       deserializeCreate: (data) => ({ ...data, updatedAt: toMillis(data.updatedAt) }) as Todo,
       deserializeUpdate: (data) => ({ ...data, updatedAt: toMillis(data.updatedAt) }) as Todo,
     }),
@@ -127,20 +127,8 @@ function toMillis(value: unknown): number {
   return value instanceof Timestamp ? value.toMillis() : Number(value ?? 0);
 }
 
-// 7. A Timestamp is not plain JSON: tell the client how to store the checkpoint.
-const client = createSyncClient({
-  collections: [todosCollection],
-  dbAdapter,
-  syncAdapter,
-  checkpoint: {
-    serialize: (cp: TodoCheckpoint) =>
-      JSON.stringify({ s: cp.updatedAt.seconds, n: cp.updatedAt.nanoseconds, id: cp.id }),
-    deserialize: (value: string): TodoCheckpoint => {
-      const { s, n, id } = JSON.parse(value);
-      return { updatedAt: new Timestamp(s, n), id };
-    },
-  },
-});
+// The adapter stores the checkpoint with its Timestamp, and types `client.getCheckpoint`.
+const client = createSyncClient({ collections: [todosCollection], dbAdapter, syncAdapter });
 ```
 
 Why each piece matters:
@@ -182,7 +170,7 @@ By default the local record is written as-is, and a pulled document is used as-i
 | `serializeDelete(id, { deletedAt })`    | push      | shape the tombstone                                            |
 | `deserializeCreate(data, { snapshot })` | pull      | turn a new document into a local record                        |
 | `deserializeUpdate(data, { snapshot })` | pull      | turn a changed document into a local record                    |
-| `resolveDocumentId(event)`              | push      | **required**: the Firestore document id of a local change      |
+| `resolveRemoteId(event)`                | push      | **required**: the Firestore document id of a local change      |
 
 Pulled records must contain the collection's **primary key** field. If your documents do not store it, add it in `deserializeCreate` / `deserializeUpdate`, for example `({ ...data, id: snapshot.id })`.
 

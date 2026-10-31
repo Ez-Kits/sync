@@ -209,7 +209,7 @@ for (const dialect of dialects) {
 /** A leader-side global sync handler over the sql.js adapter, with a scripted provider. */
 async function syncSetup(options: {
   transactionTimeoutMs?: number;
-  conflictResolver?: (input: { remote: unknown; local: unknown }) => "remote" | "local";
+  resolveConflict?: (input: { remote: unknown; local: unknown }) => "remote" | "local";
 }) {
   const sqlite = dialects[0]!;
   const dbStorage = sqlite.storage(
@@ -230,7 +230,7 @@ async function syncSetup(options: {
     changeBus: new ChangeBus<any>(),
     checkpointStorage: { getCheckpoint: async () => undefined, saveCheckpoint: async () => {} },
     localChangeStore: adapter.localChangeStore,
-    conflictResolver: options.conflictResolver as never,
+    resolveConflict: options.resolveConflict as never,
     onSyncError: (error: unknown) => errors.push(error),
     onRemoteChangesCommitted: committed,
     syncAdapter: {
@@ -293,9 +293,9 @@ test("a failure part way through an acknowledgement leaves the outbox and dirty 
 });
 
 test("a pull with a conflict resolver and pending local events commits without a timeout", async () => {
-  const conflictResolver = vi.fn(() => "remote" as const);
+  const resolveConflict = vi.fn(() => "remote" as const);
   const { dbStorage, adapter, handler, errors, committed, push, writeLocally, pull } =
-    await syncSetup({ transactionTimeoutMs: 300, conflictResolver });
+    await syncSetup({ transactionTimeoutMs: 300, resolveConflict });
   // Keep the local event pending: the provider never acknowledges.
   push.mockImplementation(() => new Promise(() => {}));
   await writeLocally("a", "local", "e1", "create");
@@ -315,7 +315,7 @@ test("a pull with a conflict resolver and pending local events commits without a
   expect(errors.some((error) => error instanceof TransactionClosedError)).toBe(false);
   expect(errors).toEqual([]);
   // Only the record with local changes went to the resolver, with its local row.
-  expect(conflictResolver).toHaveBeenCalledExactlyOnceWith({
+  expect(resolveConflict).toHaveBeenCalledExactlyOnceWith({
     remote: { type: "update", collection: "todos", data: { id: "a", title: "remote" } },
     local: { id: "a", title: "local" },
   });

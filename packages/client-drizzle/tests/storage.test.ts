@@ -204,7 +204,7 @@ test("custom relations and Drizzle options reach the query builder", async () =>
     dbStorage,
     collections: [defineDrizzleCollection({ name: "todos", table: sqliteTodos })],
     relations,
-    drizzleConfig: { logger: { logQuery } },
+    drizzleOptions: { logger: { logQuery } },
   });
   await adapter.insert("todos", { id: "a", title: "first" });
   await adapter.queryBuilder.insert(notes).values({ id: "n", todoId: "a", body: "note" });
@@ -239,14 +239,14 @@ test("adapters keep caller-supplied codecs", () => {
     createDrizzleSqliteDBAdapter({
       dbStorage: storage("sqlite"),
       collections: [defineDrizzleCollection({ name: "todos", table: sqliteTodos })],
-      drizzleConfig: { codecs },
+      drizzleOptions: { codecs },
     }).queryBuilder,
   ).toBeDefined();
   expect(
     createDrizzlePgDBAdapter({
       dbStorage: storage("postgres"),
       collections: [defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" })],
-      drizzleConfig: { codecs },
+      drizzleOptions: { codecs },
     }).queryBuilder,
   ).toBeDefined();
 });

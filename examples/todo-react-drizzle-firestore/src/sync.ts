@@ -15,7 +15,7 @@ import {
   type QuerySnapshot,
 } from "firebase/firestore";
 import { dbStorage } from "./db/index.ts";
-import { todos, type Todo } from "./db/schema.ts";
+import { todos } from "./db/schema.ts";
 import { firestore, isFirebaseConfigured } from "./firebase.ts";
 
 export interface TodoCheckpoint {
@@ -23,7 +23,7 @@ export interface TodoCheckpoint {
   id: string;
 }
 
-const todosCollection = defineDrizzleCollection<"todos", typeof todos, "id", Todo, TodoCheckpoint>({
+const todosCollection = defineDrizzleCollection({
   name: "todos",
   table: todos,
   primaryField: "id",
@@ -71,7 +71,7 @@ function createTodoFirestoreSyncAdapter() {
         createCheckpoint: () => ({ updatedAt: Timestamp.fromMillis(0), id: "" }),
         createPullCheckpoint: ({ snapshot, previousCheckpoint }) =>
           checkpointFromSnapshot(snapshot, previousCheckpoint),
-        resolveDocumentId: (event) => {
+        resolveRemoteId: (event) => {
           if (event.type === "delete") return String(event.id);
           return String(event.data.id);
         },
@@ -108,6 +108,14 @@ function createTodoFirestoreSyncAdapter() {
         deserializeDeleteId: ({ snapshot }) => snapshot.id,
       }),
     ],
+    checkpointSerializer: {
+      serialize: (checkpoint) => JSON.stringify(checkpoint),
+      deserialize: (value) =>
+        JSON.parse(value, (key, val) => {
+          if (key === "updatedAt") return val ? Timestamp.fromMillis(val) : undefined;
+          return val;
+        }),
+    },
   });
 }
 
@@ -126,27 +134,6 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
   createSyncClientReact({
     collections: [todosCollection],
     dbAdapter,
-    // Checkpoints are stored in the database; a Firestore `Timestamp` is not plain JSON.
-    checkpoint: {
-      serialize: (checkpoint: TodoCheckpoint) =>
-        JSON.stringify({
-          updatedAt: {
-            seconds: checkpoint.updatedAt.seconds,
-            nanoseconds: checkpoint.updatedAt.nanoseconds,
-          },
-          id: checkpoint.id,
-        }),
-      deserialize: (value: string): TodoCheckpoint => {
-        const parsed = JSON.parse(value) as {
-          updatedAt: { seconds: number; nanoseconds: number };
-          id: string;
-        };
-        return {
-          updatedAt: new Timestamp(parsed.updatedAt.seconds, parsed.updatedAt.nanoseconds),
-          id: parsed.id,
-        };
-      },
-    },
     resolveConflict: lastWriteWins({
       getLocalVersion(local) {
         if (!local) return undefined;

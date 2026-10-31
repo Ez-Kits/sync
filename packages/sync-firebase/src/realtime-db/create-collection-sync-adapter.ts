@@ -15,12 +15,16 @@ export function createRealtimeDBCollectionSyncAdapter<
 >(
   config: RealtimeDBCollectionSyncAdapterConfig<C, N, TCheckpoint>,
 ): SyncAdapter<C, N, TCheckpoint> {
-  const { db, collectionName, collectionPath, ...handlers } = config;
-  return createRealtimeDBSyncAdapterFromResolved(db, [
-    {
-      ...handlers,
-      collectionPath,
-      collectionName: (collectionName ?? collectionNameFromPath(collectionPath)) as N,
-    },
-  ]);
+  const { db, checkpointSerializer, collectionName, collectionPath, ...handlers } = config;
+  return createRealtimeDBSyncAdapterFromResolved(
+    db,
+    [
+      {
+        ...handlers,
+        collectionPath,
+        collectionName: (collectionName ?? collectionNameFromPath(collectionPath)) as N,
+      },
+    ],
+    { checkpointSerializer },
+  );
 }

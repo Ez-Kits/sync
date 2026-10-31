@@ -1,4 +1,9 @@
-import type { ChangeBusEvent, ChangeBusEventDataMap, SyncAdapter } from "@ez-kits/sync-client-core";
+import type {
+  ChangeBusEvent,
+  ChangeBusEventDataMap,
+  CheckpointSerializer,
+  SyncAdapter,
+} from "@ez-kits/sync-client-core";
 import {
   onChildAdded,
   onChildChanged,
@@ -12,6 +17,7 @@ import {
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import { realtimeDBPushError, rejectedPush } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
+import { realtimeDBCheckpointSerializer } from "./checkpoint-serializer.ts";
 import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Target for `onChild*` listeners (collection root or a narrowed RTDB `query`). */
@@ -157,10 +163,12 @@ export function createRealtimeDBSyncAdapterFromResolved<
 >(
   db: Database,
   collections: readonly ResolvedRealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
+  common: { checkpointSerializer?: CheckpointSerializer<TCheckpoint> } = {},
 ): SyncAdapter<C, N, TCheckpoint> {
   return {
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
+    checkpointSerializer: common.checkpointSerializer ?? realtimeDBCheckpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribeFns: Array<() => void> = [];
@@ -174,7 +182,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
         const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
 
         const listenTarget: RealtimeChildListenTarget =
-          collectionConfig.buildRealtimePullQuery?.({
+          collectionConfig.buildPullQuery?.({
             db,
             collectionPath,
             checkpoint: previousFromStorage,
@@ -314,7 +322,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
 
-        const recordId = collectionConfig.resolveRecordId(event as ChangeBusEvent<C, N>);
+        const recordId = collectionConfig.resolveRemoteId(event as ChangeBusEvent<C, N>);
         const path = recordPath(collectionConfig.collectionPath, recordId);
         let write: RecordWrite;
 

@@ -50,7 +50,7 @@ const relations = defineRelations(schema, (relation) => {
 });
 
 // This in-memory engine answers every query with no rows. It is a placeholder: use a real
-// storage such as `createSqlJsStorage` before relying on local collection mutations.
+// storage such as `createSqlJsDBStorage` before relying on local collection mutations.
 const dbStorage = createLocalDBStorage({
   dialect: "sqlite",
   open: () => ({ exec: async () => ({ rows: [] }), close: async () => {} }),

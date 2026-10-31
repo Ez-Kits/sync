@@ -3,7 +3,7 @@ import { createLocalDBStorage, createSyncClient, type DBStorage } from "@ez-kits
 import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
 import { Column, Entity, PrimaryColumn } from "typeorm";
 import { expect, test, vi } from "vite-plus/test";
-import { defineTypeormCollection } from "../src/collection";
+import { defineTypeOrmCollection } from "../src/collection";
 import { createTypeOrmPgDBAdapter, createTypeOrmPgDriver, pgLocalChangeEntities } from "../src/pg";
 
 class Todo {
@@ -16,7 +16,7 @@ PrimaryColumn("text")(Todo.prototype, "id");
 Column("text")(Todo.prototype, "title");
 Column("boolean", { default: false })(Todo.prototype, "completed");
 
-const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
+const collection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
 
 function pgStorage() {
   return createLocalDBStorage({

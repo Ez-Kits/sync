@@ -24,7 +24,7 @@ export type SyncHandlerDataMap<C extends CollectionConfigMap> =
   ChangeBusEventDataMapFromCollectionConfigMap<C>;
 
 export interface BaseSyncHandlerConfig<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > {
@@ -37,7 +37,7 @@ export interface BaseSyncHandlerConfig<
   onSyncError?: (error: unknown) => void;
   onSyncSuccess?: () => void;
   /** Decides remote changes to records with pending local writes; without it they stay local. */
-  conflictResolver?: ConflictResolution<SyncHandlerDataMap<C>>;
+  resolveConflict?: ConflictResolution<SyncHandlerDataMap<C>>;
   /** Called with the pulled changes as applied locally (after conflict resolution), e.g. to notify other tabs. */
   onRemoteChangesCommitted?: (changes: ChangeBusEvent<SyncHandlerDataMap<C>>[]) => void;
   /** Fencing check: when it returns false this handler lost leadership and must not write. */
@@ -51,7 +51,7 @@ export interface BaseSyncHandlerConfig<
 }
 
 export abstract class BaseSyncHandler<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > {
@@ -328,7 +328,7 @@ export abstract class BaseSyncHandler<
       return { event, needsPush: false };
     }
 
-    const resolver = this.config.conflictResolver;
+    const resolver = this.config.resolveConflict;
     if (!resolver) {
       await rememberSkipped();
       return { needsPush: false };

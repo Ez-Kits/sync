@@ -28,7 +28,7 @@ engine (sql.js, SQLite WASM, PGlite)
 ```
 
 ```ts
-const dbStorage = createSqlJsStorage({ key: "todos", worker: () => new Worker(workerUrl) });
+const dbStorage = createSqlJsDBStorage({ key: "todos", worker: () => new Worker(workerUrl) });
 const dbAdapter = createDrizzleSqliteDBAdapter({ dbStorage, collections });
 const client = createSyncClient({ collections, dbAdapter, syncAdapter });
 

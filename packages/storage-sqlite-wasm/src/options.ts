@@ -14,7 +14,7 @@ export interface SqliteWasmEngineOptions {
   poolName?: string;
 }
 
-export type SqliteWasmStorageOptions = Omit<
+export type SqliteWasmDBStorageOptions = Omit<
   WorkerDBStorageOptions<SqliteWasmEngineOptions>,
   "dialect"
 >;

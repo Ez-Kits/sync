@@ -24,7 +24,7 @@ const syncAdapter = createRealtimeDBSyncAdapter({
     defineRealtimeDBCollectionSyncAdapterConfig({
       collectionConfig: todosCollection,
       collectionPath: "todos",
-      resolveRecordId: (event) =>
+      resolveRemoteId: (event) =>
         event.type === "delete" ? String(event.id) : String(event.data.id),
       createCheckpoint: () => null,
     }),
@@ -42,19 +42,19 @@ What this does:
 
 ## Pull only what changed
 
-Narrow the listener with `buildRealtimePullQuery`, and remember where you stopped with `createPullCheckpoint`:
+Narrow the listener with `buildPullQuery`, and remember where you stopped with `createPullCheckpoint`:
 
 ```ts
 import { orderByChild, query, ref, serverTimestamp, startAt } from "firebase/database";
 
 defineRealtimeDBCollectionSyncAdapterConfig({
-  collectionConfig: todosCollection, // its checkpoint type is `number`
+  collectionConfig: todosCollection,
   collectionPath: "todos",
-  resolveRecordId: (event) => (event.type === "delete" ? String(event.id) : String(event.data.id)),
+  resolveRemoteId: (event) => (event.type === "delete" ? String(event.id) : String(event.data.id)),
 
-  buildRealtimePullQuery: ({ db, collectionPath, checkpoint }) =>
+  buildPullQuery: ({ db, collectionPath, checkpoint }) =>
     query(ref(db, collectionPath), orderByChild("updatedAt"), startAt(checkpoint ?? 0)),
-  createCheckpoint: () => 0,
+  createCheckpoint: () => 0, // the checkpoint type, `number`, is inferred from here
   createPullCheckpoint: ({ snapshot, previousCheckpoint }) =>
     Math.max(previousCheckpoint ?? 0, Number(snapshot.val()?.updatedAt ?? 0)),
 
@@ -81,7 +81,7 @@ Change this with `serializeDelete`, `isDeleted`, `resolveDeletedAt` and `deseria
 
 | Option                                  | Direction | Use it to...                                  |
 | --------------------------------------- | --------- | --------------------------------------------- |
-| `resolveRecordId(event)`                | push      | **required**: the child key of a local change |
+| `resolveRemoteId(event)`                | push      | **required**: the child key of a local change |
 | `serializeCreate(data)`                 | push      | shape the node written for a create           |
 | `serializeUpdate(data)`                 | push      | shape the fields merged for an update         |
 | `serializeDelete(id, { deletedAt })`    | push      | shape the tombstone                           |

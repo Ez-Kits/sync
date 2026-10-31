@@ -1,7 +1,7 @@
 import { createLocalDBStorage, type DBQuery } from "@ez-kits/sync-client-core";
 import { IDBFactory } from "fake-indexeddb";
 import { expect, test, vi } from "vite-plus/test";
-import { createSqlJsStorage } from "../src";
+import { createSqlJsDBStorage } from "../src";
 import { openSqlJsEngine } from "../src/worker";
 
 const run = (sql: string, params: unknown[] = []): DBQuery => ({ sql, params, method: "run" });
@@ -35,7 +35,7 @@ test("run returns no rows and get returns nothing when no row matches", async ()
 test("only committed state reaches the snapshot when used through a DB storage", async () => {
   const indexedDBFactory = new IDBFactory();
   const open = async () => {
-    const engine = await openSqlJsEngine({ indexedDB: "contract", indexedDBFactory });
+    const engine = await openSqlJsEngine({ indexedDBName: "contract", indexedDBFactory });
     await engine.exec(run("CREATE TABLE IF NOT EXISTS t (v TEXT)"));
     return engine;
   };
@@ -63,7 +63,7 @@ test("only committed state reaches the snapshot when used through a DB storage",
 
 test("the page-side storage forwards worker and coordination options", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createSqlJsStorage({
+  const storage = createSqlJsDBStorage({
     worker: () => endpoint,
     requestTimeoutMs: 1_000,
     transactionTimeoutMs: 2_000,

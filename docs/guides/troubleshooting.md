@@ -37,11 +37,11 @@ The storage was closed with `client.dispose()` or `dbStorage.close()`. Create a 
 
 ### `Primary field not found`
 
-`defineDrizzleCollection` could not find a primary key column in the table, or `defineTypeormCollection` found no `@PrimaryColumn`. Mark one column as the primary key, or pass `primaryField`.
+`defineDrizzleCollection` could not find a primary key column in the table, or `defineTypeOrmCollection` found no `@PrimaryColumn`. Mark one column as the primary key, or pass `primaryField`.
 
 ### `Primary field mismatch: metadata has "x", expected "y"`
 
-The `primaryField` given to `defineTypeormCollection` is not the entity's primary column.
+The `primaryField` given to `defineTypeOrmCollection` is not the entity's primary column.
 
 ### `Update requires primary field "id"`
 

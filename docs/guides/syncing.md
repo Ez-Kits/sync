@@ -102,17 +102,17 @@ Pushes that fail because of the network or a server error are retried automatica
 A **checkpoint** is a bookmark that tells the sync adapter where the last pull stopped, so the next pull only fetches newer changes. EzSync stores it in the local database, in the same transaction as the pulled rows.
 
 - What a checkpoint contains is up to the sync adapter (for example `{ updatedAt, id }` of the last document).
-- It is saved as a string. By default EzSync uses `JSON.stringify` / `JSON.parse`. If your checkpoint holds values that are not plain JSON, such as a Firestore `Timestamp` or a `Date`, provide your own serializer:
+- Its type comes from the sync adapter, so `getCheckpoint` and `saveCheckpoint` are typed without annotations.
+- It is saved as a string, by the serializer of the adapter that syncs the collection. The Firestore adapters default to one that keeps `Timestamp`s, the Realtime Database adapters to JSON; both take a `checkpointSerializer` option to change it. A sync adapter without one uses `JSON.stringify` / `JSON.parse`. To store checkpoints differently, for example one holding a `Date`, pass your own; it replaces the adapter's for every collection:
 
   ```ts
   createSyncClient({
     // ...
-    checkpoint: {
-      serialize: (checkpoint) =>
-        JSON.stringify({ ...checkpoint, updatedAt: checkpoint.updatedAt.toMillis() }),
+    checkpointSerializer: {
+      serialize: (checkpoint) => JSON.stringify({ ...checkpoint, at: checkpoint.at.getTime() }),
       deserialize: (value) => {
         const parsed = JSON.parse(value);
-        return { ...parsed, updatedAt: Timestamp.fromMillis(parsed.updatedAt) };
+        return { ...parsed, at: new Date(parsed.at) };
       },
     },
   });

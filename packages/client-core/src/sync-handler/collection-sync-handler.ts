@@ -9,13 +9,13 @@ import {
 import type { SyncAdapter } from "./types";
 
 export type CollectionSyncHandlerConfig<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > = BaseSyncHandlerConfig<C, DB, TCheckpoint>;
 
 export class CollectionSyncHandler<
-  C extends CollectionConfigMap<TCheckpoint>,
+  C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
   TCheckpoint,
 > extends BaseSyncHandler<C, DB, TCheckpoint> {

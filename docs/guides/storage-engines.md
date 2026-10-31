@@ -45,11 +45,11 @@ startDBStorageWorker<SqlJsEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createSqlJsStorage } from "@ez-kits/sync-storage-sqljs";
+import { createSqlJsDBStorage } from "@ez-kits/sync-storage-sqljs";
 
-export const dbStorage = createSqlJsStorage({
+export const dbStorage = createSqlJsDBStorage({
   key: "my-app",
-  engineOptions: { indexedDB: "my-app-db" }, // leave out for an in-memory database
+  engineOptions: { indexedDBName: "my-app-db" }, // leave out for an in-memory database
   worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
 });
 ```
@@ -84,9 +84,9 @@ startDBStorageWorker<SqliteWasmEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createSqliteWasmStorage } from "@ez-kits/sync-storage-sqlite-wasm";
+import { createSqliteWasmDBStorage } from "@ez-kits/sync-storage-sqlite-wasm";
 
-export const dbStorage = createSqliteWasmStorage({
+export const dbStorage = createSqliteWasmDBStorage({
   key: "my-app",
   engineOptions: {
     filename: "/my-app.sqlite3", // the file inside the OPFS pool (required)
@@ -131,9 +131,9 @@ startDBStorageWorker<PGliteEngineOptions>(async (options) => {
 
 ```ts
 // db/storage.ts
-import { createPGliteStorage } from "@ez-kits/sync-storage-pglite";
+import { createPGliteDBStorage } from "@ez-kits/sync-storage-pglite";
 
-export const dbStorage = createPGliteStorage({
+export const dbStorage = createPGliteDBStorage({
   key: "my-app",
   engineOptions: { dataDir: "idb://my-app" }, // leave out for an in-memory database
   worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
@@ -149,7 +149,7 @@ Use it with `createDrizzlePgDBAdapter` or `createTypeOrmPgDBAdapter`, and define
 
 ## Storage options shared by every engine
 
-`createSqlJsStorage`, `createSqliteWasmStorage` and `createPGliteStorage` take the same options:
+`createSqlJsDBStorage`, `createSqliteWasmDBStorage` and `createPGliteDBStorage` take the same options:
 
 | Option                 | Default     | Meaning                                                                                      |
 | ---------------------- | ----------- | -------------------------------------------------------------------------------------------- |

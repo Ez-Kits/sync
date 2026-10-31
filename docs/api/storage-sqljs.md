@@ -9,15 +9,15 @@ npm install -D @types/sql.js
 
 | Entry point                          | Use it in            | Contents                         |
 | ------------------------------------ | -------------------- | -------------------------------- |
-| `@ez-kits/sync-storage-sqljs`        | the page             | `createSqlJsStorage`             |
+| `@ez-kits/sync-storage-sqljs`        | the page             | `createSqlJsDBStorage`           |
 | `@ez-kits/sync-storage-sqljs/worker` | the worker (or Node) | `openSqlJsEngine`, `sqlJsConfig` |
 
 Setup walkthrough: [Choosing a storage engine → sql.js](../guides/storage-engines.md#sqljs).
 
-## `createSqlJsStorage(options)`
+## `createSqlJsDBStorage(options)`
 
 ```ts
-function createSqlJsStorage(options: SqlJsStorageOptions): DBStorage;
+function createSqlJsDBStorage(options: SqlJsDBStorageOptions): DBStorage;
 ```
 
 `createWorkerDBStorage` with `dialect: "sqlite"`. Options:
@@ -32,10 +32,10 @@ function createSqlJsStorage(options: SqlJsStorageOptions): DBStorage;
 
 ### `SqlJsEngineOptions`
 
-| Option      | Type     | Description                                                                            |
-| ----------- | -------- | -------------------------------------------------------------------------------------- |
-| `wasmUrl`   | `string` | URL of `sql-wasm.wasm`. Usually set in the worker from a bundler asset import instead. |
-| `indexedDB` | `string` | Name of the IndexedDB database holding the snapshot. Omit for an in-memory database.   |
+| Option          | Type     | Description                                                                            |
+| --------------- | -------- | -------------------------------------------------------------------------------------- |
+| `wasmUrl`       | `string` | URL of `sql-wasm.wasm`. Usually set in the worker from a bundler asset import instead. |
+| `indexedDBName` | `string` | Name of the IndexedDB database holding the snapshot. Omit for an in-memory database.   |
 
 ## `openSqlJsEngine(options?)`
 
@@ -43,7 +43,7 @@ function createSqlJsStorage(options: SqlJsStorageOptions): DBStorage;
 function openSqlJsEngine(options?: OpenSqlJsEngineOptions): Promise<SqlJsEngine>;
 ```
 
-Opens sql.js, restoring the last snapshot from IndexedDB when `indexedDB` is set. Takes `SqlJsEngineOptions` plus:
+Opens sql.js, restoring the last snapshot from IndexedDB when `indexedDBName` is set. Takes `SqlJsEngineOptions` plus:
 
 | Option             | Type                                  | Description                                                                                      |
 | ------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -64,4 +64,4 @@ Returns the sql.js init config `{ locateFile: () => wasmUrl }`, or `undefined` w
 
 ## Types
 
-`SqlJsStorageOptions`, `SqlJsEngineOptions` (both entry points), `OpenSqlJsEngineOptions`, `SqlJsEngine` (`/worker`).
+`SqlJsDBStorageOptions`, `SqlJsEngineOptions` (both entry points), `OpenSqlJsEngineOptions`, `SqlJsEngine` (`/worker`).

@@ -178,7 +178,7 @@ test("acknowledging an older event keeps the latest dirty record state", async (
 });
 
 test("conflict resolution ignores clean rows and supports local, remote, merged and delete decisions", async () => {
-  const { handler, localChangeStore, db } = fixture({ conflictResolver: vi.fn(() => "local") });
+  const { handler, localChangeStore, db } = fixture({ resolveConflict: vi.fn(() => "local") });
   const update = { type: "update", collection: "todos", data: { id: 1, title: "remote" } };
   expect(await handler.resolve(update)).toEqual({ event: update, needsPush: false });
   await localChangeStore.upsertDirtyRecord({
@@ -189,7 +189,7 @@ test("conflict resolution ignores clean rows and supports local, remote, merged 
   });
   expect(await handler.resolve(update)).toEqual({ needsPush: false });
   const remoteResolver = vi.fn(() => "remote");
-  const remote = fixture({ conflictResolver: remoteResolver });
+  const remote = fixture({ resolveConflict: remoteResolver });
   await remote.localChangeStore.upsertDirtyRecord({
     collection: "todos",
     recordId: "1",
@@ -199,7 +199,7 @@ test("conflict resolution ignores clean rows and supports local, remote, merged 
   expect(await remote.handler.resolve(update)).toEqual({ event: update, needsPush: false });
   expect(await remote.localChangeStore.getDirtyRecords()).toEqual([]);
   const merge = fixture({
-    conflictResolver: () => ({ data: { id: 1, title: "merged" } }),
+    resolveConflict: () => ({ data: { id: 1, title: "merged" } }),
   });
   await merge.localChangeStore.upsertDirtyRecord({
     collection: "todos",
@@ -232,7 +232,7 @@ test("conflict resolution ignores clean rows and supports local, remote, merged 
 
 test("conflict resolution considers pending outbox writes and checkpoints only defined entries", async () => {
   const { handler, localChangeStore, checkpointStorage } = fixture({
-    conflictResolver: ({ local }: any) => (local ? "local" : "remote"),
+    resolveConflict: ({ local }: any) => (local ? "local" : "remote"),
   });
   await localChangeStore.appendEvents([
     { id: "e", type: "update", collection: "todos", recordId: "5", data: {}, createdAt: 1 },
@@ -327,7 +327,7 @@ test("missing conflict resolver and recovered push queue both use their fallback
 test("conflict resolver falls back to get and missing primary-field metadata uses id", async () => {
   const noOptional = fixture({
     collections: [{ ...collection, primaryField: undefined }],
-    conflictResolver: vi.fn(() => "remote"),
+    resolveConflict: vi.fn(() => "remote"),
   });
   noOptional.db.getOptional = undefined as never;
   await noOptional.localChangeStore.upsertDirtyRecord({

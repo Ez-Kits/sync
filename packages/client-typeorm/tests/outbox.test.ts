@@ -9,7 +9,7 @@ import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
 import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
 import { Column, Entity, PrimaryColumn } from "typeorm";
 import { expect, test, vi } from "vite-plus/test";
-import { defineTypeormCollection } from "../src/collection";
+import { defineTypeOrmCollection } from "../src/collection";
 import { createTypeOrmPgDBAdapter } from "../src/pg";
 import { createTypeOrmSqliteDBAdapter } from "../src/sqlite";
 
@@ -21,7 +21,7 @@ Entity("todos")(Todo);
 PrimaryColumn("text")(Todo.prototype, "id");
 Column("text", { nullable: true })(Todo.prototype, "title");
 
-const collection = defineTypeormCollection({ name: "todos", entity: Todo, primaryField: "id" });
+const collection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
 const run = (sql: string) => ({ sql, params: [], method: "run" as const });
 const rowsOf = async (storage: DBStorage, sql: string) =>
   (await storage.exec({ sql, params: [], method: "all", rowMode: "object" })).rows;

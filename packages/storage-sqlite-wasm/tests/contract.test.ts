@@ -1,6 +1,6 @@
 import { createLocalDBStorage, type DBQuery } from "@ez-kits/sync-client-core";
 import { expect, test, vi } from "vite-plus/test";
-import { createSqliteWasmStorage } from "../src";
+import { createSqliteWasmDBStorage } from "../src";
 import { openSqliteWasmEngine } from "../src/worker";
 
 const run = (sql: string, params: unknown[] = []): DBQuery => ({ sql, params, method: "run" });
@@ -54,7 +54,7 @@ test("storage transactions are atomic on SQLite WASM", async () => {
 
 test("the page-side storage forwards worker and coordination options", () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null };
-  const storage = createSqliteWasmStorage({
+  const storage = createSqliteWasmDBStorage({
     key: "wasm",
     engineOptions: { filename: "/todos.sqlite3", poolName: "todos" },
     worker: () => endpoint,

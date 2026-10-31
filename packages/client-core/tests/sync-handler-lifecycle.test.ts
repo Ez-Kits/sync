@@ -302,7 +302,7 @@ test("collection pull skips conflicts selected as local", async () => {
         pullOptions = options;
       }),
     },
-    { conflictResolver: () => "local" },
+    { resolveConflict: () => "local" },
   );
   const handler = new CollectionSyncHandler(f.config as never);
   handler.start("todos" as never);
@@ -493,7 +493,7 @@ test("global pull skips locally selected conflicts and reports commit failures",
       }),
     },
     {
-      conflictResolver: () => "local",
+      resolveConflict: () => "local",
       onSyncError,
     },
   );
@@ -878,7 +878,7 @@ test("an adapter that awaits a failed acknowledgement fails the push with it", a
 
 test("acknowledgements and conflict reads run in the sync transaction", async () => {
   const native = { transaction: "native" };
-  const conflictResolver = vi.fn(() => "remote");
+  const resolveConflict = vi.fn(() => "remote");
   let pullOptions: any;
   const f = globalFixture(
     {
@@ -887,7 +887,7 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
       }),
       push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
     },
-    { conflictResolver },
+    { resolveConflict },
   );
   f.db.transaction.mockImplementation(async (fn: any) => fn(f.db, { operations: f.db, native }));
   const store = f.localChangeStore;
@@ -923,7 +923,7 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
     changes: [{ type: "update", collection: "todos", data: { id: 1 } }],
     checkpoint: {},
   });
-  await vi.waitFor(() => expect(conflictResolver).toHaveBeenCalled());
+  await vi.waitFor(() => expect(resolveConflict).toHaveBeenCalled());
   expect(spy.getDirtyRecords).toHaveBeenCalledWith({ collection: "todos", recordId: "1" }, native);
   expect(spy.getPendingEvents).toHaveBeenLastCalledWith(
     { collection: "todos", recordId: "1" },
