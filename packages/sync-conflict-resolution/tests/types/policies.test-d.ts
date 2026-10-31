@@ -1,7 +1,9 @@
 import type * as Core from "@ez-kits/sync-client-core";
-import type {
-  ChangeBusEventDataMapFromCollectionConfigMap,
-  CollectionConfig,
+import {
+  createSyncClient,
+  type BaseDBAdapter,
+  type ChangeBusEventDataMapFromCollectionConfigMap,
+  type CollectionConfig,
 } from "@ez-kits/sync-client-core";
 import { expectTypeOf, test } from "vite-plus/test";
 import {
@@ -23,9 +25,10 @@ interface Todo {
   title: string;
   updatedAt: Date;
 }
-type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<
-  [CollectionConfig<"todos", unknown, Partial<Todo>, Todo, Todo, "id">]
->;
+type TodoConfig = CollectionConfig<"todos", unknown, Partial<Todo>, Todo, Todo, "id">;
+type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<[TodoConfig]>;
+declare const todos: TodoConfig;
+declare const db: BaseDBAdapter<[TodoConfig], unknown, { todos: unknown }>;
 
 test("re-exported core types are identical", () => {
   expectTypeOf<ChangeBusEventDataMap>().toEqualTypeOf<Core.ChangeBusEventDataMap>();
@@ -81,4 +84,39 @@ test("lastWriteWins version getters are typed from the data map", () => {
     onMissingVersion: "remote",
     onTie: "local",
   });
+});
+
+test("policies stored in a variable first fit any client", () => {
+  const merge = mergeFields({ fields: {}, onMissingLocal: "remote", onRemoteDelete: "remote" });
+  const latest = lastWriteWins({
+    getLocalVersion: () => 1,
+    getRemoteVersion: () => 1,
+    onMissingVersion: "remote",
+    onTie: "local",
+  });
+  const policies: ConflictResolution<DataMap>[] = [
+    merge,
+    latest,
+    localWins(),
+    deleteVsUpdate({ onMissingLocal: "remote", onRemoteDelete: "local" }),
+  ];
+  expectTypeOf(policies).items.toEqualTypeOf<ConflictResolution<DataMap>>();
+});
+
+test("policies passed inline to a client infer its collection types", () => {
+  createSyncClient({
+    collections: [todos],
+    dbAdapter: db,
+    resolveConflict: lastWriteWins({
+      getLocalVersion: (local) => {
+        expectTypeOf(local).toEqualTypeOf<Todo | undefined>();
+        return local?.updatedAt;
+      },
+      getRemoteVersion: () => 1,
+      onMissingVersion: "remote",
+      onTie: "local",
+    }),
+  });
+  const policy = mergeFields({ fields: {}, onMissingLocal: "remote", onRemoteDelete: "remote" });
+  createSyncClient({ collections: [todos], dbAdapter: db, resolveConflict: policy });
 });

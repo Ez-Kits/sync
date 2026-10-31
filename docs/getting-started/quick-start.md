@@ -199,7 +199,6 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
 
 ```tsx
 // src/App.tsx
-import { useCallback } from "react";
 import { todos } from "./db/schema";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync";
 
@@ -207,8 +206,7 @@ function TodoList() {
   const client = useSyncClient();
   const { data = [] } = useLiveQuery({
     collections: ["todos"],
-    // Keep the query function stable with useCallback.
-    query: useCallback((db) => db.select().from(todos).orderBy(todos.updatedAt), []),
+    query: (db) => db.select().from(todos).orderBy(todos.updatedAt),
   });
 
   return (

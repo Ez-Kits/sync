@@ -101,13 +101,14 @@ test("live query reports pending and data and unsubscribes on unmount", async ()
   expect(cleanupSpy).toHaveBeenCalledOnce();
 });
 
-test("live query stores query errors and reruns when query inputs change", async () => {
+test("live query stores query errors and reruns when deps change", async () => {
   const { client } = setup();
   const badQuery = vi.fn<() => Promise<string>>(async () => {
     throw new Error("query failed");
   });
   const { result, rerender } = renderHook(
-    ({ query }: { query: () => Promise<string> }) => client.useLiveQuery({ query } as never),
+    ({ query }: { query: () => Promise<string> }) =>
+      client.useLiveQuery({ query, deps: [query] } as never),
     { wrapper: client.SyncClientProvider, initialProps: { query: badQuery } },
   );
   await waitFor(() => expect(result.current.error?.message).toBe("query failed"));
@@ -124,4 +125,54 @@ test("live query converts non-Error rejections", async () => {
     { wrapper: client.SyncClientProvider },
   );
   await waitFor(() => expect(result.current.error?.message).toBe("string failure"));
+});
+
+test("live query is pending until its first result", () => {
+  const { client } = setup();
+  const { result } = renderHook(() => client.useLiveQuery({ query: async () => "ok" } as never), {
+    wrapper: client.SyncClientProvider,
+  });
+  expect(result.current).toMatchObject({ data: undefined, isPending: true });
+});
+
+test("a new query function keeps the live query and runs on the next rerun", async () => {
+  const { client } = setup();
+  const liveQuery = vi.spyOn(client.syncClient, "liveQuery");
+  let label = "first";
+  const { result, rerender } = renderHook(
+    () => client.useLiveQuery({ collections: ["todos"], query: async () => label } as never),
+    { wrapper: client.SyncClientProvider },
+  );
+  await waitFor(() => expect(result.current.data).toBe("first"));
+  label = "second";
+  rerender();
+  rerender();
+  expect(liveQuery).toHaveBeenCalledOnce();
+  await act(async () => {
+    await client.syncClient.collections.todos.insert({ id: 1 } as never);
+  });
+  await waitFor(() => expect(result.current.data).toBe("second"));
+  expect(liveQuery).toHaveBeenCalledOnce();
+});
+
+test("results of a replaced live query are ignored", async () => {
+  const { client } = setup();
+  let releaseOld!: (value: string) => void;
+  const oldQuery = () =>
+    new Promise<string>((resolve) => {
+      releaseOld = resolve;
+    });
+  const { result, rerender } = renderHook(
+    ({ query }: { query: () => Promise<string> }) =>
+      client.useLiveQuery({ query, deps: [query] } as never),
+    { wrapper: client.SyncClientProvider, initialProps: { query: oldQuery } },
+  );
+  await waitFor(() => expect(releaseOld).toBeDefined());
+  rerender({ query: async () => "new" });
+  await waitFor(() => expect(result.current.data).toBe("new"));
+  await act(async () => {
+    releaseOld("old");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(result.current.data).toBe("new");
 });

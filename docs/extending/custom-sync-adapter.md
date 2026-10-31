@@ -92,9 +92,11 @@ The cursor is an opaque string from the server, for example the last change's se
 // rest-sync-adapter.ts
 import {
   PushRejectedError,
-  type ChangeBusEventDataMap,
+  type ChangeBusEventDataMapFromCollectionConfigMap,
+  type CollectionConfigMap,
+  type CollectionNames,
   type PullCommitChangesOptions,
-  type SyncAdapter,
+  type SyncAdapterFor,
 } from "@ez-kits/sync-client-core";
 
 /** One change, as the server sends it. */
@@ -106,12 +108,13 @@ interface RemoteChange {
   deletedAt?: number;
 }
 
-export interface RestSyncAdapterOptions<N extends string> {
+export interface RestSyncAdapterOptions<C extends CollectionConfigMap> {
   baseUrl: string;
-  /** The collections to sync; each maps to `/sync/<name>`. */
-  collections: readonly N[];
-  /** The primary key field of every collection. Default `"id"`. */
-  primaryKey?: string;
+  /**
+   * The collection configs to sync (the same objects given to the client); each maps to
+   * `/sync/<name>`. The adapter takes its types and primary keys from them.
+   */
+  collections: C;
   /** How often to poll for remote changes. Default 5 seconds. */
   pollIntervalMs?: number;
   /** Headers for every request, e.g. an auth token. */
@@ -122,13 +125,18 @@ export interface RestSyncAdapterOptions<N extends string> {
 /** The checkpoint of a collection is the server's opaque cursor string. */
 export type RestCheckpoint = string;
 
-export function createRestSyncAdapter<C extends ChangeBusEventDataMap>(
-  options: RestSyncAdapterOptions<keyof C & string>,
-): SyncAdapter<C, keyof C & string, RestCheckpoint> {
-  type N = keyof C & string;
-  type PulledEvent = PullCommitChangesOptions<C, N, RestCheckpoint>["changes"][number];
+export function createRestSyncAdapter<C extends CollectionConfigMap>(
+  options: RestSyncAdapterOptions<C>,
+): SyncAdapterFor<C, RestCheckpoint> {
+  type N = CollectionNames<C>;
+  type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<C>;
+  type PulledEvent = PullCommitChangesOptions<DataMap, N, RestCheckpoint>["changes"][number];
 
-  const { baseUrl, collections, primaryKey = "id", pollIntervalMs = 5000 } = options;
+  const { baseUrl, pollIntervalMs = 5000 } = options;
+  const collections: N[] = options.collections.map((config) => config.name);
+  const primaryKeys = new Map<string, string>(
+    options.collections.map((config) => [config.name, String(config.primaryField)]),
+  );
   const request = async (path: string, init: RequestInit = {}) => {
     const headers = { "content-type": "application/json", ...(await options.headers?.()) };
     return (options.fetch ?? fetch)(`${baseUrl}${path}`, { ...init, headers });
@@ -141,10 +149,12 @@ export function createRestSyncAdapter<C extends ChangeBusEventDataMap>(
         {
           type: "update",
           collection,
-          data: { ...change.data, [primaryKey]: change.id },
+          data: { ...change.data, [primaryKeys.get(collection)!]: change.id },
         }) as PulledEvent;
 
   return {
+    // Pushed the events of these collections only.
+    collections,
     pull({ checkpoint, commitChanges, onError }) {
       // Pull rule 1: start from the checkpoint EzSync hands over.
       const cursors = { ...checkpoint } as Partial<Record<N, RestCheckpoint>>;
@@ -192,7 +202,9 @@ export function createRestSyncAdapter<C extends ChangeBusEventDataMap>(
         collection: event.collection,
         type: event.type,
         id:
-          event.type === "delete" ? event.id : (event.data as Record<string, unknown>)[primaryKey],
+          event.type === "delete"
+            ? event.id
+            : (event.data as Record<string, unknown>)[primaryKeys.get(event.collection)!],
         data: event.type === "delete" ? undefined : event.data,
       }));
       const response = await request("/sync", {
@@ -216,23 +228,20 @@ export function createRestSyncAdapter<C extends ChangeBusEventDataMap>(
 
 ### Use it
 
-The adapter is generic over the collections' **data map**. Give it explicitly; it is computed from your collections:
+The adapter takes the collection configs, and `SyncAdapterFor<C, TCheckpoint>` computes its types from them, so no type argument is needed:
 
 ```ts
-import {
-  createSyncClient,
-  type ChangeBusEventDataMapFromCollectionConfigMap,
-} from "@ez-kits/sync-client-core";
+import { createSyncClient } from "@ez-kits/sync-client-core";
 import { createRestSyncAdapter } from "./rest-sync-adapter";
 
-type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<[typeof todosCollection]>;
+const collections = [todosCollection, projectsCollection];
 
 const client = createSyncClient({
-  collections: [todosCollection],
+  collections,
   dbAdapter,
-  syncAdapter: createRestSyncAdapter<DataMap>({
+  syncAdapter: createRestSyncAdapter({
     baseUrl: "https://api.example.com",
-    collections: ["todos"],
+    collections,
     headers: async () => ({ authorization: `Bearer ${await getToken()}` }),
   }),
 });
@@ -240,7 +249,7 @@ const client = createSyncClient({
 client.startSync();
 ```
 
-List every collection in the tuple type, in the same order as `collections`: `[typeof todosCollection, typeof projectsCollection]`.
+A factory that is not given the configs cannot infer the types: TypeScript checks `createRestSyncAdapter({ ... })` before it has inferred anything from `collections` in the same object. Take the configs, or ask for the data map as a type argument.
 
 ### What the server must do
 
@@ -283,9 +292,10 @@ export function createMemorySyncAdapter<C extends ChangeBusEventDataMap>() {
 ```
 
 ```ts
-type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<[typeof todosCollection]>;
+const collections = [todosCollection];
+type DataMap = ChangeBusEventDataMapFromCollectionConfigMap<typeof collections>;
 const syncAdapter = createMemorySyncAdapter<DataMap>();
-const client = createSyncClient({ collections: [todosCollection], dbAdapter, syncAdapter });
+const client = createSyncClient({ collections, dbAdapter, syncAdapter });
 client.startSync();
 
 await client.collections.todos.insert({ id: "a", title: "A", completed: false, updatedAt: 1 });

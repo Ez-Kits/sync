@@ -23,19 +23,17 @@ function TodoApp() {
 
   const { data, isPending } = useLiveQuery({
     collections: TODO_COLLECTIONS,
-    query: useCallback(
-      (queryDb) =>
-        queryDb.repositories.todos.find({
-          // TypeORM matches `undefined` fields too: leave unused fields out instead.
-          where: {
-            ...(filter === "all" ? {} : { completed: filter === "completed" }),
-            ...(search.trim() ? { title: Like(`%${search.trim()}%`) } : {}),
-          },
-          order: { updatedAt: "DESC", id: "DESC" },
-          take: VISIBLE_TODO_LIMIT,
-        }),
-      [filter, search],
-    ),
+    query: (queryDb) =>
+      queryDb.repositories.todos.find({
+        // TypeORM matches `undefined` fields too: leave unused fields out instead.
+        where: {
+          ...(filter === "all" ? {} : { completed: filter === "completed" }),
+          ...(search.trim() ? { title: Like(`%${search.trim()}%`) } : {}),
+        },
+        order: { updatedAt: "DESC", id: "DESC" },
+        take: VISIBLE_TODO_LIMIT,
+      }),
+    deps: [filter, search],
   });
 
   useEffect(() => {
@@ -60,7 +58,7 @@ function TodoApp() {
 
   const { data: todoCount = null } = useLiveQuery({
     collections: TODO_COLLECTIONS,
-    query: useCallback((queryDb) => queryDb.repositories.todos.count(), []),
+    query: (queryDb) => queryDb.repositories.todos.count(),
   });
 
   useEffect(() => client.subscribeRole(setRole), [client]);

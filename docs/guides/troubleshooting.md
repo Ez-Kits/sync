@@ -79,9 +79,9 @@ Check, in order:
 
 This is by design. One tab, the **leader**, syncs for all of them. The others show status `idle`. When the leader closes, another tab takes over.
 
-### A live query re-runs constantly (React)
+### A live query shows stale results after a prop or state change (React)
 
-The `query` function passed to `useLiveQuery` is a new function on every render. Wrap it in `useCallback`. See [React](react.md#read-data-with-uselivequery).
+`useLiveQuery` restarts only when `collections` or `deps` change. Put every prop and state value its `query` reads in `deps`. See [React](react.md#read-data-with-uselivequery).
 
 ### A live query never updates
 

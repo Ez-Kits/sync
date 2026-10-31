@@ -23,19 +23,17 @@ function TodoApp() {
 
   const { data, isPending } = useLiveQuery({
     collections: TODO_COLLECTIONS,
-    query: useCallback(
-      (queryDb) =>
-        queryDb.query.todos.findMany({
-          // Relational filters reject `undefined`: leave unused fields out instead.
-          where: {
-            ...(filter === "all" ? {} : { completed: filter === "completed" }),
-            ...(search.trim() ? { title: { like: `%${search.trim()}%` } } : {}),
-          },
-          orderBy: { updatedAt: "desc", id: "desc" },
-          limit: VISIBLE_TODO_LIMIT,
-        }),
-      [filter, search],
-    ),
+    query: (queryDb) =>
+      queryDb.query.todos.findMany({
+        // Relational filters reject `undefined`: leave unused fields out instead.
+        where: {
+          ...(filter === "all" ? {} : { completed: filter === "completed" }),
+          ...(search.trim() ? { title: { like: `%${search.trim()}%` } } : {}),
+        },
+        orderBy: { updatedAt: "desc", id: "desc" },
+        limit: VISIBLE_TODO_LIMIT,
+      }),
+    deps: [filter, search],
   });
 
   useEffect(() => {
@@ -60,10 +58,7 @@ function TodoApp() {
 
   const { data: countRows } = useLiveQuery({
     collections: TODO_COLLECTIONS,
-    query: useCallback(
-      (queryDb) => queryDb.select({ count: sql<number>`count(*)` }).from(todos),
-      [],
-    ),
+    query: (queryDb) => queryDb.select({ count: sql<number>`count(*)` }).from(todos),
   });
   const todoCount = countRows ? Number(countRows[0]?.count ?? 0) : null;
 

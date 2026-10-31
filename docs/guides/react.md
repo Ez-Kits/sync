@@ -47,20 +47,18 @@ createRoot(document.getElementById("root")!).render(
 ## Read data with `useLiveQuery`
 
 ```tsx
-import { useCallback } from "react";
 import { useLiveQuery } from "./sync";
 
 function OpenTodos({ search }: { search: string }) {
   const { data, isPending, error } = useLiveQuery({
     collections: ["todos"],
-    query: useCallback(
-      (db) =>
-        db.query.todos.findMany({
-          where: { completed: false, ...(search ? { title: { like: `%${search}%` } } : {}) },
-          orderBy: { updatedAt: "desc" },
-        }),
-      [search],
-    ),
+    query: (db) =>
+      db.query.todos.findMany({
+        where: { completed: false, ...(search ? { title: { like: `%${search}%` } } : {}) },
+        orderBy: { updatedAt: "desc" },
+      }),
+    // The props and state `query` reads: a change reruns it at once.
+    deps: [search],
   });
 
   if (error) return <p>Could not load: {error.message}</p>;
@@ -77,10 +75,10 @@ function OpenTodos({ search }: { search: string }) {
 
 - `query` gets the ORM query builder and the schema, exactly like [`client.liveQuery`](reading-data.md#live-queries).
 - `data` is `undefined` until the first result arrives.
-- `isPending` is `true` while a query runs.
+- `isPending` is `true` until the first result arrives, and while the query reruns.
 - `error` is set when the query throws.
 
-> **Keep `query` stable.** Wrap it in `useCallback` with the values it uses as dependencies, or define it outside the component. A new function on every render starts a new live query on every render. `collections` may be a new array each render; it is compared by content.
+> **List what `query` reads in `deps`.** `query` need not be stable: each run uses the latest function, and a new function alone does not restart the live query. When a value in `deps` changes (compared with `Object.is`, like `useEffect` dependencies), the live query restarts and reruns at once. A value missing from `deps` is only picked up on the next change of the watched collections. `collections` may be a new array each render; it is compared by content.
 
 ## Write data
 

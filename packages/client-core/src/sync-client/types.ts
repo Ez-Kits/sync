@@ -19,6 +19,17 @@ import type {
   SyncStatusEvent,
 } from "../sync-handler";
 
+/**
+ * The client-level sync adapter type for collections `C`. A custom adapter factory that takes
+ * the collection configs (`createMyAdapter({ collections: [todos] })`) and returns this infers
+ * every type from them; called inline in `createSyncClient`, it needs no type argument.
+ */
+export type SyncAdapterFor<C extends CollectionConfigMap, TCheckpoint = unknown> = SyncAdapter<
+  ChangeBusEventDataMapFromCollectionConfigMap<C>,
+  CollectionNames<C>,
+  TCheckpoint
+>;
+
 export interface SyncClientConfig<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
@@ -27,11 +38,7 @@ export interface SyncClientConfig<
   collections: C;
   /** The adapter (and through it, the `DBStorage`) this client reads from and writes to. */
   dbAdapter: DB;
-  syncAdapter?: SyncAdapter<
-    ChangeBusEventDataMapFromCollectionConfigMap<C>,
-    CollectionNames<C>,
-    TCheckpoint
-  >;
+  syncAdapter?: SyncAdapterFor<C, TCheckpoint>;
   /**
    * How pull checkpoints are turned into strings and back. Checkpoints are always stored in
    * the database of `dbAdapter`, next to the synced rows and the outbox: each one is saved in

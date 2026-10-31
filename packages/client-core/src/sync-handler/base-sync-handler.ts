@@ -11,7 +11,12 @@ import type {
   DBAdapterTransactionContext,
 } from "../db-adapter";
 import { LeaderChangedError } from "../db-storage/errors";
-import type { DirtyRecordKey, DirtyRecordState, ILocalChangeStore } from "../local-change-store";
+import type {
+  DirtyRecordKey,
+  DirtyRecordState,
+  ILocalChangeStore,
+  StoredChangeBusEvent,
+} from "../local-change-store";
 import { isPermanentPushError } from "./errors";
 import type { ConflictResolution, PushRejection, SyncAdapter } from "./types";
 
@@ -379,7 +384,7 @@ export abstract class BaseSyncHandler<
         return {
           type: "delete",
           collection: collectionName,
-          id: coerceRecordId(stored.recordId),
+          id: storedDeleteId(stored),
           deletedAt: stored.createdAt,
           eventId: stored.id,
         } as ChangeBusEvent<SyncHandlerDataMap<C>, N>;
@@ -802,6 +807,13 @@ interface PushPass {
 
 function recordKeyString({ collection, recordId }: DirtyRecordKey): string {
   return `${collection}\0${recordId}`;
+}
+
+/** The id a stored delete was written with; older outboxes only kept it as a string. */
+function storedDeleteId(stored: StoredChangeBusEvent): unknown {
+  const { data } = stored;
+  if (typeof data === "object" && data !== null && "id" in data) return data.id;
+  return coerceRecordId(stored.recordId);
 }
 
 /**

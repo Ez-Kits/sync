@@ -7,8 +7,6 @@ export interface SyncStatusEvent {
   status: SyncStatus;
   /** Present when status is `error`. */
   error?: unknown;
-  /** Number of locally queued events, when available. */
-  pendingEvents?: number;
   changedAt: number;
 }
 

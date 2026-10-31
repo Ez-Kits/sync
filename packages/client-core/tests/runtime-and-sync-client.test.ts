@@ -46,7 +46,7 @@ test("collection runtime persists outbox and dirty records before publishing, an
     expect.arrayContaining([
       expect.objectContaining({ type: "create", recordId: "1", data: { id: "1", title: "a" } }),
       expect.objectContaining({ type: "update", recordId: "1" }),
-      expect.objectContaining({ type: "delete", recordId: "1", data: null }),
+      expect.objectContaining({ type: "delete", recordId: "1", data: { id: "1" } }),
     ]),
   );
   expect((await store.getDirtyRecords("todos"))[0]?.state).toBe("deleted");
@@ -343,6 +343,11 @@ test("collection runtime rejects primary key values that are not a string or num
   await runtime.insert({ id: 7, title: "numeric" } as never);
   expect(db.commitLocalMutation).toHaveBeenCalledOnce();
   expect((await store.getPendingEvents())[0]).toMatchObject({ recordId: "7" });
+  await runtime.delete("123" as never);
+  expect((await store.getPendingEvents())[1]).toMatchObject({
+    recordId: "123",
+    data: { id: "123" },
+  });
 });
 
 test("writes to collections no sync adapter handles stay out of the outbox", async () => {

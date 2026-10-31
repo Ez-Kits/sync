@@ -113,6 +113,22 @@ test("base handler maps pending events and maintains dirty state after acknowled
   expect(await localChangeStore.getPendingEvents()).toHaveLength(0);
 });
 
+test("pending deletes push the id with the type it was written with", async () => {
+  const { handler, localChangeStore } = fixture();
+  await localChangeStore.appendEvents([
+    {
+      id: "s",
+      type: "delete",
+      collection: "todos",
+      data: { id: "123" },
+      recordId: "123",
+      createdAt: 1,
+    },
+    { id: "n", type: "delete", collection: "todos", data: { id: 5 }, recordId: "5", createdAt: 2 },
+  ]);
+  expect((await handler.collect()).map((event: any) => event.id)).toEqual(["123", 5]);
+});
+
 test("acknowledging one of several changes preserves the latest dirty state", async () => {
   const { handler, localChangeStore } = fixture();
   await localChangeStore.appendEvents([

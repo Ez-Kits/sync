@@ -71,7 +71,7 @@ For storages with `dialect: "postgres"` (PGlite). Uses `drizzle-orm/pg-proxy`. D
 | Option          | Type                                  | Required | Description                                                                                                         |
 | --------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | `dbStorage`     | `DBStorage`                           | yes      | Must match the adapter's dialect, or the call throws.                                                               |
-| `collections`   | collection tuple                      | yes      | The same collections you pass to the sync client.                                                                   |
+| `collections`   | collection array                      | yes      | The same collections you pass to the sync client.                                                                   |
 | `relations`     | result of Drizzle's `defineRelations` | no       | Relations for `db.query`. Default: every collection table, without relations.                                       |
 | `drizzleConfig` | Drizzle options except `relations`    | no       | `logger`, `casing`, `codecs`, ... `codecs` default to Drizzle's sql.js codecs (SQLite) or PGlite codecs (Postgres). |
 

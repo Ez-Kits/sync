@@ -4,7 +4,10 @@ export interface StoredChangeBusEvent {
   id: string;
   type: "create" | "update" | "delete";
   collection: string;
-  /** Create/update payload; null for deletes. */
+  /**
+   * Create/update payload. For a delete, `{ id }`: the primary key as written, so it is pushed
+   * with its own type (`recordId` is always a string). Outboxes written before this hold `null`.
+   */
   data: unknown;
   /** Stringified primary key for indexing and dirty tracking. */
   recordId: string;

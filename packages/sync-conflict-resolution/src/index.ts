@@ -14,17 +14,27 @@ export type ConflictContext<C extends ChangeBusEventDataMap> = Parameters<Confli
 
 export type ConflictDecision = "local" | "remote" | { data: unknown };
 
+/**
+ * The collection names a policy resolves. Every policy's data map `C` defaults to `any`: inline
+ * in `createSyncClient` it is inferred from the collections, and a policy stored in a variable
+ * first (`const policy = mergeFields({ ... })`) fits any client. For such an untyped map the
+ * names widen to `any` too, as `keyof any` would not fit a client's names.
+ */
+type PolicyNames<C extends ChangeBusEventDataMap> = string extends keyof C ? any : keyof C;
+
 /** Always preserve the local record when a remote conflict is received. */
-export function localWins<
-  C extends ChangeBusEventDataMap = ChangeBusEventDataMap,
->(): ConflictResolution<C> {
+export function localWins<C extends ChangeBusEventDataMap = any>(): ConflictResolution<
+  C,
+  PolicyNames<C>
+> {
   return () => "local";
 }
 
 /** Always apply the incoming remote event when a conflict is received. */
-export function remoteWins<
-  C extends ChangeBusEventDataMap = ChangeBusEventDataMap,
->(): ConflictResolution<C> {
+export function remoteWins<C extends ChangeBusEventDataMap = any>(): ConflictResolution<
+  C,
+  PolicyNames<C>
+> {
   return () => "remote";
 }
 
@@ -39,9 +49,9 @@ export interface LastWriteWinsOptions<C extends ChangeBusEventDataMap> {
 }
 
 /** Compare caller-selected version metadata; strings are compared lexicographically. */
-export function lastWriteWins<C extends ChangeBusEventDataMap>(
+export function lastWriteWins<C extends ChangeBusEventDataMap = any>(
   options: LastWriteWinsOptions<C>,
-): ConflictResolution<C> {
+): ConflictResolution<C, PolicyNames<C>> {
   return ({ remote, local }) => {
     const localVersion = normalizeVersion(options.getLocalVersion(local));
     const remoteVersion = normalizeVersion(options.getRemoteVersion(remote));
@@ -74,9 +84,9 @@ export interface FieldMergeOptions {
  * Use remote data as the base and apply only the explicitly configured field merges.
  * This is a shallow merge; it does not recursively combine nested objects or arrays.
  */
-export function mergeFields<C extends ChangeBusEventDataMap>(
+export function mergeFields<C extends ChangeBusEventDataMap = any>(
   options: FieldMergeOptions,
-): ConflictResolution<C> {
+): ConflictResolution<C, PolicyNames<C>> {
   return ({ remote, local }) => {
     if (remote.type === "delete") return options.onRemoteDelete;
     if (!isRecord(local)) return options.onMissingLocal;
@@ -104,9 +114,9 @@ export interface DeleteUpdateOptions {
  * An absent local row is treated as a possible local delete; the hook cannot distinguish
  * that from an unavailable row read, so configure `onMissingLocal` deliberately.
  */
-export function deleteVsUpdate<C extends ChangeBusEventDataMap>(
+export function deleteVsUpdate<C extends ChangeBusEventDataMap = any>(
   options: DeleteUpdateOptions,
-): ConflictResolution<C> {
+): ConflictResolution<C, PolicyNames<C>> {
   return ({ remote, local }) => {
     if (remote.type === "delete") return options.onRemoteDelete;
     if (local === undefined) return options.onMissingLocal;
@@ -126,9 +136,9 @@ export interface ManualResolutionOptions<C extends ChangeBusEventDataMap> {
  * Delegate a conflict decision to the application and use the explicit fallback when it
  * returns undefined. The application owns any persistence/replay of deferred conflicts.
  */
-export function manualResolution<C extends ChangeBusEventDataMap>(
+export function manualResolution<C extends ChangeBusEventDataMap = any>(
   options: ManualResolutionOptions<C>,
-): ConflictResolution<C> {
+): ConflictResolution<C, PolicyNames<C>> {
   return async (context) => (await options.onConflict(context)) ?? options.fallback;
 }
 

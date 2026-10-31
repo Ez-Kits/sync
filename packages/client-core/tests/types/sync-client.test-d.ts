@@ -4,14 +4,18 @@ import {
   isPermanentPushError,
   PushRejectedError,
   type ChangeBusEvent,
+  type CollectionConfigMap,
   type ChangeBusEventDataMapFromCollectionConfigMap,
   type DBRole,
+  type SyncAdapterFor,
   type SyncClient,
   type SyncStatusEvent,
 } from "../../src";
 import {
   collections,
   db,
+  todoConfig,
+  userConfig,
   type Checkpoint,
   type Collections,
   type DB,
@@ -107,4 +111,24 @@ test("push rejections carry the typed event", () => {
   expectTypeOf(isPermanentPushError).parameter(0).toBeUnknown();
   expectTypeOf<PushRejectedError>().toHaveProperty("permanent");
   expectTypeOf<PushRejectedError>().toExtend<Error>();
+});
+
+test("collections stored in a variable are accepted", () => {
+  const stored = [todoConfig, userConfig];
+  const fromVariable = createSyncClient({ collections: stored, dbAdapter: db });
+  expectTypeOf(fromVariable.collections.todos.insert).parameter(0).toEqualTypeOf<TodoInsert>();
+  // @ts-expect-error unknown collections are still rejected
+  void fromVariable.collections.projects;
+});
+
+declare function createCustomSyncAdapter<C extends CollectionConfigMap>(options: {
+  collections: C;
+}): SyncAdapterFor<C, Checkpoint>;
+
+test("an adapter typed with SyncAdapterFor infers from its collection configs", () => {
+  createSyncClient({
+    collections: [todoConfig, userConfig],
+    dbAdapter: db,
+    syncAdapter: createCustomSyncAdapter({ collections: [todoConfig, userConfig] }),
+  });
 });

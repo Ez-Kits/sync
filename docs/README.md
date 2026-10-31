@@ -67,11 +67,11 @@ Every layer is a small contract you can implement yourself.
 These docs are written to be read by people and by coding agents. If you are an agent working on an app that uses EzSync, these rules prevent the most common mistakes:
 
 - A working setup always has four parts: **collections**, a **DB storage**, a **DB adapter** of the same dialect, and a **sync client**. A **sync adapter** is optional (without it the app is local-only).
-- Pass the **same collections** to the DB adapter and to `createSyncClient` / `createSyncClientReact`. Pass them as an inline array literal (or a tuple type); a plain `T[]` variable does not satisfy the `CollectionConfigMap` tuple type.
+- Pass the **same collections** to the DB adapter and to `createSyncClient` / `createSyncClientReact`. Inline (`collections: [todos]`) or from a variable (`const collections = [todos]`) both work.
 - Write through `client.collections.<name>.insert / update / delete`. Writing with the ORM (`dbAdapter.db`) directly skips the outbox, so the change is never synced.
 - EzSync creates **its own** tables (`ez_sync_*`). The app creates **its own** tables, usually in the storage worker's `open` function. See [Your database schema](guides/database-schema.md).
 - Never send `BEGIN` / `COMMIT` yourself and never call Drizzle's `db.transaction()`. Use `dbAdapter.transaction()` or `dbStorage.transaction()`.
 - A `resolveConflict` function must not query the database. It runs inside a transaction and would deadlock.
-- In React, wrap the `query` passed to `useLiveQuery` in `useCallback` (or define it outside the component). A new function on every render re-subscribes on every render.
+- In React, list the props and state that the `query` passed to `useLiveQuery` reads in its `deps` option (like `useEffect` dependencies). `query` itself need not be stable; without `deps`, a changed value is only used on the next change of the watched collections.
 - Only one tab (the **leader**) syncs. `client.role` tells you which one this is; this is expected, not a bug.
 - The authoritative type definitions live in `packages/*/src`. When a doc and the source disagree, trust the source and fix the doc.
