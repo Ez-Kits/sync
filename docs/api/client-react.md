@@ -31,27 +31,29 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
 ```ts
 const { data, isPending, error } = useLiveQuery({
   collections: ["todos"],
-  query: useCallback((db, schema) => db.select().from(schema.todos), []),
+  query: (db, schema) => db.select().from(schema.todos).where(eq(schema.todos.listId, listId)),
+  deps: [listId],
 });
 ```
 
-| Option        | Type                                             | Description                                                                                      |
-| ------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `collections` | collection names                                 | Re-run when these change. Omit to re-run on any change. Compared by content.                     |
-| `query`       | `(queryBuilder, querySchema) => T \| Promise<T>` | The ORM query. **Must be stable** (`useCallback` or module level); a new function re-subscribes. |
+| Option        | Type                                             | Description                                                                                   |
+| ------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `collections` | collection names                                 | Re-run when these change. Omit to re-run on any change. Compared by content.                  |
+| `query`       | `(queryBuilder, querySchema) => T \| Promise<T>` | The ORM query. Need not be stable: each run uses the latest function.                         |
+| `deps`        | `readonly unknown[]`                             | The props and state `query` reads. A change (by `Object.is`) restarts the live query at once. |
 
-| Result      | Type                 | Description                                           |
-| ----------- | -------------------- | ----------------------------------------------------- |
-| `data`      | `T \| undefined`     | The latest result; `undefined` before the first one.  |
-| `isPending` | `boolean`            | `true` while the query runs.                          |
-| `error`     | `Error \| undefined` | Set when the query threw; cleared when it runs again. |
+| Result      | Type                 | Description                                                |
+| ----------- | -------------------- | ---------------------------------------------------------- |
+| `data`      | `T \| undefined`     | The latest result; `undefined` before the first one.       |
+| `isPending` | `boolean`            | `true` until the first result, and while the query reruns. |
+| `error`     | `Error \| undefined` | Set when the query threw; cleared when it runs again.      |
 
 ## Types
 
-| Export                         | Description                  |
-| ------------------------------ | ---------------------------- |
-| `CreateSyncClientReactOptions` | Same as `SyncClientConfig`.  |
-| `CreateSyncClientReactResult`  | The returned object.         |
-| `UseLiveQuery`                 | The type of `useLiveQuery`.  |
-| `UseLiveQueryOptions`          | `{ collections?, query }`    |
-| `UseLiveQueryResult`           | `{ data, isPending, error }` |
+| Export                         | Description                      |
+| ------------------------------ | -------------------------------- |
+| `CreateSyncClientReactOptions` | Same as `SyncClientConfig`.      |
+| `CreateSyncClientReactResult`  | The returned object.             |
+| `UseLiveQuery`                 | The type of `useLiveQuery`.      |
+| `UseLiveQueryOptions`          | `{ collections?, query, deps? }` |
+| `UseLiveQueryResult`           | `{ data, isPending, error }`     |

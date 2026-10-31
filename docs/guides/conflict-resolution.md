@@ -77,7 +77,7 @@ The merged record is saved locally **and pushed**, so both sides end up with it.
 
 See the [API reference](../api/sync-conflict-resolution.md) for every option.
 
-> **Tip: write the policy inline**, as `resolveConflict: lastWriteWins({ ... })`. TypeScript then infers your collections' types for `local` and `remote`. A policy stored in a variable first (`const policy = mergeFields({ ... })`) loses them and is rejected by the client's types.
+> **Tip: write the policy inline**, as `resolveConflict: lastWriteWins({ ... })`. TypeScript then infers your collections' types for `local` and `remote` in the callbacks. A policy stored in a variable first (`const policy = mergeFields({ ... })`) is accepted too, with untyped (`any`) `local` and `remote`; give it the type argument (`lastWriteWins<DataMap>({ ... })`) to keep them typed.
 
 ## Writing your own resolver
 

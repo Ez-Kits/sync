@@ -39,11 +39,22 @@ export interface UseLiveQueryOptions<
   TResult,
 > {
   collections?: TCollectionName[];
+  /**
+   * Reruns whenever the watched collections change. Need not be stable: the latest function
+   * runs, and a new one alone does not start a new live query.
+   */
   query: (db: DB["queryBuilder"], schema: DB["querySchema"]) => TResult | PromiseLike<TResult>;
+  /**
+   * Values `query` reads from the component (props, state), like `useEffect` dependencies.
+   * When one changes, the live query restarts and reruns at once; otherwise the new value is
+   * only used on the next change of the watched collections.
+   */
+  deps?: readonly unknown[];
 }
 
 export interface UseLiveQueryResult<TResult> {
   data: TResult | undefined;
+  /** `true` until the first result, and while the query reruns. */
   isPending: boolean;
   error: Error | undefined;
 }

@@ -26,10 +26,19 @@ export interface CollectionConfig<
   >;
 }
 
-export type CollectionConfigMap<TCheckpoint = any> = [
-  CollectionConfig<any, any, any, any, any, any, TCheckpoint>,
-  ...CollectionConfig<any, any, any, any, any, any, TCheckpoint>[],
-];
+/**
+ * The collections of a client. Any array works: an inline `[todos, users]`, a tuple, or a
+ * `const collections = [todos, users]` (typed `(Todos | Users)[]`) stored first.
+ */
+export type CollectionConfigMap<TCheckpoint = any> = readonly CollectionConfig<
+  any,
+  any,
+  any,
+  any,
+  any,
+  any,
+  TCheckpoint
+>[];
 
 /** Union of `name` fields for all collections in the map. */
 export type CollectionNames<C extends CollectionConfigMap> = C[number]["name"];

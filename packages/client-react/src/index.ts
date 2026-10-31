@@ -54,37 +54,48 @@ export function createSyncClientReact<
     options: UseLiveQueryOptions<CollectionNames<C>, DB, TResult>,
   ): UseLiveQueryResult<TResult> {
     const client = useSyncClient();
+    // The latest `query` runs on every rerun; only `collections` and `deps` re-subscribe.
+    const queryRef = useRef(options.query);
+    queryRef.current = options.query;
     const dataRef = useRef<TResult | undefined>(undefined);
-    const [isPending, setIsPending] = useState(false);
+    const [isPending, setIsPending] = useState(true);
     const [error, setError] = useState<Error | undefined>(undefined);
     const collectionKey = options.collections?.join("\0");
     const collections = useMemo(() => options.collections, [collectionKey]);
+    const depsVersion = useDepsVersion(options.deps);
 
     const result = useSyncExternalStore(
       useCallback(
         (cb) => {
-          return client.liveQuery({
+          let active = true;
+          const unsubscribe = client.liveQuery({
             collections,
             query: async (qb, schema) => {
-              try {
+              if (active) {
                 setIsPending(true);
                 setError(undefined);
-                return await options.query(qb, schema);
+              }
+              try {
+                return await queryRef.current(qb, schema);
               } catch (reason) {
-                setError(reason instanceof Error ? reason : new Error(String(reason)));
+                if (active) setError(reason instanceof Error ? reason : new Error(String(reason)));
                 return undefined as TResult;
-              } finally {
-                setIsPending(false);
               }
             },
             onData: (data) => {
+              // A run that ends after re-subscribing would overwrite the new query's data.
+              if (!active) return;
               dataRef.current = data;
               setIsPending(false);
               cb();
             },
           });
+          return () => {
+            active = false;
+            unsubscribe();
+          };
         },
-        [collections, options.query],
+        [client, collections, depsVersion],
       ),
       () => {
         return dataRef.current;
@@ -105,4 +116,17 @@ export function createSyncClientReact<
   };
 
   return result;
+}
+
+/** A number that changes whenever an item of `deps` changes (compared with `Object.is`). */
+function useDepsVersion(deps: readonly unknown[] | undefined): number {
+  const ref = useRef({ deps, version: 0 });
+  if (!sameDeps(ref.current.deps, deps)) ref.current = { deps, version: ref.current.version + 1 };
+  return ref.current.version;
+}
+
+function sameDeps(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((value, index) => Object.is(value, b[index]));
 }

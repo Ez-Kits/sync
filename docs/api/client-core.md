@@ -46,7 +46,7 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 
 | Option            | Type                                                | Required | Description                                                                                                                                                                      |
 | ----------------- | --------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collections`     | `CollectionConfigMap` (a non-empty tuple)           | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                                                 |
+| `collections`     | `CollectionConfigMap` (an array)                    | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                                                 |
 | `dbAdapter`       | `BaseDBAdapter`                                     | yes      | The DB adapter; the client uses its `dbStorage` and `localChangeStore`.                                                                                                          |
 | `syncAdapter`     | `SyncAdapter`                                       | no       | The backend for the collections it lists in `collections` (all of them when it lists none), except those with their own adapter. Writes no adapter syncs never enter the outbox. |
 | `checkpoint`      | `{ serialize(cp): string; deserialize(value): cp }` | no       | How pull checkpoints are stored as strings. Default: `JSON.stringify` / `JSON.parse`.                                                                                            |
@@ -83,7 +83,6 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 interface SyncStatusEvent {
   status: "stopped" | "starting" | "syncing" | "idle" | "offline" | "error";
   error?: unknown; // when status is "error"; never contains document data
-  pendingEvents?: number;
   changedAt: number; // epoch milliseconds
 }
 ```
@@ -254,7 +253,7 @@ interface CollectionConfig<TName, AdapterConfig, UpdateModel, InsertModel, Selec
 
 | Type helper                            | Gives you                                              |
 | -------------------------------------- | ------------------------------------------------------ |
-| `CollectionConfigMap`                  | A non-empty tuple of collection configs.               |
+| `CollectionConfigMap`                  | An array (or tuple) of collection configs.             |
 | `CollectionNames<C>`                   | The union of collection names.                         |
 | `ConfigForName<C, N>`                  | The config of collection `N`.                          |
 | `InferCollectionInsertModel<Col>`      | What `insert` accepts.                                 |
@@ -374,13 +373,14 @@ interface PushOptions<C, N> {
 - `pull` opens a stream of remote changes starting at `checkpoint`. It returns a cleanup function that stops every listener.
 - `push` resolves only once the backend durably accepted the events, and calls (and awaits) `commitChanges` for the accepted ones. Throw a `PushRejectedError` for a refusal that resending would meet again; throw anything else to retry.
 
-| Type                                                   | Description                                                              |
-| ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `PullCheckpointMap<C, N, TCheckpoint>`                 | `Partial<Record<N, TCheckpoint>>`                                        |
-| `PullCommitChangesOptions`, `PushCommitChangesOptions` | The `commitChanges` arguments above.                                     |
-| `PushRejection<C, N>`                                  | `{ event: ChangeBusEvent; error: unknown; discard(): Promise<void> }`    |
-| `ConflictResolution<C, N>`                             | `({ remote, local }) => "local" \| "remote" \| { data } \| Promise<...>` |
-| `SyncStatus`                                           | `"stopped" \| "starting" \| "syncing" \| "idle" \| "offline" \| "error"` |
+| Type                                                   | Description                                                                     |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `SyncAdapterFor<Collections, TCheckpoint>`             | The `SyncAdapter` for an array of collection configs: their data map and names. |
+| `PullCheckpointMap<C, N, TCheckpoint>`                 | `Partial<Record<N, TCheckpoint>>`                                               |
+| `PullCommitChangesOptions`, `PushCommitChangesOptions` | The `commitChanges` arguments above.                                            |
+| `PushRejection<C, N>`                                  | `{ event: ChangeBusEvent; error: unknown; discard(): Promise<void> }`           |
+| `ConflictResolution<C, N>`                             | `({ remote, local }) => "local" \| "remote" \| { data } \| Promise<...>`        |
+| `SyncStatus`                                           | `"stopped" \| "starting" \| "syncing" \| "idle" \| "offline" \| "error"`        |
 
 ---
 

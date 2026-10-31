@@ -26,7 +26,7 @@ export function toStoredChangeBusEvent(mutation: LocalMutation): StoredChangeBus
     id: mutation.eventId,
     type: mutation.type,
     collection: mutation.collection,
-    data: mutation.type === "delete" ? null : mutation.data,
+    data: mutation.type === "delete" ? { id: mutation.id } : mutation.data,
     recordId: mutation.recordId,
     createdAt: mutation.createdAt,
   };

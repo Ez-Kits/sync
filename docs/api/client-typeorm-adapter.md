@@ -76,7 +76,7 @@ For `postgres` storages. Creates a `postgres` data source whose `pg` driver runs
 | Option              | Type                           | Required | Description                                                                                                  |
 | ------------------- | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
 | `dbStorage`         | `DBStorage`                    | yes      | Must match the adapter's dialect, or the call throws.                                                        |
-| `collections`       | collection tuple               | yes      | The same collections you pass to the sync client.                                                            |
+| `collections`       | collection array               | yes      | The same collections you pass to the sync client.                                                            |
 | `entities`          | `(Function \| EntitySchema)[]` | no       | Other entities the data source must know, for example targets of relations that are not collections.         |
 | `dataSourceOptions` | TypeORM data source options    | no       | `logging`, `namingStrategy`, ... `type`, `driver` and `entities` are set for you (and `database` on SQLite). |
 
