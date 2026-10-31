@@ -152,6 +152,41 @@ test("TypeORM adapter runs transactions on a data source of their own, retrying 
   expect(main.db.initialize).not.toHaveBeenCalled();
 });
 
+test("closing the adapter waits for its transaction and destroys an opened data source", async () => {
+  const main = makeDb();
+  const own = makeDb();
+  const destroyMain = main.db.destroy;
+  const adapter = adapterFor(
+    main.db,
+    vi
+      .fn((): never => main.db as never)
+      .mockReturnValueOnce(main.db as never)
+      .mockReturnValueOnce(own.db as never),
+  );
+
+  // Never opened: nothing to destroy.
+  await adapter.close!();
+  expect(destroyMain).not.toHaveBeenCalled();
+
+  Object.assign(main.db, { isInitialized: true });
+  let finish!: () => void;
+  const running = adapter.transaction(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  const closing = adapter.close!();
+  await Promise.resolve();
+  expect(destroyMain).not.toHaveBeenCalled();
+  finish();
+  await running;
+  await closing;
+  expect(destroyMain).toHaveBeenCalledOnce();
+  expect(own.db.destroy).toHaveBeenCalledOnce();
+});
+
 test("destroying the data source also closes the transaction data source, if it opened", async () => {
   const main = makeDb();
   const own = makeDb();

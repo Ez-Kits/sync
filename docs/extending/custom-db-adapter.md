@@ -11,7 +11,7 @@ An adapter has four jobs:
 | **Transactions**           | `transaction(fn)` and `commitLocalMutation(...)`, on `dbStorage.transaction`.        |
 | **The local-change store** | The outbox and sync state, in tables of the same database. The biggest part.         |
 
-Plus `queryBuilder` and `querySchema`, which live queries receive.
+Plus `queryBuilder` and `querySchema`, which live queries receive, and an optional `close()`: the client's `dispose()` calls it after sync stops and before it closes `dbStorage`, so an adapter that opens something of its own (an ORM data source) can release it. Leave `dbStorage` to the client.
 
 This page builds a complete, working adapter for **plain SQL on SQLite**, about 300 lines. It is a good template for any ORM: replace the SQL strings with your ORM's calls.
 

@@ -295,7 +295,11 @@ export class SyncClientImpl<
     this.liveQueries.clear();
     this.statusListeners.clear();
     this.roleListeners.clear();
-    await this.dbStorage.close();
+    try {
+      await this.dbAdapter.close?.();
+    } finally {
+      await this.dbStorage.close();
+    }
   };
 
   subscribeStatus = (listener: (event: SyncStatusEvent) => void) => {
