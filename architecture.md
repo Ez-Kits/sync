@@ -96,6 +96,7 @@ DB engine (sql.js, SQLite WASM, PGlite), opened only by the leader
 
 - The outbox must live in the same database as the rows, which rules out keeping it in localStorage or a separate store.
 - Adapter authors carry more responsibility, but core never has to repair a half-written mutation.
+- A write to a collection no sync adapter covers would sit in the outbox forever, so it leaves none: its event is appended and deleted in the same transaction, which still records it as applied (ADR-8), and it marks no dirty record.
 
 ## ADR-4: The local-change store owns its schema
 

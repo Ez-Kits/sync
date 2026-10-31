@@ -19,7 +19,7 @@ import {
 } from "../collection/local-mutation";
 import type { BaseDBAdapter } from "../db-adapter";
 import { isRetriableError, type DBRole, type DBStorage } from "../db-storage";
-import { SyncHandler } from "../sync-handler";
+import { SyncHandler, globalSyncCollections } from "../sync-handler";
 import type { SyncStatusEvent } from "../sync-handler";
 import { SyncTabChannel } from "./tab-channel";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
@@ -56,6 +56,36 @@ function assertDBAdapter(dbAdapter: BaseDBAdapter<any, any, any> | undefined): v
   }
 }
 
+/** A collection synced by both its own adapter and the client-level one would be pushed twice. */
+function assertSingleSyncAdapter(
+  collections: CollectionConfigMap<any>,
+  syncAdapter: { collections?: readonly PropertyKey[] } | undefined,
+): void {
+  const listed = new Set((syncAdapter?.collections ?? []).map(String));
+  const both = collections.find(
+    (collection) => collection.syncAdapter && listed.has(String(collection.name)),
+  );
+  if (both) {
+    throw new Error(
+      `Collection "${String(both.name)}" has its own syncAdapter and is also synced by the ` +
+        "client-level syncAdapter. Configure it in one place only.",
+    );
+  }
+}
+
+/** Collections no sync adapter handles: their writes never enter the outbox. */
+function localOnlyCollections(
+  collections: CollectionConfigMap<any>,
+  syncAdapter: { collections?: readonly PropertyKey[] } | undefined,
+): Set<string> {
+  const synced = new Set(globalSyncCollections(collections, syncAdapter));
+  return new Set(
+    collections
+      .filter((collection) => !collection.syncAdapter && !synced.has(String(collection.name)))
+      .map((collection) => String(collection.name)),
+  );
+}
+
 export class SyncClientImpl<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
@@ -66,6 +96,7 @@ export class SyncClientImpl<
   private readonly checkpoints: CheckpointStorage<CollectionNames<C>, TCheckpoint>;
   private readonly dbStorage: DBStorage;
   private readonly tabs: SyncTabChannel;
+  private readonly localOnly: Set<string>;
   private appliedRole: DBRole | undefined;
   /** Storage ready and local-change store initialized; nothing touches the database before. */
   private readonly initialized: Promise<void>;
@@ -84,6 +115,8 @@ export class SyncClientImpl<
     private changeBus: ChangeBus<ChangeBusEventDataMapFromCollectionConfigMap<C>>,
   ) {
     assertDBAdapter(config.dbAdapter);
+    assertSingleSyncAdapter(config.collections, config.syncAdapter);
+    this.localOnly = localOnlyCollections(config.collections, config.syncAdapter);
     this.dbAdapter = config.dbAdapter;
     // In the adapter's own store, so a pulled checkpoint commits in the transaction of its rows.
     this.checkpoints = createCheckpointStorage(
@@ -290,7 +323,9 @@ export class SyncClientImpl<
         if (attempt > 1 && (await isLocalMutationCommitted(localChangeStore, mutation))) {
           return;
         }
-        await executeLocalMutation(this.dbAdapter, localChangeStore, mutation);
+        await executeLocalMutation(this.dbAdapter, localChangeStore, mutation, {
+          localOnly: this.localOnly.has(mutation.collection),
+        });
         return;
       } catch (error) {
         if (!isRetriableError(error) || attempt >= MAX_COMMIT_ATTEMPTS) throw error;

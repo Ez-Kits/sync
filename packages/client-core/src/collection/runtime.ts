@@ -34,12 +34,25 @@ export class CollectionRuntime<
     const local = {
       ...mutation,
       eventId: crypto.randomUUID(),
-      recordId: String(mutation.id),
+      recordId: this.recordIdOf(mutation.id),
       createdAt: Date.now(),
     } as LocalMutation;
     const { mutations } = await this.storage.resolve();
     await mutations.commit(local);
     this.changeBus.publishLocal(toChangeBusEvent(local));
+  }
+
+  /**
+   * The outbox and dirty records identify a record by its primary key as a string, so only
+   * single-column keys (a string or a number) are supported.
+   */
+  private recordIdOf(id: unknown): string {
+    if (typeof id === "string" || typeof id === "number") return String(id);
+    throw new TypeError(
+      `Collection "${this.config.name}" needs a string or number value in its primary field ` +
+        `"${String(this.config.primaryField)}", got ${id === null ? "null" : typeof id}. ` +
+        "Composite primary keys are not supported.",
+    );
   }
 
   private primaryKeyOf(data: unknown): unknown {

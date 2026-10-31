@@ -50,11 +50,16 @@ export function toChangeBusEvent(mutation: LocalMutation): ChangeBusEvent<any> {
   };
 }
 
-/** Commit a mutation against an atomic storage pair. The only caller of `commitLocalMutation`. */
+/**
+ * Commit a mutation against an atomic storage pair. The only caller of `commitLocalMutation`.
+ * A `localOnly` mutation (of a collection no sync adapter handles) leaves no pending outbox
+ * event or dirty record; its event is still recorded as applied, for `isLocalMutationCommitted`.
+ */
 export async function executeLocalMutation(
   db: BaseDBAdapter<any, any, any>,
   localChangeStore: ILocalChangeStore,
   mutation: LocalMutation,
+  options: { localOnly?: boolean } = {},
 ): Promise<void> {
   if (typeof db.commitLocalMutation !== "function") {
     throw new Error("The database adapter must implement atomic local mutations.");
@@ -68,10 +73,13 @@ export async function executeLocalMutation(
             mutation.collection,
             mutation.data as never,
           ),
-    persistOutboxEvent: (context: LocalMutationTransactionContext<any>) =>
-      localChangeStore.appendEvents([event], context.native),
-    persistDirtyRecord: (context: LocalMutationTransactionContext<any>) =>
-      localChangeStore.upsertDirtyRecord(
+    persistOutboxEvent: async (context: LocalMutationTransactionContext<any>) => {
+      await localChangeStore.appendEvents([event], context.native);
+      if (options.localOnly) await localChangeStore.deleteEvents([event.id], context.native);
+    },
+    persistDirtyRecord: async (context: LocalMutationTransactionContext<any>) => {
+      if (options.localOnly) return;
+      await localChangeStore.upsertDirtyRecord(
         {
           collection: mutation.collection,
           recordId: mutation.recordId,
@@ -79,7 +87,8 @@ export async function executeLocalMutation(
           updatedAt: mutation.createdAt,
         },
         context.native,
-      ),
+      );
+    },
   });
 }
 

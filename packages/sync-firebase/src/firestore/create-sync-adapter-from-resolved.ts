@@ -60,6 +60,8 @@ export function createFirestoreSyncAdapterFromResolved<
   common: { includeMetadataChanges?: boolean } = {},
 ): SyncAdapter<C, N, TCheckpoint> {
   return {
+    // Core only hands this adapter the outbox of these, so nothing it skips piles up.
+    collections: collections.map(({ collectionName }) => collectionName),
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribes = collections.map((collectionConfig) => {

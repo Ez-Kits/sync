@@ -35,9 +35,13 @@ You can instead give a single collection its own adapter in its definition:
 defineDrizzleCollection({ name: "todos", table: todos, syncAdapter: todosSyncAdapter });
 ```
 
-Do not configure the same collection in both. A client-level adapter pushes the outbox of **every** collection.
+A collection with its own adapter is synced by that adapter only: the client-level adapter never pushes it. A client-level adapter that lists its collections (the Firebase adapters do, see below) must not list one that has its own adapter: `createSyncClient` throws if it does.
 
-> **Local-only collections.** Every write goes into the outbox, and leaves it only when a sync adapter confirms it. If a collection is never synced, its outbox entries stay in the database. That is harmless for small amounts of data, but keep truly local data (UI state, drafts you never sync) out of collections.
+### Which collections a client-level adapter syncs
+
+A sync adapter can declare the collections it syncs in a `collections` array. The Firebase adapters fill it in from the collection configs you pass them. The client-level adapter then gets the outbox events of those collections only. An adapter without `collections` gets the events of every collection that has no adapter of its own.
+
+> **Local-only collections.** A write to a collection that no adapter syncs (it has no adapter of its own, and the client-level adapter does not list it, or there is none) never enters the outbox. The row is written and the change is published as usual, but nothing is queued for a push. Syncing such a collection later does not push the writes made before: only writes made while an adapter covers the collection are pushed.
 
 ## Sync status
 

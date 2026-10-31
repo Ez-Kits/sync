@@ -101,15 +101,13 @@ sql.js saves the **whole** database to IndexedDB after every commit, which costs
 
 `dbStorage.ready` rejects and the sync status becomes `error`. Common causes: the `.wasm` file did not load, a migration in the worker threw, or the browser blocks storage (private mode with storage disabled). Check the worker's console. Do not clear browser storage blindly: it deletes unpushed writes.
 
-### Nothing happens: queries and writes never finish, and there is no error
+### `DBStorageWorkerError`: the storage worker failed to load
 
-The storage worker script itself failed to load, for example because an import inside it could not be resolved, or the URL passed to `new Worker(...)` is wrong. In that case `dbStorage.ready` never settles: every read, write and live query waits forever and nothing is logged on the page. Look for the failed worker request in the browser's Network tab, or for the error in your dev server's terminal (Vite prints `Failed to resolve import ...`). Check that:
+The storage worker script itself failed to load, for example because an import inside it could not be resolved, or the URL passed to `new Worker(...)` is wrong. `dbStorage.ready` rejects with `DBStorageWorkerError`, `dbStorage.onError` listeners get it, every read and write rejects with it, and the sync status becomes `error`. The browser rarely says why: look for the failed worker request in the Network tab, or for the error in your dev server's terminal (Vite prints `Failed to resolve import ...`). Check that:
 
 - the worker file path in `new URL("./worker.ts", import.meta.url)` is right, relative to the file that contains it;
 - the worker imports the engine from the `/worker` entry point (`@ez-kits/sync-storage-sqljs/worker`, ...) and the package is installed;
 - for SQLite WASM and PGlite with Vite, the package is in `optimizeDeps.exclude`.
-
-To fail fast instead of hanging, race `dbStorage.ready` against a timeout at startup and show an error screen when it loses.
 
 ### Reset everything during development
 

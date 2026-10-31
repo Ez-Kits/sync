@@ -13,15 +13,7 @@ import type {
   InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
-import {
-  and,
-  eq,
-  getColumns,
-  type AnyRelations,
-  type Column,
-  type SQL,
-  type Table,
-} from "drizzle-orm";
+import { eq, getColumns, type AnyRelations, type Column, type SQL, type Table } from "drizzle-orm";
 import {
   buildRelationsFromCollections,
   buildSchemaFromCollections,
@@ -102,15 +94,8 @@ function getTableColumn(table: Table, field: PropertyKey): Column {
 }
 
 function primaryCondition(table: Table, primaryField: PropertyKey, id: unknown): SQL {
-  if (typeof id === "object" && id !== null && !Array.isArray(id)) {
-    const conditions = Object.entries(id as Record<string, unknown>).map(([key, value]) =>
-      eq(getTableColumn(table, key), value),
-    );
-    const combined = and(...conditions);
-    if (!combined) {
-      throw new Error("Composite primary key must not be empty");
-    }
-    return combined;
+  if (typeof id === "object" && id !== null) {
+    throw new TypeError("Composite primary keys are not supported: pass the primary field's value");
   }
   return eq(getTableColumn(table, primaryField), id);
 }

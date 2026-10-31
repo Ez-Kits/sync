@@ -394,11 +394,11 @@ export abstract class BaseSyncHandler<
     });
   }
 
-  protected async collectAllPendingPushEvents(): Promise<ChangeBusEvent<SyncHandlerDataMap<C>>[]> {
+  protected async collectAllPendingPushEvents(
+    collectionNames: readonly CollectionNames<C>[],
+  ): Promise<ChangeBusEvent<SyncHandlerDataMap<C>>[]> {
     const batches = await Promise.all(
-      this.config.collections.map((collection) =>
-        this.collectPendingPushEvents(collection.name as CollectionNames<C>),
-      ),
+      collectionNames.map((collectionName) => this.collectPendingPushEvents(collectionName)),
     );
     return batches.flat();
   }

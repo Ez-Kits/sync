@@ -1,4 +1,4 @@
-import { DBStorageClosedError, deserializeError } from "./errors";
+import { DBStorageClosedError, DBStorageWorkerError, deserializeError } from "./errors";
 import type { NodeOptions, NodeRequestBody, PortMessage, PortRequest } from "./protocol";
 import type { DBDialect, DBExecutor, DBQuery, DBQueryResult, DBRole, DBStorage } from "./types";
 
@@ -63,6 +63,8 @@ class PortDBStorage implements DBStorage {
   private readonly errorListeners = new Set<(error: unknown) => void>();
   private settleReady: { resolve(): void; reject(error: unknown): void } | undefined;
   private nextId = 0;
+  /** Set when the worker failed before it became ready; every request then rejects with it. */
+  private failure: Error | undefined;
   private closed: Promise<void> | undefined;
   private pageCleanup: (() => void) | undefined;
 
@@ -80,6 +82,9 @@ class PortDBStorage implements DBStorage {
     // Readiness failures surface through `ready` consumers.
     this.ready.catch(() => undefined);
     endpoint.onmessage = (event: MessageEvent) => this.handleMessage(event.data as PortMessage);
+    (endpoint as Partial<Worker>).addEventListener?.("error", (event) =>
+      this.handleWorkerError(event),
+    );
     this.post({ t: "init", ...node, engineOptions });
     this.watchPageLifecycle(host);
   }
@@ -125,11 +130,8 @@ class PortDBStorage implements DBStorage {
 
   private async shutdown(): Promise<void> {
     this.pageCleanup?.();
-    const id = ++this.nextId;
-    await new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.post({ t: "close", id });
-    });
+    // A worker that failed to load never answers.
+    if (!this.failure) await this.request({ t: "close", id: ++this.nextId });
     for (const pending of this.pending.values()) pending.reject(new DBStorageClosedError());
     this.pending.clear();
     this.settleReady?.reject(new DBStorageClosedError());
@@ -141,11 +143,34 @@ class PortDBStorage implements DBStorage {
 
   private call(body: NodeRequestBody): Promise<unknown> {
     if (this.closed) return Promise.reject(new DBStorageClosedError());
-    const id = ++this.nextId;
+    if (this.failure) return Promise.reject(this.failure);
+    return this.request({ t: "request", id: ++this.nextId, body });
+  }
+
+  private request(message: PortRequest & { id: number }): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.post({ t: "request", id, body });
+      this.pending.set(message.id, { resolve, reject });
+      this.post(message);
     });
+  }
+
+  /**
+   * The worker's `error` event. Before the worker is ready it means the worker never started
+   * (its script failed to load or threw at startup): fail `ready` and every request.
+   */
+  private handleWorkerError(event: Event): void {
+    const message = (event as Partial<ErrorEvent>).message;
+    const error = new DBStorageWorkerError(
+      message ? `The DB storage worker failed: ${message}` : undefined,
+    );
+    if (this.settleReady) {
+      this.failure = error;
+      this.settleReady.reject(error);
+      this.settleReady = undefined;
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    }
+    for (const listener of this.errorListeners) listener(error);
   }
 
   private post(message: PortRequest): void {

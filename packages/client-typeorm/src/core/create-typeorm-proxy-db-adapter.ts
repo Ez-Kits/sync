@@ -51,8 +51,8 @@ export interface TypeOrmProxyDriver<TDataSourceOptions> {
 }
 
 function primaryWhere(primaryField: PropertyKey, id: unknown): ObjectLiteral {
-  if (typeof id === "object" && id !== null && !Array.isArray(id)) {
-    return id as ObjectLiteral;
+  if (typeof id === "object" && id !== null) {
+    throw new TypeError("Composite primary keys are not supported: pass the primary field's value");
   }
   return { [String(primaryField)]: id } as ObjectLiteral;
 }

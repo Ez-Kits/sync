@@ -114,7 +114,9 @@ test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and run
   await adapter.insert("todos" as never, { id: 1, title: "one" } as never);
   await adapter.update("todos" as never, { id: 1, title: "two" } as never);
   await adapter.delete("todos" as never, 1 as never);
-  await adapter.delete("todos" as never, { id: 1 } as never);
+  await expect(adapter.delete("todos" as never, { id: 1 } as never)).rejects.toThrow(
+    "Composite primary keys are not supported",
+  );
   expect(await adapter.get("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getOptional!("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getMany("todos" as never)).toHaveLength(1);

@@ -159,6 +159,8 @@ export function createRealtimeDBSyncAdapterFromResolved<
   collections: readonly ResolvedRealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
 ): SyncAdapter<C, N, TCheckpoint> {
   return {
+    // Core only hands this adapter the outbox of these, so nothing it skips piles up.
+    collections: collections.map(({ collectionName }) => collectionName),
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       const unsubscribeFns: Array<() => void> = [];

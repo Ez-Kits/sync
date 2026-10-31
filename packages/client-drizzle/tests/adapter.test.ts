@@ -25,10 +25,10 @@ const skippedRemoteEvents = sqliteTable("skipped_remote_events", {
 let dbStorage: any;
 
 /** A storage whose transactions run in place; the driver hands back the mock database. */
-function adapterFor(db: unknown) {
+function adapterFor(db: unknown, collections: unknown[] = [collection]) {
   dbStorage = { dialect: "sqlite", exec: vi.fn() };
   dbStorage.transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(dbStorage));
-  return createDrizzleProxyDBAdapter({ dbStorage, collections: [collection] } as never, {
+  return createDrizzleProxyDBAdapter({ dbStorage, collections } as never, {
     dialect: "sqlite",
     createDatabase: () => db,
     createLocalChangeStore: () => ({ atomicLocalMutationCapability: "atomic" }) as never,
@@ -108,7 +108,6 @@ test("Drizzle adapter executes CRUD, optional reads, schema fallback, and transa
   await adapter.update("todos" as never, { id: 1, title: "two" } as never);
   await adapter.delete("todos" as never, 1 as never);
   expect(await adapter.get("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
-  expect(await adapter.get("todos" as never, { id: 1 } as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getOptional!("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getMany("todos" as never)).toHaveLength(1);
   await adapter.transaction(async (tx) => tx.insert("todos" as never, { id: 2 } as never));
@@ -416,7 +415,7 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
   });
 });
 
-test("Drizzle adapter rejects missing rows, update keys, bad composite fields, and database errors", async () => {
+test("Drizzle adapter rejects missing rows, update keys, composite keys, and database errors", async () => {
   const { db } = makeDb([]);
   const adapter = adapterFor(db);
   await expect(adapter.get("todos" as never, 1 as never)).rejects.toThrow(
@@ -426,11 +425,15 @@ test("Drizzle adapter rejects missing rows, update keys, bad composite fields, a
   await expect(adapter.update("todos" as never, { title: "no id" } as never)).rejects.toThrow(
     "Update requires primary field",
   );
-  await expect(adapter.get("todos" as never, { unknown: 1 } as never)).rejects.toThrow(
-    "Unknown column: unknown",
+  await expect(adapter.get("todos" as never, { id: 1 } as never)).rejects.toThrow(
+    "Composite primary keys are not supported",
   );
-  await expect(adapter.get("todos" as never, {} as never)).rejects.toThrow(
-    "Composite primary key must not be empty",
+  await expect(adapter.delete("todos" as never, { id: 1 } as never)).rejects.toThrow(
+    "Composite primary keys are not supported",
+  );
+  const misnamed = adapterFor(db, [{ ...collection, primaryField: "missing" }]);
+  await expect(misnamed.get("todos" as never, 1 as never)).rejects.toThrow(
+    "Unknown column: missing",
   );
   const rejecting = makeDb();
   rejecting.db.insert = vi.fn(() => ({
