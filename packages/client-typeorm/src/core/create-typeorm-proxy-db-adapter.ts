@@ -246,6 +246,12 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
     ): Promise<T> {
       return inTransaction((context) => fn(context.operations, context));
     },
+    async close() {
+      // Let a running transaction finish, then close both data sources; the storage is the
+      // application's.
+      await lastTransaction;
+      if (dataSource.isInitialized) await dataSource.destroy();
+    },
     commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
       return inTransaction(async (context) => {
         await mutate(context);

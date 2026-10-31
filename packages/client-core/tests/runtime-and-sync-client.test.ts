@@ -220,6 +220,22 @@ test("disposing the client closes its storage", async () => {
   expect(db.dbStorage.close).toHaveBeenCalledOnce();
 });
 
+test("disposing the client closes its adapter before the storage, even when that fails", async () => {
+  const order: string[] = [];
+  const db = Object.assign(makeDb(), {
+    close: vi.fn(async () => {
+      order.push("adapter");
+      throw new Error("adapter close failed");
+    }),
+  });
+  vi.mocked(db.dbStorage.close).mockImplementation(async () => {
+    order.push("storage");
+  });
+  const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());
+  await expect(client.dispose()).rejects.toThrow("adapter close failed");
+  expect(order).toEqual(["adapter", "storage"]);
+});
+
 test("a commit cut short by a leader change is retried once, without duplicates", async () => {
   const db = makeDb();
   const client = new SyncClientImpl(clientConfig(db), new ChangeBus<any>());

@@ -68,6 +68,12 @@ export interface BaseDBAdapter<
   /** Outbox and dirty records, kept in the same storage so local mutations commit atomically. */
   readonly localChangeStore: AtomicLocalChangeStore;
   /**
+   * Release what the adapter holds on top of `dbStorage` (e.g. an ORM's data source). The
+   * sync client's `dispose` calls it after sync stops and before it closes `dbStorage`; the
+   * storage itself is not the adapter's to close.
+   */
+  close?(): Promise<void>;
+  /**
    * Run adapter operations in a single database transaction (`dbStorage.transaction`).
    * All writes succeed together or none are applied. `context.operations` is `tx`; pass
    * `context.native` to the local-change store to read or write in the same transaction.

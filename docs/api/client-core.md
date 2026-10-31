@@ -70,7 +70,7 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 | `startSync()`                                | Start syncing (in a follower: ask the leader to sync). Also listens to `online` / `offline`.                                                              |
 | `stopSync()`                                 | Pause syncing. Local reads and writes keep working.                                                                                                       |
 | `retryRejectedPushes()`                      | Push parked (rejected) writes now instead of after their backoff, e.g. after sign-in.                                                                     |
-| `dispose()`                                  | `Promise<void>`. Stop sync, release the storage and all listeners for good.                                                                               |
+| `dispose()`                                  | `Promise<void>`. Stop sync, close the adapter (`dbAdapter.close?.()`), release the storage and all listeners for good.                                    |
 | `role`                                       | `"leader"` or `"follower"`. Only the leader syncs.                                                                                                        |
 | `subscribeRole(listener)`                    | Called now with the current role, then on every change. Returns an unsubscribe function.                                                                  |
 | `subscribeStatus(listener)`                  | Called now with the current `SyncStatusEvent`, then on every change. Returns an unsubscribe function.                                                     |
