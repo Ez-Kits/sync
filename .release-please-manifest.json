@@ -1,1 +1,1 @@
-{}
+{"packages/client-core":"0.1.0","packages/client-drizzle":"0.1.0","packages/client-react":"0.1.0","packages/client-typeorm":"0.1.0","packages/client-conflict-resolution":"0.0.1","packages/client-storage-pglite":"0.0.1","packages/client-storage-sqlite-wasm":"0.0.1","packages/client-storage-sqljs":"0.0.1"}

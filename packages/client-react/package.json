@@ -1,6 +1,6 @@
 {
   "name": "@ez-kits/sync-client-react",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React integration for EzSync with live queries",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-react#readme",
   "bugs": {

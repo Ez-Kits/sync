@@ -1,6 +1,6 @@
 {
   "name": "@ez-kits/sync-client-typeorm-adapter",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Use TypeORM with EzSync",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-typeorm#readme",
   "bugs": {
