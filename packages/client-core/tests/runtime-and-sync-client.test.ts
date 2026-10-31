@@ -323,3 +323,78 @@ test("a failing local-change store initialization surfaces as a sync error", asy
   expect(statuses.at(-1)?.error).toEqual(new Error("no tables"));
   await client.dispose();
 });
+
+test("collection runtime rejects primary key values that are not a string or number", async () => {
+  const db = makeDb();
+  const store = atomicMemoryStore();
+  const runtime = new CollectionRuntime(
+    config as never,
+    runtimeStorage(db, store),
+    new ChangeBus(),
+  );
+  await expect(runtime.insert({ id: { a: 1, b: 2 }, title: "a" } as never)).rejects.toThrow(
+    "Composite primary keys are not supported",
+  );
+  await expect(runtime.update({ title: "no id" } as never)).rejects.toThrow(
+    'needs a string or number value in its primary field "id", got undefined',
+  );
+  await expect(runtime.delete({ a: 1 } as never)).rejects.toThrow(TypeError);
+  await expect(runtime.delete(null as never)).rejects.toThrow("got null");
+  await runtime.insert({ id: 7, title: "numeric" } as never);
+  expect(db.commitLocalMutation).toHaveBeenCalledOnce();
+  expect((await store.getPendingEvents())[0]).toMatchObject({ recordId: "7" });
+});
+
+test("writes to collections no sync adapter handles stay out of the outbox", async () => {
+  const synced = { name: "todos", adapterConfig: {}, primaryField: "id" };
+  const local = { name: "drafts", adapterConfig: {}, primaryField: "id" };
+  const own = {
+    name: "notes",
+    adapterConfig: {},
+    primaryField: "id",
+    syncAdapter: { pull: vi.fn(), push: vi.fn() },
+  };
+  const db = makeDb();
+  const bus = new ChangeBus<any>();
+  const published: any[] = [];
+  bus.subscribe((events) => published.push(...events), { stream: "local" });
+  const client = new SyncClientImpl(
+    clientConfig(db, {
+      collections: [synced, local, own],
+      syncAdapter: { collections: ["todos"], pull: vi.fn(), push: vi.fn() },
+    }),
+    bus,
+  );
+  await client.collections.todos.insert({ id: "1" } as never);
+  await client.collections.drafts.insert({ id: "2" } as never);
+  await client.collections.drafts.delete("2" as never);
+  await client.collections.notes.insert({ id: "3" } as never);
+  const pending = await db.localChangeStore.getPendingEvents();
+  expect(pending.map((event: any) => event.collection)).toEqual(["todos", "notes"]);
+  expect(await db.localChangeStore.getDirtyRecords("drafts")).toEqual([]);
+  // Still recorded as applied, so a retried local-only write is not applied twice.
+  const draft = published.find((event) => event.collection === "drafts");
+  expect(await db.localChangeStore.hasAppliedEvent(draft.eventId)).toBe(true);
+  await client.dispose();
+
+  // Without any sync adapter every collection is local only.
+  const bare = makeDb();
+  const offline = new SyncClientImpl(clientConfig(bare), new ChangeBus<any>());
+  await offline.collections.todos.insert({ id: "1" } as never);
+  expect(await bare.localChangeStore.getPendingEvents()).toEqual([]);
+  await offline.dispose();
+});
+
+test("a collection cannot be synced by both its own and the client-level adapter", () => {
+  const own = { ...config, syncAdapter: { pull: vi.fn(), push: vi.fn() } };
+  expect(
+    () =>
+      new SyncClientImpl(
+        clientConfig(makeDb(), {
+          collections: [own],
+          syncAdapter: { collections: ["todos"], pull: vi.fn(), push: vi.fn() },
+        }),
+        new ChangeBus<any>(),
+      ),
+  ).toThrow('Collection "todos" has its own syncAdapter and is also synced');
+});

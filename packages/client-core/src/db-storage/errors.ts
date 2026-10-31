@@ -48,6 +48,14 @@ export class DBStorageClosedError extends Error {
   }
 }
 
+/** The storage worker failed, for example because its script could not be loaded. */
+export class DBStorageWorkerError extends Error {
+  override readonly name = "DBStorageWorkerError";
+  constructor(message = "The DB storage worker failed to load.") {
+    super(message);
+  }
+}
+
 const errorTypes = {
   LeaderChangedError,
   LeaderUnavailableError,
@@ -55,6 +63,7 @@ const errorTypes = {
   TransactionStatementError,
   DBStorageClosedError,
   CoordinationUnavailableError,
+  DBStorageWorkerError,
 } as const;
 
 export interface SerializedError {

@@ -3,6 +3,7 @@ import {
   createLocalDBStorage,
   createWorkerDBStorage,
   DBStorageClosedError,
+  DBStorageWorkerError,
   LeaderChangedError,
   startDBStorageWorker,
   TransactionStatementError,
@@ -342,4 +343,45 @@ test("local storage: statements outside a transaction neither see nor join it", 
   // The write ran on its own after the rollback, so it survived it.
   expect([...engine.disk.rows.keys()].sort()).toEqual(["outside", "uncommitted"]);
   await storage.close();
+});
+
+test("a worker that fails to load rejects ready and every request instead of hanging", async () => {
+  const target = new EventTarget();
+  const terminate = vi.fn();
+  const endpoint = Object.assign(target, { postMessage: vi.fn(), onmessage: null, terminate });
+  const storage = createWorkerDBStorage({ dialect: "sqlite", worker: () => endpoint as never });
+  const onError = vi.fn();
+  storage.onError(onError);
+  const early = storage.exec(q("GET", "all"));
+
+  target.dispatchEvent(new Event("error"));
+  await expect(storage.ready).rejects.toBeInstanceOf(DBStorageWorkerError);
+  await expect(early).rejects.toBeInstanceOf(DBStorageWorkerError);
+  await expect(storage.exec(q("GET", "all"))).rejects.toThrow(
+    "The DB storage worker failed to load.",
+  );
+  expect(onError).toHaveBeenCalledWith(expect.any(DBStorageWorkerError));
+
+  // A broken worker never answers, so closing does not wait for it.
+  await storage.close();
+  expect(terminate).toHaveBeenCalledOnce();
+});
+
+test("a worker error after startup is reported without failing the storage", async () => {
+  const target = new EventTarget();
+  const endpoint = Object.assign(target, { postMessage: vi.fn(), onmessage: null as any });
+  const storage = createWorkerDBStorage({ dialect: "sqlite", worker: () => endpoint as never });
+  const onError = vi.fn();
+  storage.onError(onError);
+  endpoint.onmessage({ data: { t: "role", role: "leader" } });
+  await storage.ready;
+
+  target.dispatchEvent(new ErrorEvent("error", { message: "boom" }));
+  expect(onError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "The DB storage worker failed: boom" }),
+  );
+  const result = storage.exec(q("GET", "all"));
+  const request = endpoint.postMessage.mock.calls.at(-1)![0];
+  endpoint.onmessage({ data: { t: "response", id: request.id, ok: true, result: { rows: [] } } });
+  await expect(result).resolves.toEqual({ rows: [] });
 });

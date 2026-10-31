@@ -41,7 +41,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       return this.collectPendingPushEvents(name);
     }
     collectAll() {
-      return this.collectAllPendingPushEvents();
+      return this.collectAllPendingPushEvents(this.config.collections.map(({ name }: any) => name));
     }
     ack(events: any[]) {
       return this.ackPushedEvents(events);

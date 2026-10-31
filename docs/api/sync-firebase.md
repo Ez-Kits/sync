@@ -31,11 +31,11 @@ createFirestoreSyncAdapter({
 });
 ```
 
-| Option                   | Type                                     | Description                                                                   |
-| ------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------- |
-| `db`                     | `Firestore`                              | From `getFirestore()`.                                                        |
-| `collections`            | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. |
-| `includeMetadataChanges` | `boolean`                                | Default for every collection; passed to `onSnapshot`. Default `false`.        |
+| Option                   | Type                                     | Description                                                                                                                                                     |
+| ------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db`                     | `Firestore`                              | From `getFirestore()`.                                                                                                                                          |
+| `collections`            | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. Only these are pushed; writes to other collections without an adapter stay local. |
+| `includeMetadataChanges` | `boolean`                                | Default for every collection; passed to `onSnapshot`. Default `false`.                                                                                          |
 
 ### `defineFirestoreCollectionSyncAdapterConfig(config)`
 

@@ -48,6 +48,12 @@ export interface SyncAdapter<
   N extends keyof C = keyof C,
   TCheckpoint = unknown,
 > {
+  /**
+   * The collections this adapter syncs. A client-level adapter is given the outbox events of
+   * these only; without the list, of every collection that has no adapter of its own. Writes
+   * to a collection no adapter syncs stay local and never enter the outbox.
+   */
+  readonly collections?: readonly N[];
   /** Open a pull stream. A returned cleanup function must stop every listener. */
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
   /**

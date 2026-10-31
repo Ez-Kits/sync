@@ -90,7 +90,7 @@ Rules:
 
 - **Read** with `db`; **write** through `client.collections`. Writes made with `db` are not synced.
 - Do not call Drizzle's `db.transaction()`: it sends `BEGIN`, which the storage rejects. Use `dbAdapter.transaction()`.
-- Use a single-column primary key. The outbox identifies records by the primary key turned into a string.
+- Use a single-column primary key. The outbox identifies records by the primary key turned into a string. Composite keys are not supported: an object id passed to `get`, `getOptional` or `delete` throws a `TypeError`.
 
 ### Relations
 

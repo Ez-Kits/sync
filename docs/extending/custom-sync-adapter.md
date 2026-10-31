@@ -19,6 +19,8 @@ const syncAdapter: SyncAdapter<DataMap> = {
 
 EzSync does everything else: the outbox, ordering, retries, conflict handling, checkpoints, multiple tabs. This page explains the contract, then builds a complete adapter for a REST API.
 
+If a client-level adapter does not sync every collection, list the ones it does in `collections: ["todos", "projects"]`. It is then pushed the events of those only, and writes to the others stay local. Without the list it is pushed the events of every collection that has no adapter of its own, and must acknowledge them all: an event it skips stays in the outbox and is sent again on every push.
+
 ## The contract
 
 ### `pull(options)`
@@ -303,7 +305,7 @@ Pushes and pulls are asynchronous: in tests, poll for the expected state (for ex
 
 ## One adapter per collection
 
-A collection can carry its own adapter (`defineDrizzleCollection({ ..., syncAdapter })`). It receives only that collection's events and checkpoint. Do not also cover that collection with the client-level `syncAdapter`.
+A collection can carry its own adapter (`defineDrizzleCollection({ ..., syncAdapter })`). It receives only that collection's events and checkpoint. The client-level `syncAdapter` never pushes that collection, and must not list it in its `collections`.
 
 ## Checklist
 

@@ -60,6 +60,8 @@ async function exerciseAdapter(
   const client = createSyncClient({
     collections: [collection],
     dbAdapter: adapter,
+    // Writes of a collection no adapter syncs skip the outbox; sync is never started here.
+    syncAdapter: { pull: () => {}, push: () => {} },
   } as never) as any;
 
   // The client created the outbox tables (the schemas above do not), idempotently.

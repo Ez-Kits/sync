@@ -16,6 +16,23 @@ export interface GlobalSyncHandlerConfig<
   syncAdapter?: SyncAdapter<SyncHandlerDataMap<C>, CollectionNames<C>, TCheckpoint>;
 }
 
+/**
+ * The collections a client-level adapter pushes: the ones it lists (every one when it lists
+ * none), except those with an adapter of their own, which their own handler pushes.
+ */
+export function globalSyncCollections(
+  collections: CollectionConfigMap<any>,
+  syncAdapter: { collections?: readonly PropertyKey[] } | undefined,
+): string[] {
+  if (!syncAdapter) return [];
+  const listed = syncAdapter.collections && new Set(syncAdapter.collections.map(String));
+  return collections
+    .filter(
+      (collection) => !collection.syncAdapter && (!listed || listed.has(String(collection.name))),
+    )
+    .map(({ name }) => String(name));
+}
+
 export class GlobalSyncHandler<
   C extends CollectionConfigMap<TCheckpoint>,
   DB extends BaseDBAdapter<C, any, any>,
@@ -26,9 +43,14 @@ export class GlobalSyncHandler<
   private pushController: AbortController | undefined;
   private startToken: object | undefined;
   private pullCommitQueue: Promise<void> = Promise.resolve();
+  private readonly pushCollections: CollectionNames<C>[];
 
   constructor(protected override readonly config: GlobalSyncHandlerConfig<C, DB, TCheckpoint>) {
     super(config);
+    this.pushCollections = globalSyncCollections(
+      config.collections,
+      config.syncAdapter,
+    ) as CollectionNames<C>[];
   }
 
   start(): void {
@@ -109,7 +131,7 @@ export class GlobalSyncHandler<
     void this.enqueuePush(
       "global",
       () =>
-        this.collectAllPendingPushEvents().then((events) =>
+        this.collectAllPendingPushEvents(this.pushCollections).then((events) =>
           this.pushPending("global", syncAdapter, events, pushController.signal),
         ),
       pushController.signal,

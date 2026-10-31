@@ -56,6 +56,11 @@ function fixture(adapter: any, overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A client-level adapter syncing `todos`, which has no adapter of its own. */
+function globalFixture(adapter: any, overrides: Record<string, unknown> = {}) {
+  return fixture(adapter, { collections: [collection()], ...overrides });
+}
+
 test("collection handler flushes pending events, pulls checkpoints, commits remote changes, pushes local changes, and stops", async () => {
   let pullOptions: any;
   const cleanup = vi.fn();
@@ -329,7 +334,7 @@ test("global handler coordinates pull and push lifecycle and the wrapper keeps s
       return cleanup;
     }),
   };
-  const f = fixture(adapter);
+  const f = globalFixture(adapter);
   await f.localChangeStore.appendEvents([
     { id: "pending", type: "delete", collection: "todos", data: null, recordId: "2", createdAt: 1 },
   ]);
@@ -380,7 +385,7 @@ test("global handler reports missing adapter, callback errors, and failed remote
       throw new Error("pull failed");
     }),
   };
-  const badFixture = fixture(adapter, { onSyncError });
+  const badFixture = globalFixture(adapter, { onSyncError });
   const handler = new GlobalSyncHandler(badFixture.config as never);
   handler.start();
   await tick();
@@ -391,7 +396,7 @@ test("global handler reports missing adapter, callback errors, and failed remote
 
 test("global handler pushes local events and recovers its pull commit queue", async () => {
   let pullOptions: any;
-  const f = fixture({
+  const f = globalFixture({
     push: vi.fn(async ({ commitChanges }: any) => commitChanges({ events: [] })),
     pull: vi.fn((options: any) => {
       pullOptions = options;
@@ -453,7 +458,7 @@ test("global stop aborts a pending outbox read and local no-op events skip empty
   );
   const pullCleanup = vi.fn();
   const adapter = { push: vi.fn(), pull: vi.fn(() => pullCleanup) };
-  const f = fixture(adapter, { localChangeStore: store });
+  const f = globalFixture(adapter, { localChangeStore: store });
   const handler = new GlobalSyncHandler(f.config as never);
   handler.start();
   await readStarted;
@@ -465,7 +470,7 @@ test("global stop aborts a pending outbox read and local no-op events skip empty
   expect(adapter.push).not.toHaveBeenCalled();
   expect(pullCleanup).toHaveBeenCalledOnce();
 
-  const second = fixture({ push: vi.fn(), pull: vi.fn() });
+  const second = globalFixture({ push: vi.fn(), pull: vi.fn() });
   const active = new GlobalSyncHandler(second.config as never);
   active.start();
   await tick();
@@ -480,7 +485,7 @@ test("global stop aborts a pending outbox read and local no-op events skip empty
 test("global pull skips locally selected conflicts and reports commit failures", async () => {
   let pullOptions: any;
   const onSyncError = vi.fn();
-  const f = fixture(
+  const f = globalFixture(
     {
       push: vi.fn(),
       pull: vi.fn((options: any) => {
@@ -592,7 +597,9 @@ test("global handler skips pull startup when stopped during start and reports st
       return undefined;
     }),
   };
-  handler = new GlobalSyncHandler(fixture(adapter, { changeBus: reentrantBus }).config as never);
+  handler = new GlobalSyncHandler(
+    globalFixture(adapter, { changeBus: reentrantBus }).config as never,
+  );
   handler.start();
   await tick();
   expect(adapter.pull).not.toHaveBeenCalled();
@@ -604,7 +611,7 @@ test("global handler skips pull startup when stopped during start and reports st
     }),
   };
   const failing = new GlobalSyncHandler(
-    fixture(adapter, { changeBus: throwingBus, onSyncError }).config as never,
+    globalFixture(adapter, { changeBus: throwingBus, onSyncError }).config as never,
   );
   failing.start();
   expect(onSyncError).toHaveBeenCalledWith(
@@ -616,7 +623,7 @@ test("global handler skips pull startup when stopped during start and reports st
 test("global handler does not pull when stopped while reading checkpoints", async () => {
   let resolveCheckpoint!: (checkpoint: unknown) => void;
   const adapter = { push: vi.fn(), pull: vi.fn() };
-  const f = fixture(adapter);
+  const f = globalFixture(adapter);
   f.checkpointStorage.getCheckpoint.mockImplementationOnce(
     () => new Promise((resolve) => (resolveCheckpoint = resolve)),
   );
@@ -709,7 +716,9 @@ for (const scope of ["global", "collection"] as const) {
     const f = fixture(scope === "global" ? adapter : undefined, {
       canCommit: () => leader,
       onRemoteChangesCommitted,
-      ...(scope === "collection" ? { collections: [collection(adapter)] } : {}),
+      ...(scope === "collection"
+        ? { collections: [collection(adapter)] }
+        : { collections: [collection()] }),
     });
     const handler: any =
       scope === "global"
@@ -766,7 +775,7 @@ const storedEvent = (id: string, recordId = "1") => ({
 
 test("a push finishes only after its acknowledgement, so the next push never re-sends", async () => {
   const pushed: string[][] = [];
-  const f = fixture({
+  const f = globalFixture({
     pull: vi.fn(),
     // Acknowledges without awaiting: the handler still waits for it.
     push: vi.fn(async ({ events, commitChanges }: any) => {
@@ -846,7 +855,7 @@ test("a failed acknowledgement is reported and retried without an unhandled reje
 test("an adapter that awaits a failed acknowledgement fails the push with it", async () => {
   vi.useFakeTimers();
   try {
-    const f = fixture({
+    const f = globalFixture({
       pull: vi.fn(),
       push: vi.fn(async ({ events, commitChanges }: any) => {
         await commitChanges({ events });
@@ -871,7 +880,7 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
   const native = { transaction: "native" };
   const conflictResolver = vi.fn(() => "remote");
   let pullOptions: any;
-  const f = fixture(
+  const f = globalFixture(
     {
       pull: vi.fn((options: any) => {
         pullOptions = options;
@@ -920,5 +929,39 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
     { collection: "todos", recordId: "1" },
     native,
   );
+  handler.stop();
+});
+
+test("the global handler pushes only the collections it syncs and that have no adapter of their own", async () => {
+  const adapter = {
+    collections: ["todos", "notes"],
+    push: vi.fn(async ({ events, commitChanges }: any) => commitChanges({ events })),
+    pull: vi.fn(),
+  };
+  const own = { push: vi.fn(), pull: vi.fn() };
+  const f = fixture(adapter, {
+    collections: [
+      collection(),
+      { ...collection(own), name: "notes" },
+      { ...collection(), name: "other" },
+    ],
+  });
+  const event = (id: string, collectionName: string) => ({
+    id,
+    type: "create" as const,
+    collection: collectionName,
+    recordId: id,
+    data: { id },
+    createdAt: 1,
+  });
+  await f.localChangeStore.appendEvents([
+    event("1", "todos"),
+    event("2", "notes"),
+    event("3", "other"),
+  ]);
+  const handler = new GlobalSyncHandler(f.config as never);
+  handler.start();
+  await vi.waitFor(() => expect(adapter.push).toHaveBeenCalledOnce());
+  expect(adapter.push.mock.calls[0][0].events.map((e: any) => e.collection)).toEqual(["todos"]);
   handler.stop();
 });

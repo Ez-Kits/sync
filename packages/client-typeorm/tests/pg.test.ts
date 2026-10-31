@@ -42,6 +42,8 @@ test("a sync client writes through the adapter, its outbox created by the adapte
   const client = createSyncClient({
     collections: [collection],
     dbAdapter: adapter,
+    // Writes of a collection no adapter syncs skip the outbox; sync is never started here.
+    syncAdapter: { pull: () => {}, push: () => {} },
   });
 
   await client.collections.todos.insert({ id: "a", title: "first" });

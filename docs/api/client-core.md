@@ -40,19 +40,19 @@ function createSyncClient<C, DB, TCheckpoint>(
 
 Creates the client your app talks to. It starts initializing right away: it waits for `dbAdapter.dbStorage.ready`, then runs `dbAdapter.localChangeStore.initialize()` (which creates EzSync's tables). Every read, write, live query and sync waits for that.
 
-Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `dbStorage`, `commitLocalMutation` and an atomic `localChangeStore`).
+Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `dbStorage`, `commitLocalMutation` and an atomic `localChangeStore`), or when `syncAdapter.collections` lists a collection that has its own adapter.
 
 ### `SyncClientConfig`
 
-| Option            | Type                                                | Required | Description                                                                                                                                                    |
-| ----------------- | --------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collections`     | `CollectionConfigMap` (a non-empty tuple)           | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                               |
-| `dbAdapter`       | `BaseDBAdapter`                                     | yes      | The DB adapter; the client uses its `dbStorage` and `localChangeStore`.                                                                                        |
-| `syncAdapter`     | `SyncAdapter`                                       | no       | The backend for all collections. Without one (and without per-collection adapters) the app is local-only.                                                      |
-| `checkpoint`      | `{ serialize(cp): string; deserialize(value): cp }` | no       | How pull checkpoints are stored as strings. Default: `JSON.stringify` / `JSON.parse`.                                                                          |
-| `resolveConflict` | `ConflictResolution`                                | no       | Decides conflicts (a remote change for a record with unpushed local writes). Default: local wins. See [Conflict resolution](../guides/conflict-resolution.md). |
-| `onSyncStatus`    | `(event: SyncStatusEvent) => void`                  | no       | Called on every status change.                                                                                                                                 |
-| `onPushRejected`  | `(rejection: PushRejection) => void`                | no       | Called once for each write the backend refused for good. See [Rejected writes](../guides/rejected-writes.md).                                                  |
+| Option            | Type                                                | Required | Description                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collections`     | `CollectionConfigMap` (a non-empty tuple)           | yes      | The collections. Must be the same ones passed to the DB adapter.                                                                                                                 |
+| `dbAdapter`       | `BaseDBAdapter`                                     | yes      | The DB adapter; the client uses its `dbStorage` and `localChangeStore`.                                                                                                          |
+| `syncAdapter`     | `SyncAdapter`                                       | no       | The backend for the collections it lists in `collections` (all of them when it lists none), except those with their own adapter. Writes no adapter syncs never enter the outbox. |
+| `checkpoint`      | `{ serialize(cp): string; deserialize(value): cp }` | no       | How pull checkpoints are stored as strings. Default: `JSON.stringify` / `JSON.parse`.                                                                                            |
+| `resolveConflict` | `ConflictResolution`                                | no       | Decides conflicts (a remote change for a record with unpushed local writes). Default: local wins. See [Conflict resolution](../guides/conflict-resolution.md).                   |
+| `onSyncStatus`    | `(event: SyncStatusEvent) => void`                  | no       | Called on every status change.                                                                                                                                                   |
+| `onPushRejected`  | `(rejection: PushRejection) => void`                | no       | Called once for each write the backend refused for good. See [Rejected writes](../guides/rejected-writes.md).                                                                    |
 
 ### `SyncClient`
 
@@ -226,6 +226,7 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 | `TransactionClosedError`       | The transaction was rolled back after idling too long, or is otherwise closed.                   |             |
 | `TransactionStatementError`    | A `BEGIN` / `COMMIT` / ... statement was sent.                                                   |             |
 | `DBStorageClosedError`         | The storage was closed.                                                                          |             |
+| `DBStorageWorkerError`         | The storage worker failed to load; `ready` and every request reject with it.                     |             |
 | `PushRejectedError`            | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                    |             |
 
 | Helper                                                   | Description                                                |
@@ -350,6 +351,7 @@ Implemented by `@ez-kits/sync-firebase`. Implement it yourself for another backe
 
 ```ts
 interface SyncAdapter<C, N, TCheckpoint> {
+  collections?: readonly N[]; // the collections it syncs; omitted: every one without its own adapter
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
   push(options: PushOptions<C, N>): void | Promise<void>;
 }

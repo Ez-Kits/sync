@@ -187,6 +187,21 @@ test("Firebase pull adapters report listener failures to core", () => {
   expect(realtimeError).toHaveBeenCalledWith(realtimeFailure);
 });
 
+test("Firebase adapters declare the collections they sync, so core pushes them only those", () => {
+  const collections = [
+    { collectionName: "todos", collectionPath: "todos", createCheckpoint: () => 1 },
+    { collectionName: "projects", collectionPath: "users/7/projects", createCheckpoint: () => 1 },
+  ];
+  expect(createFirestoreSyncAdapter({ db: {}, collections } as never).collections).toEqual([
+    "todos",
+    "projects",
+  ]);
+  expect(createRealtimeDBSyncAdapter({ db: {}, collections } as never).collections).toEqual([
+    "todos",
+    "projects",
+  ]);
+});
+
 test("collection name helper handles nested slash paths and rejects empty paths", () => {
   expect(collectionNameFromPath("/users/1/todos/")).toBe("todos");
   expect(() => collectionNameFromPath("///")).toThrow("Unable to derive collectionName");
