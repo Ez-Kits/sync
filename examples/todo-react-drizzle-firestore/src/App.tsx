@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
+import { ACCOUNTS, useAccount, type Account } from "./account.ts";
 import { todos, type Todo } from "./db/schema.ts";
 import { isFirebaseConfigured } from "./firebase.ts";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
@@ -10,7 +18,13 @@ const TODO_COLLECTIONS: "todos"[] = ["todos"];
 
 type TodoFilter = "all" | "open" | "completed";
 
-function TodoApp() {
+function TodoApp({
+  account,
+  onAccountChange,
+}: {
+  account: Account;
+  onAccountChange: (account: Account) => void;
+}) {
   const client = useSyncClient();
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
@@ -105,6 +119,7 @@ function TodoApp() {
       <header className="hero">
         <p className="brand">EzSync</p>
         <h1>Todos</h1>
+        <AccountSwitcher account={account} onChange={onAccountChange} />
         <p className="lede">Local-first tasks with sql.js, Drizzle, and Firestore sync.</p>
         <p className={`sync-status ${syncEnabled && isOnline ? "online" : "offline"}`}>
           {!syncEnabled
@@ -204,10 +219,74 @@ function TodoApp() {
   );
 }
 
-export function App() {
+function AccountSwitcher({
+  account,
+  onChange,
+}: {
+  account: Account;
+  onChange: (account: Account) => void;
+}) {
   return (
-    <SyncClientProvider>
-      <TodoApp />
-    </SyncClientProvider>
+    <label className="account">
+      Account{" "}
+      <select
+        aria-label="Account"
+        value={account}
+        onChange={(event) => {
+          const next = ACCOUNTS.find((value) => value === event.target.value);
+          if (next) onChange(next);
+        }}
+      >
+        {ACCOUNTS.map((value) => (
+          <option key={value} value={value}>
+            {value}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Shown instead of the app when an account's database cannot open. */
+class DatabaseErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown) {
+    console.error("Failed to initialize the local database", error);
+  }
+
+  override render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <main className="app">
+        <p className="empty">
+          Unable to open your local data. Your saved data was not replaced. Reload the app, and
+          consult recovery instructions before clearing browser storage.
+        </p>
+      </main>
+    );
+  }
+}
+
+export function App() {
+  const [account, setAccount] = useAccount();
+  return (
+    // Keyed by account: another account gets a fresh chance to open its database.
+    <DatabaseErrorBoundary key={account}>
+      <SyncClientProvider
+        scope={account}
+        fallback={
+          <main className="app">
+            <p className="empty">Opening {account}'s local database…</p>
+          </main>
+        }
+      >
+        <TodoApp account={account} onAccountChange={setAccount} />
+      </SyncClientProvider>
+    </DatabaseErrorBoundary>
   );
 }

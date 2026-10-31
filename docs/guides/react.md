@@ -141,9 +141,64 @@ function RoleBadge() {
 }
 ```
 
+## One client per user
+
+When each user syncs their own data (a per-user Firestore path, or a query that filters by user), give each user their own local database too. Then switching users never mixes rows, pending writes or checkpoints. `createScopedSyncClientReact` builds one client per **scope** from a function:
+
+```ts
+// src/sync.ts
+import { createScopedSyncClientReact } from "@ez-kits/sync-client-react";
+
+export const { SyncClientProvider, useSyncClient, useLiveQuery } = createScopedSyncClientReact({
+  createConfig: (uid: string) => {
+    const dbStorage = createSqlJsDBStorage({
+      key: `todos:${uid}`, // tabs of the same user share this database
+      engineOptions: { indexedDBName: `todos-sqljs:${uid}` },
+      worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
+    });
+    return {
+      collections: [todosCollection],
+      dbAdapter: createDrizzleSqliteDBAdapter({ dbStorage, collections: [todosCollection] }),
+      syncAdapter: createFirestoreSyncAdapter({
+        db: firestore,
+        collections: [
+          defineFirestoreCollectionSyncAdapterConfig({
+            collectionConfig: todosCollection,
+            collectionPath: `users/${uid}/todos`,
+            ...todoHandlers,
+          }),
+        ],
+      }),
+    };
+  },
+});
+```
+
+Collections, handlers and conflict rules stay at module level; only what depends on the user goes in `createConfig`. Render the provider with the current user:
+
+```tsx
+function Root() {
+  const [uid, setUid] = useState<string>();
+  useEffect(() => onAuthStateChanged(getAuth(), (user) => setUid(user?.uid)), []);
+  if (!uid) return <SignIn />;
+  return (
+    <SyncClientProvider scope={uid} fallback={<p>Opening your data…</p>}>
+      <App />
+    </SyncClientProvider>
+  );
+}
+```
+
+- **Switching users** disposes the previous client and remounts `<App />` with the new one. The hooks work exactly as above.
+- **Pending writes are kept.** A user's unpushed writes stay in their database and are pushed the next time that user signs in.
+- **Switch only once the user is signed in**, so that security rules do not refuse the first pushes.
+- **Every tab must switch.** Firebase Auth's state is shared across tabs, so driving `scope` from `onAuthStateChanged` covers this. A switch of your own can use the `storage` event, as the examples do.
+- **When the database cannot open**, the provider throws to the nearest error boundary.
+
 ## Notes
 
 - The client is created when the module loads, before React renders. That is intended: the storage worker starts as early as possible.
 - `StrictMode` is fine. The client lives outside React, so double-mounting does not create a second client.
 - To show an error screen when the database cannot open, you can `await dbStorage.ready` before rendering, and render a message if it rejects.
-- A complete app is in [examples/todo-react-drizzle-firestore](../../examples/todo-react-drizzle-firestore) (Drizzle) and [examples/todo-react-typeorm-firestore](../../examples/todo-react-typeorm-firestore) (TypeORM).
+- With `createScopedSyncClientReact`, clients are created by the provider instead, and there is no module-level `syncClient`.
+- A complete app is in [examples/todo-react-drizzle-firestore](../../examples/todo-react-drizzle-firestore) (Drizzle) and [examples/todo-react-typeorm-firestore](../../examples/todo-react-typeorm-firestore) (TypeORM). Both use one client per account, with an account switcher.

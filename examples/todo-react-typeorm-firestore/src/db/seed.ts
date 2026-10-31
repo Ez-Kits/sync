@@ -1,23 +1,24 @@
 import { faker } from "@faker-js/faker";
-import { syncClient } from "../sync.ts";
+import type { TodoSyncClient } from "../sync.ts";
 
-const SEED_FLAG_KEY = "ez-sync-todo-typeorm-seeded";
+const SEED_FLAG_KEY_PREFIX = "ez-sync-todo-typeorm-seeded:";
 const SEED_COUNT = 10_000;
 const SEED_YIELD_EVERY = 100;
 
 /**
- * Inserts a large local todo dataset once per browser profile via the sync
+ * Inserts a large local todo dataset once per account and browser profile via the sync
  * client so creates are tracked as dirty local changes and can push upstream.
  */
-export async function seedTodosOnce(): Promise<void> {
-  if (localStorage.getItem(SEED_FLAG_KEY) === "1") {
+export async function seedTodosOnce(syncClient: TodoSyncClient, account: string): Promise<void> {
+  const seedFlagKey = SEED_FLAG_KEY_PREFIX + account;
+  if (localStorage.getItem(seedFlagKey) === "1") {
     return;
   }
 
   // Works from any tab: reads and writes go to whichever tab owns the database.
   const existing = await syncClient.collections.todos.getMany();
   if (existing.length > 0) {
-    localStorage.setItem(SEED_FLAG_KEY, "1");
+    localStorage.setItem(seedFlagKey, "1");
     return;
   }
 
@@ -40,6 +41,6 @@ export async function seedTodosOnce(): Promise<void> {
     }
   }
 
-  localStorage.setItem(SEED_FLAG_KEY, "1");
+  localStorage.setItem(seedFlagKey, "1");
   console.info("Todo seed complete");
 }

@@ -1,31 +1,15 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
-import { dbStorage } from "./sync.ts";
 import "./style.css";
 
-async function bootstrap() {
-  // Resolves once this tab leads the database or has reached the tab that does.
-  await dbStorage.ready;
-  // await seedTodosOnce();
-
-  const root = document.querySelector<HTMLDivElement>("#app");
-  if (!root) {
-    throw new Error("#app root not found");
-  }
-
-  createRoot(root).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+const root = document.querySelector<HTMLDivElement>("#app");
+if (!root) {
+  throw new Error("#app root not found");
 }
 
-void bootstrap().catch((error: unknown) => {
-  console.error("Failed to initialize the local database", error);
-  const root = document.querySelector<HTMLDivElement>("#app");
-  if (root) {
-    root.textContent =
-      "Unable to open your local data. Your saved data was not replaced. Reload the app, and consult recovery instructions before clearing browser storage.";
-  }
-});
+createRoot(root).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

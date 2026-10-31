@@ -1,6 +1,6 @@
 # `@ez-kits/sync-client-react`
 
-React bindings: a provider and typed hooks for one sync client. Requires React 19.
+React bindings: a provider and typed hooks for one sync client, or for one client per scope (such as per signed-in user). Requires React 19.
 
 ```bash
 npm install @ez-kits/sync-client-react
@@ -26,6 +26,48 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
 | `useSyncClient`      | `() => SyncClient`                        | The client. Throws when used outside `SyncClientProvider`. |
 | `useLiveQuery`       | `(options) => { data, isPending, error }` | A live query bound to the component's lifetime.            |
 
+## `createScopedSyncClientReact(options)`
+
+One client per scope, each with its own database and sync adapter. Use it when every user syncs their own subset of the data into their own local database.
+
+```ts
+import { createScopedSyncClientReact } from "@ez-kits/sync-client-react";
+
+export const { SyncClientProvider, useSyncClient, useLiveQuery } = createScopedSyncClientReact({
+  createConfig: (uid: string) => {
+    const dbStorage = createSqlJsDBStorage({
+      key: `todos:${uid}`,
+      engineOptions: { indexedDBName: `todos-sqljs:${uid}` },
+      worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
+    });
+    return {
+      collections: [todosCollection],
+      dbAdapter: createDrizzleSqliteDBAdapter({ dbStorage, collections: [todosCollection] }),
+      syncAdapter: createTodoSyncAdapter(`users/${uid}/todos`),
+    };
+  },
+});
+```
+
+| Option         | Type                                  | Description                                                                                                                                                                                 |
+| -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createConfig` | `(scope: string) => SyncClientConfig` | The whole client config of a scope. Give each scope its own storage `key` and database name. Called each time a scope is opened, never while that scope's previous client is still closing. |
+
+It returns `SyncClientProvider`, `useSyncClient` and `useLiveQuery`, typed from the config `createConfig` returns. There is no `syncClient`: clients exist only while a provider renders their scope.
+
+### `<SyncClientProvider scope fallback?>`
+
+| Prop       | Type        | Description                                                                                  |
+| ---------- | ----------- | -------------------------------------------------------------------------------------------- |
+| `scope`    | `string`    | Which client to provide, e.g. the signed-in user's id.                                       |
+| `fallback` | `ReactNode` | Rendered while the scope's database opens (`dbStorage.ready`). Default: nothing.             |
+| `children` | `ReactNode` | Rendered with the scope's client once its database is ready. Remounted when `scope` changes. |
+
+- A client is created when its scope first renders, and disposed when no provider renders that scope any more. `StrictMode` double mounting reuses the same client.
+- Changing `scope` disposes the previous client (which stops its sync and closes its storage) and remounts `children`, so no component state crosses scopes.
+- When the scope's database cannot open, the provider throws the error to the nearest error boundary.
+- Writes not yet pushed stay in the scope's database and are pushed when the scope is opened again.
+
 ## `useLiveQuery(options)`
 
 ```ts
@@ -50,10 +92,13 @@ const { data, isPending, error } = useLiveQuery({
 
 ## Types
 
-| Export                         | Description                      |
-| ------------------------------ | -------------------------------- |
-| `CreateSyncClientReactOptions` | Same as `SyncClientConfig`.      |
-| `CreateSyncClientReactResult`  | The returned object.             |
-| `UseLiveQuery`                 | The type of `useLiveQuery`.      |
-| `UseLiveQueryOptions`          | `{ collections?, query, deps? }` |
-| `UseLiveQueryResult`           | `{ data, isPending, error }`     |
+| Export                               | Description                        |
+| ------------------------------------ | ---------------------------------- |
+| `CreateSyncClientReactOptions`       | Same as `SyncClientConfig`.        |
+| `CreateSyncClientReactResult`        | The returned object.               |
+| `CreateScopedSyncClientReactOptions` | `{ createConfig }`                 |
+| `CreateScopedSyncClientReactResult`  | The scoped form's returned object. |
+| `ScopedSyncClientProviderProps`      | `{ scope, fallback?, children }`   |
+| `UseLiveQuery`                       | The type of `useLiveQuery`.        |
+| `UseLiveQueryOptions`                | `{ collections?, query, deps? }`   |
+| `UseLiveQueryResult`                 | `{ data, isPending, error }`       |
