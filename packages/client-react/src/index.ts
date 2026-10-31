@@ -3,28 +3,37 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   InferCheckpointMap,
+  SyncClient,
 } from "@ez-kits/sync-client-core";
 import { createSyncClient } from "@ez-kits/sync-client-core";
 import {
   createContext,
   createElement,
+  Fragment,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type Context,
   type ReactNode,
 } from "react";
+import { createScopedClients } from "./scoped-clients.ts";
 import type {
+  CreateScopedSyncClientReactOptions,
+  CreateScopedSyncClientReactResult,
   CreateSyncClientReactOptions,
   CreateSyncClientReactResult,
+  ScopedSyncClientProviderProps,
   UseLiveQueryOptions,
   UseLiveQueryResult,
 } from "./types.ts";
 
 export type * from "./types.ts";
 
+/** One client for the whole app, created now. The provider and hooks serve it. */
 export function createSyncClientReact<
   C extends CollectionConfigMap,
   DB extends BaseDBAdapter<C, any, any>,
@@ -32,17 +41,71 @@ export function createSyncClientReact<
 >(
   options: CreateSyncClientReactOptions<C, DB, TCheckpoint>,
 ): CreateSyncClientReactResult<C, DB, TCheckpoint> {
+  const SyncClientContext = createContext<SyncClient<C, DB, TCheckpoint> | null>(null);
   const syncClient = createSyncClient<C, DB, TCheckpoint>(options);
-  const SyncClientContext = createContext<ReturnType<
-    typeof createSyncClient<C, DB, TCheckpoint>
-  > | null>(null);
 
   function SyncClientProvider({ children }: { children: ReactNode }) {
-    const value = useMemo(() => syncClient, []);
-    return createElement(SyncClientContext.Provider, { value }, children);
+    return createElement(SyncClientContext.Provider, { value: syncClient }, children);
   }
 
-  function useSyncClient(): ReturnType<typeof createSyncClient<C, DB, TCheckpoint>> {
+  return { syncClient, SyncClientProvider, ...createHooks(SyncClientContext) };
+}
+
+/**
+ * One client per scope (e.g. per signed-in user), each with its own database and sync
+ * adapter from `createConfig(scope)`. `<SyncClientProvider scope={uid}>` opens the scope's
+ * client once its database is ready, and disposes the previous one when the scope changes.
+ */
+export function createScopedSyncClientReact<
+  C extends CollectionConfigMap,
+  DB extends BaseDBAdapter<C, any, any>,
+  TCheckpoint = InferCheckpointMap<C>,
+>(
+  options: CreateScopedSyncClientReactOptions<C, DB, TCheckpoint>,
+): CreateScopedSyncClientReactResult<C, DB, TCheckpoint> {
+  type Client = SyncClient<C, DB, TCheckpoint>;
+  const SyncClientContext = createContext<Client | null>(null);
+  const clients = createScopedClients(options);
+
+  function SyncClientProvider({ scope, fallback = null, children }: ScopedSyncClientProviderProps) {
+    const [opened, setOpened] = useState<{ scope: string; client?: Client; error?: unknown }>();
+
+    useEffect(() => {
+      let active = true;
+      const lease = clients.acquire(scope);
+      lease.client.then(
+        (client) => {
+          if (active) setOpened({ scope, client });
+        },
+        (error: unknown) => {
+          if (active) setOpened({ scope, error });
+        },
+      );
+      return () => {
+        active = false;
+        lease.release();
+      };
+    }, [scope]);
+
+    // Until the new scope opens, render nothing of the previous one.
+    if (opened?.scope !== scope) return fallback;
+    if (!opened.client) throw opened.error;
+    return createElement(
+      SyncClientContext.Provider,
+      { value: opened.client },
+      createElement(Fragment, { key: scope }, children),
+    );
+  }
+
+  return { SyncClientProvider, ...createHooks(SyncClientContext) };
+}
+
+function createHooks<
+  C extends CollectionConfigMap,
+  DB extends BaseDBAdapter<C, any, any>,
+  TCheckpoint,
+>(SyncClientContext: Context<SyncClient<C, DB, TCheckpoint> | null>) {
+  function useSyncClient(): SyncClient<C, DB, TCheckpoint> {
     const ctx = useContext(SyncClientContext);
     if (!ctx) {
       throw new Error("useSyncClient must be used within the createSyncClientReact Provider");
@@ -108,14 +171,8 @@ export function createSyncClientReact<
       error,
     };
   }
-  const result: CreateSyncClientReactResult<C, DB, TCheckpoint> = {
-    syncClient,
-    SyncClientProvider,
-    useSyncClient,
-    useLiveQuery,
-  };
 
-  return result;
+  return { useSyncClient, useLiveQuery };
 }
 
 /** A number that changes whenever an item of `deps` changes (compared with `Object.is`). */

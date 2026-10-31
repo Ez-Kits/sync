@@ -1,7 +1,12 @@
 import type { BaseDBAdapter, CollectionConfig, SyncClient } from "@ez-kits/sync-client-core";
 import type { ComponentType, ReactNode } from "react";
 import { expectTypeOf, test } from "vite-plus/test";
-import { createSyncClientReact, type UseLiveQueryResult } from "../../src";
+import {
+  createScopedSyncClientReact,
+  createSyncClientReact,
+  type ScopedSyncClientProviderProps,
+  type UseLiveQueryResult,
+} from "../../src";
 
 interface Todo {
   id: number;
@@ -74,4 +79,37 @@ test("options are validated like createSyncClient", () => {
     },
   });
   expectTypeOf(serialized.syncClient).toEqualTypeOf<SyncClient<Collections, DB, Checkpoint>>();
+});
+
+test("createScopedSyncClientReact infers the client from createConfig", () => {
+  const scoped = createScopedSyncClientReact({
+    createConfig: (scope) => {
+      expectTypeOf(scope).toEqualTypeOf<string>();
+      return { collections, dbAdapter };
+    },
+  });
+  expectTypeOf(scoped).not.toHaveProperty("syncClient");
+  expectTypeOf(scoped.useSyncClient).returns.toEqualTypeOf<SyncClient<Collections, DB>>();
+  expectTypeOf(scoped.SyncClientProvider).toEqualTypeOf<
+    ComponentType<ScopedSyncClientProviderProps>
+  >();
+  scoped.useLiveQuery({
+    // @ts-expect-error live queries only watch known collections
+    collections: ["projects"],
+    query: () => 1,
+  });
+
+  const serialized = createScopedSyncClientReact({
+    createConfig: () => ({
+      collections,
+      dbAdapter,
+      checkpointSerializer: {
+        serialize: (checkpoint: Checkpoint) => checkpoint.cursor,
+        deserialize: (value: string): Checkpoint => ({ cursor: value }),
+      },
+    }),
+  });
+  expectTypeOf(serialized.useSyncClient).returns.toEqualTypeOf<
+    SyncClient<Collections, DB, Checkpoint>
+  >();
 });

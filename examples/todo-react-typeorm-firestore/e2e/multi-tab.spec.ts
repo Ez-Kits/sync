@@ -77,3 +77,28 @@ test("tabs reloading together keep one snapshot and the latest data", async ({ c
   );
   expect(roles.filter((role) => OWNER.test(role ?? ""))).toHaveLength(1);
 });
+
+test("each account keeps its own todos and every tab follows a switch", async ({ context }) => {
+  const first = await openTab(context);
+  const second = await openTab(context);
+  await addTodo(first, "alice's todo");
+
+  await first.getByLabel("Account").selectOption("bob");
+  await expect(second.getByLabel("Account")).toHaveValue("bob");
+  for (const page of [first, second]) {
+    await expect(page.getByTestId("storage-role")).toHaveText(/local database/);
+    await expect(page.getByText("alice's todo")).toBeHidden();
+  }
+  await addTodo(second, "bob's todo");
+  await expect(first.getByText("bob's todo")).toBeVisible();
+
+  await second.getByLabel("Account").selectOption("alice");
+  for (const page of [first, second]) {
+    await expect(page.getByText("alice's todo")).toBeVisible();
+    await expect(page.getByText("bob's todo")).toBeHidden();
+  }
+  const roles = await Promise.all(
+    [first, second].map((page) => page.getByTestId("storage-role").textContent()),
+  );
+  expect(roles.filter((role) => OWNER.test(role ?? ""))).toHaveLength(1);
+});
