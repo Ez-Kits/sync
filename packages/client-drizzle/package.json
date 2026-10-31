@@ -1,6 +1,6 @@
 {
   "name": "@ez-kits/sync-client-drizzle-adapter",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Use Drizzle ORM with EzSync",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-drizzle#readme",
   "bugs": {
