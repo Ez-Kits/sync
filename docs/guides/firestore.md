@@ -1,9 +1,9 @@
 # Sync with Cloud Firestore
 
-`@ez-kits/sync-firebase/sync-firestore` syncs your collections with Cloud Firestore. Each local record becomes one Firestore document.
+`@ez-kits/sync-client-firebase/sync-firestore` syncs your collections with Cloud Firestore. Each local record becomes one Firestore document.
 
 ```bash
-npm install @ez-kits/sync-firebase firebase
+npm install @ez-kits/sync-client-firebase firebase
 ```
 
 ## The smallest setup
@@ -12,7 +12,7 @@ npm install @ez-kits/sync-firebase firebase
 import {
   createFirestoreSyncAdapter,
   defineFirestoreCollectionSyncAdapterConfig,
-} from "@ez-kits/sync-firebase/sync-firestore";
+} from "@ez-kits/sync-client-firebase/sync-firestore";
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
@@ -214,7 +214,7 @@ Pulls that fail (for example a listener refused by rules, or a missing index) ar
 
 ## One collection only
 
-If you prefer to attach the adapter to a single collection's definition, use `createFirestoreCollectionSyncAdapter`. It takes the same options plus `db` and an optional `collectionName` (defaults to the last segment of `collectionPath`). See the [API reference](../api/sync-firebase.md#createfirestorecollectionsyncadapterconfig).
+If you prefer to attach the adapter to a single collection's definition, use `createFirestoreCollectionSyncAdapter`. It takes the same options plus `db` and an optional `collectionName` (defaults to the last segment of `collectionPath`). See the [API reference](../api/client-firebase.md#createfirestorecollectionsyncadapterconfig).
 
 ## Good to know
 

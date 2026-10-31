@@ -16,7 +16,10 @@ Run your migrations in the **storage worker**, inside the function you pass to `
 ```ts
 // src/db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
-import { openSqlJsEngine, type SqlJsEngineOptions } from "@ez-kits/sync-storage-sqljs/worker";
+import {
+  openSqlJsEngine,
+  type SqlJsEngineOptions,
+} from "@ez-kits/sync-client-storage-sqljs/worker";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./migrations";
 

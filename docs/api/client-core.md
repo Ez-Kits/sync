@@ -346,7 +346,7 @@ interface AtomicLocalChangeStore<TTx = unknown> extends ILocalChangeStore<TTx> {
 
 ## Sync adapter contract
 
-Implemented by `@ez-kits/sync-firebase`. Implement it yourself for another backend: see [Custom sync adapter](../extending/custom-sync-adapter.md).
+Implemented by `@ez-kits/sync-client-firebase`. Implement it yourself for another backend: see [Custom sync adapter](../extending/custom-sync-adapter.md).
 
 ```ts
 interface SyncAdapter<C, N, TCheckpoint> {

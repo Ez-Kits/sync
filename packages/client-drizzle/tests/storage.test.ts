@@ -5,8 +5,8 @@ import {
   type DBQuery,
   type DBStorage,
 } from "@ez-kits/sync-client-core";
-import { openPGliteEngine } from "@ez-kits/sync-storage-pglite/worker";
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openPGliteEngine } from "@ez-kits/sync-client-storage-pglite/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { asc, defineRelations } from "drizzle-orm";
 import {
   boolean,

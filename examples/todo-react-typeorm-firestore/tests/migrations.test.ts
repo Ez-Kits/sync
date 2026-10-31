@@ -1,4 +1,4 @@
-import { openSqlJsEngine } from "@ez-kits/sync-storage-sqljs/worker";
+import { openSqlJsEngine } from "@ez-kits/sync-client-storage-sqljs/worker";
 import { expect, test } from "vite-plus/test";
 import { migrateLocalSchema } from "../src/db/migrations";
 

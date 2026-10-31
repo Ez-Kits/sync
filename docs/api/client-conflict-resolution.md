@@ -1,9 +1,9 @@
-# `@ez-kits/sync-conflict-resolution`
+# `@ez-kits/sync-client-conflict-resolution`
 
 Ready-made conflict policies. Each function returns a plain `ConflictResolution` to pass as `resolveConflict` to `createSyncClient`. Provider-neutral.
 
 ```bash
-npm install @ez-kits/sync-conflict-resolution
+npm install @ez-kits/sync-client-conflict-resolution
 ```
 
 Guide: [Conflict resolution](../guides/conflict-resolution.md).

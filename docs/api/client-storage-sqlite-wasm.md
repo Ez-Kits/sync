@@ -1,15 +1,15 @@
-# `@ez-kits/sync-storage-sqlite-wasm`
+# `@ez-kits/sync-client-storage-sqlite-wasm`
 
 The official [SQLite WASM](https://sqlite.org/wasm) build in a leader worker, saved to the Origin Private File System with the `opfs-sahpool` VFS. No COOP/COEP headers needed. Dialect: `sqlite`.
 
 ```bash
-npm install @ez-kits/sync-storage-sqlite-wasm @sqlite.org/sqlite-wasm
+npm install @ez-kits/sync-client-storage-sqlite-wasm @sqlite.org/sqlite-wasm
 ```
 
-| Entry point                                | Use it in  | Contents                    |
-| ------------------------------------------ | ---------- | --------------------------- |
-| `@ez-kits/sync-storage-sqlite-wasm`        | the page   | `createSqliteWasmDBStorage` |
-| `@ez-kits/sync-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`      |
+| Entry point                                       | Use it in  | Contents                    |
+| ------------------------------------------------- | ---------- | --------------------------- |
+| `@ez-kits/sync-client-storage-sqlite-wasm`        | the page   | `createSqliteWasmDBStorage` |
+| `@ez-kits/sync-client-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`      |
 
 Setup walkthrough: [Choosing a storage engine → SQLite WASM](../guides/storage-engines.md#sqlite-wasm).
 

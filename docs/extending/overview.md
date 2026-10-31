@@ -24,10 +24,10 @@ DB engine         (DBEngine)         ← "use another database engine"
 - Read [How EzSync works](../guides/how-it-works.md). The guarantees there are what your implementation must keep.
 - The contracts are documented in the [core API reference](../api/client-core.md), and the source of truth is `packages/client-core/src`. Each built-in package is a working example:
 
-  | Contract     | Look at                                                                         |
-  | ------------ | ------------------------------------------------------------------------------- |
-  | `DBEngine`   | `packages/storage-sqljs/src/engine.ts`, `packages/storage-pglite/src/engine.ts` |
-  | DB adapter   | `packages/client-drizzle/src`, `packages/client-typeorm/src`                    |
-  | Sync adapter | `packages/sync-firebase/src/firestore/create-sync-adapter-from-resolved.ts`     |
+  | Contract     | Look at                                                                                       |
+  | ------------ | --------------------------------------------------------------------------------------------- |
+  | `DBEngine`   | `packages/client-storage-sqljs/src/engine.ts`, `packages/client-storage-pglite/src/engine.ts` |
+  | DB adapter   | `packages/client-drizzle/src`, `packages/client-typeorm/src`                                  |
+  | Sync adapter | `packages/client-firebase/src/firestore/create-sync-adapter-from-resolved.ts`                 |
 
 - Keep provider-, ORM- and engine-specific code in its own package. The core never imports it.

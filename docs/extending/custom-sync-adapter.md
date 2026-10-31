@@ -328,4 +328,4 @@ A collection can carry its own adapter (`defineDrizzleCollection({ ..., syncAdap
 - [ ] Errors never include record data in their messages (they end up in logs and sync status).
 - [ ] Round trip with two clients on two databases: a write in one appears in the other, including updates and deletes.
 
-The Firestore adapter (`packages/sync-firebase/src/firestore/create-sync-adapter-from-resolved.ts`) is a complete real-world example, with batching and error classification.
+The Firestore adapter (`packages/client-firebase/src/firestore/create-sync-adapter-from-resolved.ts`) is a complete real-world example, with batching and error classification.

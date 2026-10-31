@@ -1,15 +1,15 @@
-# `@ez-kits/sync-firebase`
+# `@ez-kits/sync-client-firebase`
 
 Sync adapters for **Cloud Firestore** and the **Firebase Realtime Database**. Requires `firebase` `^12.12.1`.
 
 ```bash
-npm install @ez-kits/sync-firebase firebase
+npm install @ez-kits/sync-client-firebase firebase
 ```
 
-| Entry point                               | Contents                   |
-| ----------------------------------------- | -------------------------- |
-| `@ez-kits/sync-firebase/sync-firestore`   | Firestore adapters         |
-| `@ez-kits/sync-firebase/sync-realtime-db` | Realtime Database adapters |
+| Entry point                                      | Contents                   |
+| ------------------------------------------------ | -------------------------- |
+| `@ez-kits/sync-client-firebase/sync-firestore`   | Firestore adapters         |
+| `@ez-kits/sync-client-firebase/sync-realtime-db` | Realtime Database adapters |
 
 There is no root entry point; import from the one you use.
 

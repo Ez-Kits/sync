@@ -11,13 +11,13 @@ You install EzSync as a few small packages. A typical app needs **four**: the co
 
 ## Step 1: pick one package from each row
 
-| You need...                       | Pick one                                                                                                                                                                       |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The core (always)                 | `@ez-kits/sync-client-core`                                                                                                                                                    |
-| An ORM bridge (a **DB adapter**)  | `@ez-kits/sync-client-drizzle-adapter` + `drizzle-orm` **or** `@ez-kits/sync-client-typeorm-adapter` + `typeorm`                                                               |
-| A database (a **storage engine**) | `@ez-kits/sync-storage-sqljs` + `sql.js` **or** `@ez-kits/sync-storage-sqlite-wasm` + `@sqlite.org/sqlite-wasm` **or** `@ez-kits/sync-storage-pglite` + `@electric-sql/pglite` |
-| A backend (a **sync adapter**)    | `@ez-kits/sync-firebase` + `firebase`, or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                              |
-| Optional extras                   | `@ez-kits/sync-client-react` (React hooks), `@ez-kits/sync-conflict-resolution` (conflict policies)                                                                            |
+| You need...                       | Pick one                                                                                                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The core (always)                 | `@ez-kits/sync-client-core`                                                                                                                                                                         |
+| An ORM bridge (a **DB adapter**)  | `@ez-kits/sync-client-drizzle-adapter` + `drizzle-orm` **or** `@ez-kits/sync-client-typeorm-adapter` + `typeorm`                                                                                    |
+| A database (a **storage engine**) | `@ez-kits/sync-client-storage-sqljs` + `sql.js` **or** `@ez-kits/sync-client-storage-sqlite-wasm` + `@sqlite.org/sqlite-wasm` **or** `@ez-kits/sync-client-storage-pglite` + `@electric-sql/pglite` |
+| A backend (a **sync adapter**)    | `@ez-kits/sync-client-firebase` + `firebase`, or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                                            |
+| Optional extras                   | `@ez-kits/sync-client-react` (React hooks), `@ez-kits/sync-client-conflict-resolution` (conflict policies)                                                                                          |
 
 Not sure? Use the **recommended starter stack**. It is what the quick start uses:
 
@@ -35,9 +35,9 @@ The recommended starter stack:
 ```bash
 npm install @ez-kits/sync-client-core \
   @ez-kits/sync-client-drizzle-adapter drizzle-orm@1.0.0-rc.5 \
-  @ez-kits/sync-storage-sqljs sql.js \
+  @ez-kits/sync-client-storage-sqljs sql.js \
   @ez-kits/sync-client-react \
-  @ez-kits/sync-firebase firebase
+  @ez-kits/sync-client-firebase firebase
 ```
 
 With pnpm or Yarn, replace `npm install` with `pnpm add` or `yarn add`.

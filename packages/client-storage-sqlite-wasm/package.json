@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/package",
-  "name": "@ez-kits/sync-storage-pglite",
+  "name": "@ez-kits/sync-client-storage-sqlite-wasm",
   "version": "0.0.0",
-  "description": "Postgres storage for EzSync in the browser, powered by PGlite",
-  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/storage-pglite#readme",
+  "description": "SQLite storage for EzSync in the browser, saved to OPFS",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-storage-sqlite-wasm#readme",
   "bugs": {
     "url": "https://github.com/Ez-Kits/sync/issues"
   },
@@ -12,7 +12,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ez-Kits/sync.git",
-    "directory": "packages/storage-pglite"
+    "directory": "packages/client-storage-sqlite-wasm"
   },
   "files": [
     "dist"
@@ -36,15 +36,15 @@
     "prepublishOnly": "vp run build"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "catalog:",
     "@ez-kits/sync-client-core": "workspace:*",
+    "@sqlite.org/sqlite-wasm": "catalog:",
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@electric-sql/pglite": "catalog:",
-    "@ez-kits/sync-client-core": "workspace:^"
+    "@ez-kits/sync-client-core": "workspace:^",
+    "@sqlite.org/sqlite-wasm": "catalog:"
   }
 }

@@ -1,9 +1,9 @@
 # Sync with Realtime Database
 
-`@ez-kits/sync-firebase/sync-realtime-db` syncs your collections with the Firebase Realtime Database (RTDB). Each local record is one child node under the collection's path: `<collectionPath>/<recordId>`.
+`@ez-kits/sync-client-firebase/sync-realtime-db` syncs your collections with the Firebase Realtime Database (RTDB). Each local record is one child node under the collection's path: `<collectionPath>/<recordId>`.
 
 ```bash
-npm install @ez-kits/sync-firebase firebase
+npm install @ez-kits/sync-client-firebase firebase
 ```
 
 ## The smallest setup
@@ -12,7 +12,7 @@ npm install @ez-kits/sync-firebase firebase
 import {
   createRealtimeDBSyncAdapter,
   defineRealtimeDBCollectionSyncAdapterConfig,
-} from "@ez-kits/sync-firebase/sync-realtime-db";
+} from "@ez-kits/sync-client-firebase/sync-realtime-db";
 import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
@@ -104,4 +104,4 @@ See [Rejected writes](rejected-writes.md). Because one multipath update is all-o
 
 ## One collection only
 
-`createRealtimeDBCollectionSyncAdapter({ db, collectionPath, collectionName?, ...options })` builds an adapter for a single collection, to pass as that collection's `syncAdapter`. See the [API reference](../api/sync-firebase.md#createrealtimedbcollectionsyncadapterconfig).
+`createRealtimeDBCollectionSyncAdapter({ db, collectionPath, collectionName?, ...options })` builds an adapter for a single collection, to pass as that collection's `syncAdapter`. See the [API reference](../api/client-firebase.md#createrealtimedbcollectionsyncadapterconfig).

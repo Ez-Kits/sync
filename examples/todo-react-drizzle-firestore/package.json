@@ -12,12 +12,12 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@ez-kits/sync-client-conflict-resolution": "workspace:*",
     "@ez-kits/sync-client-core": "workspace:*",
     "@ez-kits/sync-client-drizzle-adapter": "workspace:*",
+    "@ez-kits/sync-client-firebase": "workspace:*",
     "@ez-kits/sync-client-react": "workspace:*",
-    "@ez-kits/sync-conflict-resolution": "workspace:*",
-    "@ez-kits/sync-firebase": "workspace:*",
-    "@ez-kits/sync-storage-sqljs": "workspace:*",
+    "@ez-kits/sync-client-storage-sqljs": "workspace:*",
     "@faker-js/faker": "^10.5.0",
     "drizzle-orm": "catalog:",
     "firebase": "catalog:",

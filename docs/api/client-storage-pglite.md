@@ -1,15 +1,15 @@
-# `@ez-kits/sync-storage-pglite`
+# `@ez-kits/sync-client-storage-pglite`
 
 Postgres ([PGlite](https://pglite.dev)) in a leader worker, persisted to IndexedDB. Dialect: `postgres`.
 
 ```bash
-npm install @ez-kits/sync-storage-pglite @electric-sql/pglite
+npm install @ez-kits/sync-client-storage-pglite @electric-sql/pglite
 ```
 
-| Entry point                           | Use it in            | Contents                |
-| ------------------------------------- | -------------------- | ----------------------- |
-| `@ez-kits/sync-storage-pglite`        | the page             | `createPGliteDBStorage` |
-| `@ez-kits/sync-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`      |
+| Entry point                                  | Use it in            | Contents                |
+| -------------------------------------------- | -------------------- | ----------------------- |
+| `@ez-kits/sync-client-storage-pglite`        | the page             | `createPGliteDBStorage` |
+| `@ez-kits/sync-client-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`      |
 
 Setup walkthrough: [Choosing a storage engine → PGlite](../guides/storage-engines.md#pglite).
 

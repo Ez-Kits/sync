@@ -1,16 +1,16 @@
-# `@ez-kits/sync-storage-sqljs`
+# `@ez-kits/sync-client-storage-sqljs`
 
 SQLite ([sql.js](https://sql.js.org)) in a leader worker, saved to IndexedDB as a snapshot after every commit. Dialect: `sqlite`.
 
 ```bash
-npm install @ez-kits/sync-storage-sqljs sql.js
+npm install @ez-kits/sync-client-storage-sqljs sql.js
 npm install -D @types/sql.js
 ```
 
-| Entry point                          | Use it in            | Contents                         |
-| ------------------------------------ | -------------------- | -------------------------------- |
-| `@ez-kits/sync-storage-sqljs`        | the page             | `createSqlJsDBStorage`           |
-| `@ez-kits/sync-storage-sqljs/worker` | the worker (or Node) | `openSqlJsEngine`, `sqlJsConfig` |
+| Entry point                                 | Use it in            | Contents                         |
+| ------------------------------------------- | -------------------- | -------------------------------- |
+| `@ez-kits/sync-client-storage-sqljs`        | the page             | `createSqlJsDBStorage`           |
+| `@ez-kits/sync-client-storage-sqljs/worker` | the worker (or Node) | `openSqlJsEngine`, `sqlJsConfig` |
 
 Setup walkthrough: [Choosing a storage engine → sql.js](../guides/storage-engines.md#sqljs).
 

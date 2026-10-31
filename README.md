@@ -37,17 +37,17 @@ client.startSync();
 
 ## Packages
 
-| Package                                | Role                                                                      |
-| -------------------------------------- | ------------------------------------------------------------------------- |
-| `@ez-kits/sync-client-core`            | Sync client runtime and the contracts every other package implements      |
-| `@ez-kits/sync-client-drizzle-adapter` | DB adapter for Drizzle ORM (SQLite and Postgres entry points)             |
-| `@ez-kits/sync-client-typeorm-adapter` | DB adapter for TypeORM (SQLite and Postgres entry points)                 |
-| `@ez-kits/sync-client-react`           | React bindings: provider, `useSyncClient`, `useLiveQuery`                 |
-| `@ez-kits/sync-storage-sqljs`          | SQLite (sql.js) in a worker, snapshotted to IndexedDB                     |
-| `@ez-kits/sync-storage-sqlite-wasm`    | Official SQLite WASM in a worker, persisted to OPFS (no COOP/COEP needed) |
-| `@ez-kits/sync-storage-pglite`         | Postgres (PGlite) in a worker, persisted to IndexedDB                     |
-| `@ez-kits/sync-firebase`               | Sync adapters for Cloud Firestore and the Firebase Realtime Database      |
-| `@ez-kits/sync-conflict-resolution`    | Ready-made conflict policies: last write wins, field merge, and others    |
+| Package                                    | Role                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------- |
+| `@ez-kits/sync-client-core`                | Sync client runtime and the contracts every other package implements      |
+| `@ez-kits/sync-client-drizzle-adapter`     | DB adapter for Drizzle ORM (SQLite and Postgres entry points)             |
+| `@ez-kits/sync-client-typeorm-adapter`     | DB adapter for TypeORM (SQLite and Postgres entry points)                 |
+| `@ez-kits/sync-client-react`               | React bindings: provider, `useSyncClient`, `useLiveQuery`                 |
+| `@ez-kits/sync-client-storage-sqljs`       | SQLite (sql.js) in a worker, snapshotted to IndexedDB                     |
+| `@ez-kits/sync-client-storage-sqlite-wasm` | Official SQLite WASM in a worker, persisted to OPFS (no COOP/COEP needed) |
+| `@ez-kits/sync-client-storage-pglite`      | Postgres (PGlite) in a worker, persisted to IndexedDB                     |
+| `@ez-kits/sync-client-firebase`            | Sync adapters for Cloud Firestore and the Firebase Realtime Database      |
+| `@ez-kits/sync-client-conflict-resolution` | Ready-made conflict policies: last write wins, field merge, and others    |
 
 A typical app installs the core, one DB adapter, one storage engine and one sync adapter. Your app configures authentication and security rules for its backend; EzSync does not manage them.
 

@@ -2,11 +2,11 @@ import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
 import { createDrizzleSqliteDBAdapter } from "@ez-kits/sync-client-drizzle-adapter/sqlite";
 import type { CheckpointSerializer } from "@ez-kits/sync-client-core";
 import { createScopedSyncClientReact } from "@ez-kits/sync-client-react";
-import { lastWriteWins } from "@ez-kits/sync-conflict-resolution";
+import { lastWriteWins } from "@ez-kits/sync-client-conflict-resolution";
 import {
   createFirestoreSyncAdapter,
   defineFirestoreCollectionSyncAdapterConfig,
-} from "@ez-kits/sync-firebase/sync-firestore";
+} from "@ez-kits/sync-client-firebase/sync-firestore";
 import {
   documentId,
   orderBy,

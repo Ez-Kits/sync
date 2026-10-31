@@ -6,7 +6,7 @@ export type * from "./options";
 /**
  * Postgres (PGlite) storage shared by every tab. The database lives in the leader tab's
  * worker, which must call `startDBStorageWorker` with `openPGliteEngine` from
- * `@ez-kits/sync-storage-pglite/worker`.
+ * `@ez-kits/sync-client-storage-pglite/worker`.
  */
 export function createPGliteDBStorage(options: PGliteDBStorageOptions): DBStorage {
   return createWorkerDBStorage({ ...options, dialect: "postgres" });
