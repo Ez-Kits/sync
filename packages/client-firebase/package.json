@@ -33,7 +33,7 @@
     "test:coverage": "vp test run --coverage",
     "test:emulator": "firebase emulators:exec --config ../../firebase.json --project demo-ezsync --only auth,firestore,database 'EZSYNC_FIREBASE_EMULATOR=1 vp test run tests/emulator.integration.test.ts'",
     "check": "vp check",
-    "prepublishOnly": "vp run build"
+    "prepublishOnly": "vp run build && node ../../scripts/copy-package-files.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

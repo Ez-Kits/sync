@@ -24,3 +24,8 @@ coverage/
 *.njsproj
 *.sln
 *.sw?
+
+# Copied from the root by scripts/copy-package-files.mjs before publishing
+packages/*/LICENSE
+packages/*/README.md
+packages/client-core/docs/
