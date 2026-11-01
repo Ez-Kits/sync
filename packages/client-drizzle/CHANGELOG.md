@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.1](https://github.com/Ez-Kits/sync/compare/sync-client-drizzle-adapter-v0.1.0...sync-client-drizzle-adapter-v0.1.1) (2026-11-01)
+
+
+### Features
+
+* expose pending (unpushed) writes ([#4](https://github.com/Ez-Kits/sync/issues/4)) ([81acf64](https://github.com/Ez-Kits/sync/commit/81acf64854bc8989a6e5461bd936f3934cf52828))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.1
+    * @ez-kits/sync-client-storage-pglite bumped to 0.0.2
+    * @ez-kits/sync-client-storage-sqljs bumped to 0.0.2
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.1
+
 ## 0.1.0 (2026-10-31)
 
 
