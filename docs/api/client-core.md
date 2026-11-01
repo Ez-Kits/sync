@@ -56,26 +56,41 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 
 ### `SyncClient`
 
-| Member                                       | Description                                                                                                                                               |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collections.<name>.insert(data)`            | Insert a record (with its primary key). Resolves when saved locally.                                                                                      |
-| `collections.<name>.update(data)`            | Update a record: its primary key plus the changed fields.                                                                                                 |
-| `collections.<name>.delete(id)`              | Delete a record by primary key.                                                                                                                           |
-| `collections.<name>.get(id)`                 | Read one record. Rejects if missing.                                                                                                                      |
-| `collections.<name>.getMany()`               | Read every record of the collection.                                                                                                                      |
-| `liveQuery({ collections?, query, onData })` | Run `query(queryBuilder, querySchema)` now and after every change to `collections` (or to any collection when omitted). Returns a function that stops it. |
-| `subscribe(cb, options?)`                    | Listen to change events of every collection. Returns an unsubscribe function.                                                                             |
-| `subscribe(collection, cb, options?)`        | ...of one collection.                                                                                                                                     |
-| `subscribe(collections[], cb, options?)`     | ...of several collections. `options.stream`: `"local"` (writes in this tab), `"remote"` (pulled changes and other tabs' writes) or `"both"` (default).    |
-| `startSync()`                                | Start syncing (in a follower: ask the leader to sync). Also listens to `online` / `offline`.                                                              |
-| `stopSync()`                                 | Pause syncing. Local reads and writes keep working.                                                                                                       |
-| `retryRejectedPushes()`                      | Push parked (rejected) writes now instead of after their backoff, e.g. after sign-in.                                                                     |
-| `dispose()`                                  | `Promise<void>`. Stop sync, close the adapter (`dbAdapter.close?.()`), release the storage and all listeners for good.                                    |
-| `role`                                       | `"leader"` or `"follower"`. Only the leader syncs.                                                                                                        |
-| `subscribeRole(listener)`                    | Called now with the current role, then on every change. Returns an unsubscribe function.                                                                  |
-| `subscribeStatus(listener)`                  | Called now with the current `SyncStatusEvent`, then on every change. Returns an unsubscribe function.                                                     |
-| `getCheckpoint(collection)`                  | `Promise<TCheckpoint \| undefined>`: the last committed pull checkpoint.                                                                                  |
-| `saveCheckpoint(collection, checkpoint)`     | `Promise<void>`: replace it; `undefined` removes it, so the next pull starts from scratch. Takes effect when the collection's pull (re)starts.            |
+| Member                                       | Description                                                                                                                                                                                           |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collections.<name>.insert(data)`            | Insert a record (with its primary key). Resolves when saved locally.                                                                                                                                  |
+| `collections.<name>.update(data)`            | Update a record: its primary key plus the changed fields.                                                                                                                                             |
+| `collections.<name>.delete(id)`              | Delete a record by primary key.                                                                                                                                                                       |
+| `collections.<name>.get(id)`                 | Read one record. Rejects if missing.                                                                                                                                                                  |
+| `collections.<name>.getMany()`               | Read every record of the collection.                                                                                                                                                                  |
+| `liveQuery({ collections?, query, onData })` | Run `query(queryBuilder, querySchema)` now and after every change to `collections` (or to any collection when omitted). Returns a function that stops it.                                             |
+| `subscribe(cb, options?)`                    | Listen to change events of every collection. Returns an unsubscribe function.                                                                                                                         |
+| `subscribe(collection, cb, options?)`        | ...of one collection.                                                                                                                                                                                 |
+| `subscribe(collections[], cb, options?)`     | ...of several collections. `options.stream`: `"local"` (writes in this tab), `"remote"` (pulled changes and other tabs' writes) or `"both"` (default).                                                |
+| `startSync()`                                | Start syncing (in a follower: ask the leader to sync). Also listens to `online` / `offline`.                                                                                                          |
+| `stopSync()`                                 | Pause syncing. Local reads and writes keep working.                                                                                                                                                   |
+| `retryRejectedPushes()`                      | Push parked (rejected) writes now instead of after their backoff, e.g. after sign-in.                                                                                                                 |
+| `dispose()`                                  | `Promise<void>`. Stop sync, close the adapter (`dbAdapter.close?.()`), release the storage and all listeners for good.                                                                                |
+| `role`                                       | `"leader"` or `"follower"`. Only the leader syncs.                                                                                                                                                    |
+| `subscribeRole(listener)`                    | Called now with the current role, then on every change. Returns an unsubscribe function.                                                                                                              |
+| `subscribeStatus(listener)`                  | Called now with the current `SyncStatusEvent`, then on every change. Returns an unsubscribe function.                                                                                                 |
+| `getPendingWrites()`                         | `Promise<PendingWrites>`: the local writes the backend has not confirmed yet. Works in every tab, before `startSync()` and offline.                                                                   |
+| `subscribePendingWrites(listener)`           | Called with the `PendingWrites` once read, then whenever they change. Returns an unsubscribe function.                                                                                                |
+| `waitForPushed({ timeoutMs? })`              | `Promise<void>`: resolves once every pending write except the parked ones is pushed. Rejects with a `WaitForPushedError` when writes are pending while offline, after `timeoutMs`, or on `dispose()`. |
+| `getCheckpoint(collection)`                  | `Promise<TCheckpoint \| undefined>`: the last committed pull checkpoint.                                                                                                                              |
+| `saveCheckpoint(collection, checkpoint)`     | `Promise<void>`: replace it; `undefined` removes it, so the next pull starts from scratch. Takes effect when the collection's pull (re)starts.                                                        |
+
+### `PendingWrites`
+
+```ts
+interface PendingWrites {
+  total: number; // outbox events not yet confirmed by the backend, parked ones included
+  rejected: number; // of those, parked after a permanent refusal (onPushRejected)
+  byCollection: Partial<Record<CollectionName, number>>; // total per collection; zeros left out
+}
+```
+
+It counts **outbox events**, not records: two updates to one row count 2. `rejected` counts the writes the leading tab has parked since it started; after a reload, a parked write counts as rejected again once its next push is refused. See [Syncing](../guides/syncing.md#pending-writes).
 
 ### `SyncStatusEvent`
 
@@ -217,16 +232,17 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 
 ## Errors
 
-| Class                          | When                                                                                             | `retriable` |
-| ------------------------------ | ------------------------------------------------------------------------------------------------ | ----------- |
-| `CoordinationUnavailableError` | Web Locks or BroadcastChannel are missing; `ready` rejects with it.                              |             |
-| `LeaderChangedError`           | The leader went away while a write or transaction was in flight. It may or may not have applied. | `true`      |
-| `LeaderUnavailableError`       | No live leader answered.                                                                         | `true`      |
-| `TransactionClosedError`       | The transaction was rolled back after idling too long, or is otherwise closed.                   |             |
-| `TransactionStatementError`    | A `BEGIN` / `COMMIT` / ... statement was sent.                                                   |             |
-| `DBStorageClosedError`         | The storage was closed.                                                                          |             |
-| `DBStorageWorkerError`         | The storage worker failed to load; `ready` and every request reject with it.                     |             |
-| `PushRejectedError`            | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                    |             |
+| Class                          | When                                                                                                                     | `retriable` |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| `CoordinationUnavailableError` | Web Locks or BroadcastChannel are missing; `ready` rejects with it.                                                      |             |
+| `LeaderChangedError`           | The leader went away while a write or transaction was in flight. It may or may not have applied.                         | `true`      |
+| `LeaderUnavailableError`       | No live leader answered.                                                                                                 | `true`      |
+| `TransactionClosedError`       | The transaction was rolled back after idling too long, or is otherwise closed.                                           |             |
+| `TransactionStatementError`    | A `BEGIN` / `COMMIT` / ... statement was sent.                                                                           |             |
+| `DBStorageClosedError`         | The storage was closed.                                                                                                  |             |
+| `DBStorageWorkerError`         | The storage worker failed to load; `ready` and every request reject with it.                                             |             |
+| `PushRejectedError`            | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                                            |             |
+| `WaitForPushedError`           | `waitForPushed()` gave up. `reason`: `"timeout"`, `"offline"` or `"disposed"`; `pending`: the last `PendingWrites` read. |             |
 
 | Helper                                                   | Description                                                |
 | -------------------------------------------------------- | ---------------------------------------------------------- |
@@ -316,6 +332,7 @@ interface ILocalChangeStore<TTx = unknown> {
   appendEvents(events: StoredChangeBusEvent[], tx?): Promise<void>; // also records each id as applied
   hasAppliedEvent(eventId: string, tx?): Promise<boolean>;
   getPendingEvents(scope?: LocalChangeScope, tx?): Promise<StoredChangeBusEvent[]>; // in commit order
+  getPendingEventKeys?(tx?): Promise<PendingEventKey[]>; // optional: ids and collections only, for getPendingWrites
   deleteEvents(ids: string[], tx?): Promise<void>;
   upsertDirtyRecord(record: DirtyRecord, tx?): Promise<void>;
   removeDirtyRecords(keys: DirtyRecordKey[], tx?): Promise<void>;
@@ -335,6 +352,7 @@ interface AtomicLocalChangeStore<TTx = unknown> extends ILocalChangeStore<TTx> {
 | Type                         | Shape                                                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `StoredChangeBusEvent`       | `{ id: string; type: "create" \| "update" \| "delete"; collection: string; data: unknown /* null for deletes */; recordId: string; createdAt: number }` |
+| `PendingEventKey`            | `{ id: string; collection: string }`                                                                                                                    |
 | `DirtyRecord`                | `{ collection: string; recordId: string; state: "dirty" \| "deleted"; updatedAt: number }`                                                              |
 | `DirtyRecordKey`             | `{ collection: string; recordId: string }`                                                                                                              |
 | `DirtyRecordState`           | `"dirty" \| "deleted"`                                                                                                                                  |

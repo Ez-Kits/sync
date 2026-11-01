@@ -3,6 +3,7 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   InferCheckpointMap,
+  PendingWrites,
   SyncClient,
   SyncClientConfig,
 } from "@ez-kits/sync-client-core";
@@ -19,6 +20,8 @@ export interface CreateSyncClientReactResult<
   }>;
   useSyncClient: () => SyncClient<C, DB, TCheckpoint>;
   useLiveQuery: UseLiveQuery<C, DB>;
+  /** The client's pending (unpushed) writes, kept current; see `subscribePendingWrites`. */
+  usePendingWrites: () => UsePendingWritesResult<CollectionNames<C>>;
 }
 
 export interface CreateSyncClientReactOptions<
@@ -64,6 +67,8 @@ export interface CreateScopedSyncClientReactResult<
   SyncClientProvider: ComponentType<ScopedSyncClientProviderProps>;
   useSyncClient: () => SyncClient<C, DB, TCheckpoint>;
   useLiveQuery: UseLiveQuery<C, DB>;
+  /** The client's pending (unpushed) writes, kept current; see `subscribePendingWrites`. */
+  usePendingWrites: () => UsePendingWritesResult<CollectionNames<C>>;
 }
 
 export type UseLiveQuery<C extends CollectionConfigMap, DB extends BaseDBAdapter<C, any, any>> = <
@@ -96,4 +101,11 @@ export interface UseLiveQueryResult<TResult> {
   /** `true` until the first result, and while the query reruns. */
   isPending: boolean;
   error: Error | undefined;
+}
+
+export interface UsePendingWritesResult<
+  TCollectionName extends string = string,
+> extends PendingWrites<TCollectionName> {
+  /** `true` until the outbox was first read; the counts are 0 until then. */
+  isPending: boolean;
 }

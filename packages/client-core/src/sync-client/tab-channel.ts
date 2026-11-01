@@ -14,6 +14,10 @@ export interface SyncTabListener {
   invalidate?(): void;
   /** A follower wants sync running; only the leader acts on it. */
   syncRequest?(): void;
+  /** The leader's parked (rejected) outbox event ids, sent whenever its outbox changed. */
+  outbox?(parked: string[]): void;
+  /** Another context wants the leader's `outbox` message; only the leader acts on it. */
+  outboxRequest?(): void;
 }
 
 type SyncTabMessage =
@@ -25,7 +29,9 @@ type SyncTabMessage =
       source: "local" | "pull";
       events: ChangeBusEvent<any>[];
     }
-  | { t: "sync-request" };
+  | { t: "sync-request" }
+  | { t: "outbox"; parked: string[] }
+  | { t: "outbox-request" };
 
 export const syncChannelName = (key: string) => `ez-sync:${key}:sync`;
 
@@ -34,7 +40,8 @@ export const syncChannelName = (key: string) => `ez-sync:${key}:sync`;
  * context's live queries and the leader's outbox push stay current) and sync requests.
  */
 export class SyncTabChannel {
-  private readonly channel: BroadcastChannel | undefined;
+  /** Unset once closed: a late message, e.g. of an initialization that ends after `close`, is dropped. */
+  private channel: BroadcastChannel | undefined;
   private readonly listeners = new Set<SyncTabListener>();
   private readonly lastSeq = new Map<string, number>();
   private sendSeq = 0;
@@ -71,6 +78,14 @@ export class SyncTabChannel {
     this.channel?.postMessage({ t: "sync-request" } satisfies SyncTabMessage);
   }
 
+  broadcastOutbox(parked: string[]): void {
+    this.channel?.postMessage({ t: "outbox", parked } satisfies SyncTabMessage);
+  }
+
+  requestOutbox(): void {
+    this.channel?.postMessage({ t: "outbox-request" } satisfies SyncTabMessage);
+  }
+
   /** Forget sequence numbers, e.g. after the leader changed and everything was re-read. */
   reset(): void {
     this.lastSeq.clear();
@@ -79,11 +94,20 @@ export class SyncTabChannel {
   close(): void {
     this.listeners.clear();
     this.channel?.close();
+    this.channel = undefined;
   }
 
   private handle(message: SyncTabMessage): void {
     if (message?.t === "sync-request") {
       for (const listener of this.listeners) listener.syncRequest?.();
+      return;
+    }
+    if (message?.t === "outbox") {
+      for (const listener of this.listeners) listener.outbox?.(message.parked);
+      return;
+    }
+    if (message?.t === "outbox-request") {
+      for (const listener of this.listeners) listener.outboxRequest?.();
       return;
     }
     if (message?.t !== "changes") return;

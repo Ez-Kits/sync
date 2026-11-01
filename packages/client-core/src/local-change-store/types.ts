@@ -14,6 +14,9 @@ export interface StoredChangeBusEvent {
   createdAt: number;
 }
 
+/** A pending outbox event without its data (see `ILocalChangeStore.getPendingEventKeys`). */
+export type PendingEventKey = Pick<StoredChangeBusEvent, "id" | "collection">;
+
 export interface DirtyRecord {
   collection: string;
   recordId: string;
@@ -76,6 +79,11 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
     scope?: LocalChangeScope,
     transactionContext?: TTransactionContext,
   ): Promise<StoredChangeBusEvent[]>;
+  /**
+   * The id and collection of every pending event, without their data: what the sync client
+   * counts for `getPendingWrites`. Optional; without it, `getPendingEvents` is read instead.
+   */
+  getPendingEventKeys?(transactionContext?: TTransactionContext): Promise<PendingEventKey[]>;
   deleteEvents(ids: string[], transactionContext?: TTransactionContext): Promise<void>;
   upsertDirtyRecord(record: DirtyRecord, transactionContext?: TTransactionContext): Promise<void>;
   removeDirtyRecords(

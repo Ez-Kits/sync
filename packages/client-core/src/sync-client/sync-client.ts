@@ -21,6 +21,12 @@ import type { BaseDBAdapter } from "../db-adapter";
 import { isRetriableError, type DBRole, type DBStorage } from "../db-storage";
 import { SyncHandler, globalSyncCollections } from "../sync-handler";
 import type { SyncStatusEvent } from "../sync-handler";
+import {
+  PendingWritesTracker,
+  WaitForPushedError,
+  type PendingWrites,
+  type WaitForPushedOptions,
+} from "./pending-writes";
 import { SyncTabChannel } from "./tab-channel";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 
@@ -108,6 +114,9 @@ export class SyncClientImpl<
   private statusListeners = new Set<(event: SyncStatusEvent) => void>();
   private roleListeners = new Set<(role: DBRole) => void>();
   private liveQueries = new Set<() => void>();
+  private readonly pendingWrites: PendingWritesTracker;
+  /** Rejects the open `waitForPushed` calls; called by `dispose`. */
+  private pushWaiters = new Set<() => void>();
   private cleanups: Array<() => void> = [];
 
   constructor(
@@ -131,6 +140,11 @@ export class SyncClientImpl<
     );
     this.dbStorage = config.dbAdapter.dbStorage;
     this.tabs = new SyncTabChannel(this.dbStorage.key);
+    this.pendingWrites = new PendingWritesTracker(async () => {
+      await this.initialized;
+      const store = this.dbAdapter.localChangeStore;
+      return store.getPendingEventKeys ? store.getPendingEventKeys() : store.getPendingEvents();
+    });
 
     const mutations: MutationSink = { commit: (mutation) => this.commitMutation(mutation) };
     const storage: CollectionRuntimeStorage = {
@@ -151,6 +165,8 @@ export class SyncClientImpl<
       this.dbStorage.onInvalidate(() => {
         this.tabs.reset();
         this.rerunLiveQueries();
+        this.pendingWrites.refresh();
+        if (this.appliedRole === "follower") this.tabs.requestOutbox();
         // A new leader does not know this context wants sync.
         if (this.wantsSync && this.appliedRole === "follower") this.tabs.requestSync();
       }),
@@ -169,7 +185,15 @@ export class SyncClientImpl<
         syncRequest: () => {
           if (this.appliedRole === "leader" && !this.wantsSync) this.startSync();
         },
+        outbox: (parked) => {
+          if (this.appliedRole !== "leader") this.pendingWrites.setParked(parked);
+        },
+        outboxRequest: () => {
+          if (this.appliedRole === "leader") this.publishParked();
+        },
       }),
+      // Every committed local write, pull and other context's write can change the outbox.
+      this.changeBus.subscribe(() => this.pendingWrites.refresh()),
       this.changeBus.subscribe((events) => this.tabs.broadcastChanges(events, "local"), {
         stream: "local",
       }),
@@ -287,12 +311,57 @@ export class SyncClientImpl<
     this.syncHandler?.retryRejectedPushes();
   };
 
+  getPendingWrites = () => this.pendingWrites.read() as Promise<PendingWrites<CollectionNames<C>>>;
+
+  subscribePendingWrites = (listener: (pending: PendingWrites<CollectionNames<C>>) => void) =>
+    this.pendingWrites.subscribe(listener as (pending: PendingWrites) => void);
+
+  waitForPushed = ({ timeoutMs }: WaitForPushedOptions = {}) =>
+    new Promise<void>((resolve, reject) => {
+      let last: PendingWrites | undefined;
+      let offline = false;
+      let done = false;
+      const cleanups: Array<() => void> = [];
+      const finish = (reason?: WaitForPushedError["reason"]) => {
+        if (done) return;
+        done = true;
+        for (const cleanup of cleanups) cleanup();
+        if (reason) reject(new WaitForPushedError(reason, last));
+        else resolve();
+      };
+      // Parked writes may never be accepted: waiting for them would not end.
+      const check = () => {
+        if (!last) return;
+        if (last.total === last.rejected) finish();
+        else if (offline) finish("offline");
+      };
+      const onDispose = () => finish("disposed");
+      this.pushWaiters.add(onDispose);
+      cleanups.push(() => this.pushWaiters.delete(onDispose));
+      if (timeoutMs !== undefined) {
+        const timer = setTimeout(() => finish("timeout"), timeoutMs);
+        cleanups.push(() => clearTimeout(timer));
+      }
+      cleanups.push(
+        this.subscribeStatus(({ status }) => {
+          offline = status === "offline" || !isBrowserNetworkAvailable();
+          check();
+        }),
+        this.pendingWrites.subscribe((pending) => {
+          last = pending;
+          check();
+        }),
+      );
+    });
+
   dispose = async () => {
+    for (const reject of this.pushWaiters) reject();
     this.stopSync();
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.tabs.close();
     this.liveQueries.clear();
+    this.pendingWrites.close();
     this.statusListeners.clear();
     this.roleListeners.clear();
     try {
@@ -370,6 +439,12 @@ export class SyncClientImpl<
     this.appliedRole = role;
     this.syncHandler?.stopAll();
     this.syncHandler = role === "leader" ? this.createSyncHandler() : undefined;
+    // A new leader's handler has parked nothing yet; a follower asks the leader.
+    if (role === "leader") this.publishParked();
+    else {
+      this.pendingWrites.setParked([]);
+      this.tabs.requestOutbox();
+    }
     if (previousRole !== role) {
       for (const listener of this.roleListeners) {
         try {
@@ -402,9 +477,19 @@ export class SyncClientImpl<
           // An application observer must not fail the push that reported the rejection.
         }
       },
+      onOutboxChanged: () => {
+        if (this.syncHandler === handler) this.publishParked();
+      },
       canCommit: () => this.syncHandler === handler && this.dbStorage.role === "leader",
     });
     return handler;
+  }
+
+  /** Take the leader's parked event ids, and send them to the other contexts. */
+  private publishParked(): void {
+    const parked = this.syncHandler?.parkedEventIds() ?? [];
+    this.pendingWrites.setParked(parked);
+    this.tabs.broadcastOutbox(parked);
   }
 
   private reconcileSync(): void {

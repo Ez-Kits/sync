@@ -5,6 +5,7 @@ import {
   type AtomicLocalChangeStore,
   type LocalChangeScope,
   type SkippedRemoteEvent,
+  type PendingEventKey,
   type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
@@ -245,6 +246,11 @@ export function createDrizzleLocalChangeStore<
         scope === undefined ? query : query.where(scopeWhere(eventColumn, scope))
       ).orderBy(asc(eventColumn("seq")));
       return rows as StoredChangeBusEvent[];
+    },
+    async getPendingEventKeys(transactionContext) {
+      return dbFor(transactionContext)
+        .select({ id: eventColumn("id"), collection: eventColumn("collection") })
+        .from(events) as Promise<PendingEventKey[]>;
     },
     async deleteEvents(ids: string[], transactionContext) {
       if (ids.length === 0) return;

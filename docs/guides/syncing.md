@@ -69,6 +69,39 @@ Errors never contain your document data, so they are safe to log.
 
 A sync `error` status is usually temporary (the network, an expired token): EzSync retries with backoff. An error that does not go away is often a database problem (for example a missing table) or a bad sync adapter configuration.
 
+## Pending writes
+
+`status` says whether sync runs, not whether everything was pushed. For that, count the outbox: the local writes the backend has not confirmed yet.
+
+```ts
+const stop = client.subscribePendingWrites(({ total, rejected }) => {
+  line.textContent = total ? `${total} changes waiting` : "Synced";
+  if (rejected) warning.textContent = `${rejected} changes were refused`;
+});
+
+const { total, rejected, byCollection } = await client.getPendingWrites(); // one-off read
+```
+
+The listener is called once the outbox was read, then after every local write (in any tab), every confirmed push, and every parked or discarded write. It works before `startSync()` and while offline, and every tab sees the same counts.
+
+| Field          | Meaning                                                                                            |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| `total`        | Outbox events not yet confirmed by the backend, parked ones included. Two writes to a row count 2. |
+| `rejected`     | Of those, the writes parked after a refusal (see [Rejected writes](rejected-writes.md)).           |
+| `byCollection` | `total` per collection name; collections with nothing pending are left out.                        |
+
+`rejected` is known to the leading tab once it tried to push: after a reload, parked writes count as plain pending until their first retry is refused again.
+
+### Wait until everything is pushed
+
+`waitForPushed()` resolves once the outbox holds nothing but parked writes, e.g. before deleting a database you copied from:
+
+```ts
+await client.waitForPushed({ timeoutMs: 15_000 });
+```
+
+It ignores parked writes, since they may never be accepted; check `rejected` yourself. It rejects with a `WaitForPushedError` (`reason`: `"offline"`, `"timeout"` or `"disposed"`, and `pending`, the last counts) when writes are pending while offline, after `timeoutMs`, or when the client is disposed. Writes are only pushed while sync runs in the leading tab, so call `startSync()` first, and pass a timeout.
+
 ## Online and offline
 
 EzSync listens to the browser's `online` and `offline` events while sync is wanted:
@@ -140,6 +173,16 @@ onSignIn(() => {
 });
 
 onSignOut(async () => {
+  // Wiping local data loses writes that were not pushed yet: check first.
+  const { total } = await client.getPendingWrites();
+  if (total > 0) {
+    try {
+      await client.waitForPushed({ timeoutMs: 15_000 });
+    } catch {
+      return warn(`${total} changes haven't synced yet. Connect to the internet first.`);
+    }
+    // Parked (refused) writes are still in the outbox: decide whether to drop them.
+  }
   client.stopSync();
   // Optionally wipe local data: dispose the client, then delete the database.
 });

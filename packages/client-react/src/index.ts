@@ -3,6 +3,7 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   InferCheckpointMap,
+  PendingWrites,
   SyncClient,
 } from "@ez-kits/sync-client-core";
 import { createSyncClient } from "@ez-kits/sync-client-core";
@@ -29,6 +30,7 @@ import type {
   ScopedSyncClientProviderProps,
   UseLiveQueryOptions,
   UseLiveQueryResult,
+  UsePendingWritesResult,
 } from "./types.ts";
 
 export type * from "./types.ts";
@@ -172,7 +174,24 @@ function createHooks<
     };
   }
 
-  return { useSyncClient, useLiveQuery };
+  function usePendingWrites(): UsePendingWritesResult<CollectionNames<C>> {
+    const client = useSyncClient();
+    const [state, setState] = useState<{
+      client: SyncClient<C, DB, TCheckpoint>;
+      pending: PendingWrites<CollectionNames<C>>;
+    }>();
+    useEffect(
+      () => client.subscribePendingWrites((pending) => setState({ client, pending })),
+      [client],
+    );
+    // A value read from the previous client (scope) is not shown for the new one.
+    const pending = state?.client === client ? state.pending : undefined;
+    return pending
+      ? { ...pending, isPending: false }
+      : { total: 0, rejected: 0, byCollection: {}, isPending: true };
+  }
+
+  return { useSyncClient, useLiveQuery, usePendingWrites };
 }
 
 /** A number that changes whenever an item of `deps` changes (compared with `Object.is`). */

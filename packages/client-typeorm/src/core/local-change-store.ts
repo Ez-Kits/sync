@@ -199,6 +199,11 @@ export function createTypeOrmLocalChangeStore(
           order: { seq: "ASC" },
         });
     },
+    async getPendingEventKeys(transactionContext) {
+      return managerFor(transactionContext)
+        .getRepository(eventTarget)
+        .find({ select: ["id", "collection"] });
+    },
     async deleteEvents(ids: string[], transactionContext) {
       const repository = managerFor(transactionContext).getRepository(eventTarget);
       for (const id of ids) await repository.delete({ id });

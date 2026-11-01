@@ -141,6 +141,19 @@ function RoleBadge() {
 }
 ```
 
+## Show pending writes
+
+`usePendingWrites` follows the outbox (see [Pending writes](syncing.md#pending-writes)):
+
+```tsx
+function SyncLine() {
+  const { total, rejected, isPending } = usePendingWrites();
+  if (isPending) return null;
+  if (rejected) return <small>{rejected} changes were refused</small>;
+  return <small>{total ? `${total} changes waiting for signal` : "Synced"}</small>;
+}
+```
+
 ## One client per user
 
 When each user syncs their own data (a per-user Firestore path, or a query that filters by user), give each user their own local database too. Then switching users never mixes rows, pending writes or checkpoints. `createScopedSyncClientReact` builds one client per **scope** from a function:
