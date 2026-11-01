@@ -42,7 +42,11 @@ jobs:
           cache: true
       - run: vp run --filter './packages/*' build
       - run: vp test
-      - name: Publish released packages
+      # npm stage publish needs npm >= 11.15.0.
+      - run: npm install -g npm@^11.15.0
+      # The trusted publisher only allows staging. A maintainer approves each
+      # staged version with 2FA (npm stage approve, or the Staged Packages tab).
+      - name: Stage released packages
         env:
           PATHS_RELEASED: ${{ needs.release-please.outputs.paths_released }}
         run: |
@@ -65,6 +69,17 @@ jobs:
             # pnpm pack rewrites workspace: and catalog: ranges to real versions.
             (cd "$dir" && vp run prepublishOnly && vp pm pack --pack-destination "$out")
             tarball=$(ls "$out"/*.tgz)
-            npm publish "$tarball" --access public --provenance
+            # npm view only sees approved versions, so a rerun can hit a version that
+            # is already staged. Staged and published versions share one index.
+            if ! log=$(npm stage publish "$tarball" --access public --provenance 2>&1); then
+              echo "$log"
+              if grep -qiE 'already (exists|staged)|previously published|cannot publish over|E409' <<<"$log"; then
+                echo "::notice::$name@$version is already staged, skipping"
+              else
+                exit 1
+              fi
+            else
+              echo "$log"
+            fi
             rm "$tarball"
           done
