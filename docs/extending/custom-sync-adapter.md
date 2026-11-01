@@ -27,11 +27,14 @@ If a client-level adapter does not sync every collection, list the ones it does 
 
 EzSync calls `pull` when sync starts (in the leader tab), and again after a failure.
 
-| Option          | What it is                                                                                                                                      |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `checkpoint`    | `{ [collection]: checkpoint }`: where the last saved pull stopped, per collection. A collection without a checkpoint starts from the beginning. |
-| `commitChanges` | Call it with `{ changes, checkpoint }` for every batch of remote changes. `checkpoint` is the new position of the collections in the batch.     |
-| `onError`       | Call it when the listener fails (network error, permission error). EzSync stops this pull and calls `pull` again later, with backoff.           |
+| Option          | What it is                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkpoint`    | `{ [collection]: checkpoint }`: where the last saved pull stopped, per collection. A collection without a checkpoint starts from the beginning.                                       |
+| `commitChanges` | Call it with `{ changes, checkpoint }` for every batch of remote changes. `checkpoint` is the new position of the collections in the batch.                                           |
+| `onError`       | Call it when the listener fails (network error, permission error). EzSync stops this pull and calls `pull` again later, with backoff.                                                 |
+| `onCaughtUp`    | Call it once the backend's current state was delivered, e.g. after the initial download. Pass the collections, or nothing for all. If you can't tell, call it after your first batch. |
+| `onPreviewed`   | Optional. After a quick first batch sent with `commitChanges({ changes, checkpoint: {}, preview: true })`: `{ collection, hasData }`, whether the backend returned rows.              |
+| `onCount`       | Optional. `{ collection, total }`: how many changes the full pull delivers, for progress.                                                                                             |
 
 Rules:
 
@@ -42,7 +45,8 @@ Rules:
    - `{ type: "delete", collection, id, deletedAt? }`.
 4. **Checkpoints must be safe to resume from.** Changes with equal cursor values, and later updates of an already pulled record, must still be delivered. Prefer a server-assigned, strictly increasing cursor (a sequence number, or a timestamp plus id).
 5. `commitChanges` returns nothing. EzSync queues batches and commits each, with its checkpoint, in one transaction. If one fails, EzSync calls your cleanup, drops later queued batches and calls `pull` again from the last saved checkpoint.
-6. The checkpoint is stored as a string with `JSON.stringify` by default. If yours is not plain JSON, set `checkpointSerializer: { serialize, deserialize }` on the adapter; the client uses it for the collections the adapter syncs.
+6. **Call `onCaughtUp`**, or apps waiting for `caughtUp` wait until their timeout. EzSync applies it once the batches you delivered before it have committed.
+7. The checkpoint is stored as a string with `JSON.stringify` by default. If yours is not plain JSON, set `checkpointSerializer: { serialize, deserialize }` on the adapter; the client uses it for the collections the adapter syncs.
 
 ### `push(options)`
 

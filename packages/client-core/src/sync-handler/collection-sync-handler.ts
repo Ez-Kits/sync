@@ -4,6 +4,7 @@ import type { BaseDBAdapter } from "../db-adapter";
 import {
   BaseSyncHandler,
   type BaseSyncHandlerConfig,
+  type PullStream,
   type SyncHandlerDataMap,
 } from "./base-sync-handler";
 import type { SyncAdapter } from "./types";
@@ -74,6 +75,9 @@ export class CollectionSyncHandler<
   }
 
   stop<N extends CollectionNames<C>>(collectionName: N): void {
+    if (this.pullCleanups.has(collectionName) || this.startTokens.has(collectionName)) {
+      this.reportPullStopped([collectionName]);
+    }
     this.startTokens.delete(collectionName);
 
     const pullCleanupList = this.pullCleanups.get(collectionName) ?? [];
@@ -126,6 +130,10 @@ export class CollectionSyncHandler<
   ): void {
     pullCleanupList.push(
       this.retryPull(async (onError, isActive) => {
+        const signals = this.pullSignals([collectionName], { isActive, onError }, (task) =>
+          this.enqueuePullTask(collectionName, task),
+        );
+        const stream = { isActive, onError: signals.onError };
         const checkpoint = await this.config.checkpointStorage.getCheckpoint(collectionName);
         if (!isActive()) return;
         const checkpointMap =
@@ -137,12 +145,15 @@ export class CollectionSyncHandler<
         return syncAdapter.pull({
           checkpoint: checkpointMap as Partial<Record<N, TCheckpoint>> | undefined,
           commitChanges: (options) => {
-            void this.commitPullChanges(collectionName, options.changes, options.checkpoint, {
-              isActive,
-              onError,
-            });
+            void this.commitPullChanges(
+              collectionName,
+              options.changes,
+              options.checkpoint,
+              stream,
+              options.preview,
+            );
           },
-          onError,
+          ...signals,
         });
       }),
     );
@@ -179,7 +190,8 @@ export class CollectionSyncHandler<
     collectionName: N,
     changes: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
     checkpoint: Partial<Record<N, TCheckpoint>>,
-    stream: { isActive: () => boolean; onError: (error: unknown) => void },
+    stream: PullStream,
+    preview?: boolean,
   ): Promise<void> {
     const previous = this.pullCommitQueues.get(collectionName) ?? Promise.resolve();
     const next = previous
@@ -190,6 +202,7 @@ export class CollectionSyncHandler<
           changes as ChangeBusEvent<SyncHandlerDataMap<C>>[],
           checkpoint,
           (event, tx) => this.applyEvent(collectionName, event as never, tx),
+          { isActive: stream.isActive, preview },
         );
         if (needsPush) this.schedulePush(collectionName);
       });
@@ -197,5 +210,14 @@ export class CollectionSyncHandler<
     const safeNext = next.catch((error) => stream.onError(error));
     this.pullCommitQueues.set(collectionName, safeNext);
     return safeNext;
+  }
+
+  /** Run `task` after the collection's pulled batches queued before it. */
+  private enqueuePullTask(collectionName: CollectionNames<C>, task: () => void): void {
+    const previous = this.pullCommitQueues.get(collectionName) ?? Promise.resolve();
+    this.pullCommitQueues.set(
+      collectionName,
+      previous.then(task).catch(() => undefined),
+    );
   }
 }

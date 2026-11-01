@@ -3,6 +3,7 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   InferCheckpointMap,
+  CollectionPullState,
   PendingWrites,
   SyncClient,
   SyncClientConfig,
@@ -22,6 +23,11 @@ export interface CreateSyncClientReactResult<
   useLiveQuery: UseLiveQuery<C, DB>;
   /** The client's pending (unpushed) writes, kept current; see `subscribePendingWrites`. */
   usePendingWrites: () => UsePendingWritesResult<CollectionNames<C>>;
+  /**
+   * The pull state of `collections` (default: every pulled one) combined, kept current; see
+   * `subscribePullState`.
+   */
+  usePullState: <N extends CollectionNames<C>>(collections?: readonly N[]) => UsePullStateResult<N>;
 }
 
 export interface CreateSyncClientReactOptions<
@@ -69,6 +75,11 @@ export interface CreateScopedSyncClientReactResult<
   useLiveQuery: UseLiveQuery<C, DB>;
   /** The client's pending (unpushed) writes, kept current; see `subscribePendingWrites`. */
   usePendingWrites: () => UsePendingWritesResult<CollectionNames<C>>;
+  /**
+   * The pull state of `collections` (default: every pulled one) combined, kept current; see
+   * `subscribePullState`.
+   */
+  usePullState: <N extends CollectionNames<C>>(collections?: readonly N[]) => UsePullStateResult<N>;
 }
 
 export type UseLiveQuery<C extends CollectionConfigMap, DB extends BaseDBAdapter<C, any, any>> = <
@@ -108,4 +119,17 @@ export interface UsePendingWritesResult<
 > extends PendingWrites<TCollectionName> {
   /** `true` until the outbox was first read; the counts are 0 until then. */
   isPending: boolean;
+}
+
+export interface UsePullStateResult<TCollectionName extends string = string> {
+  /** Every collection's local data can be shown. */
+  available: boolean;
+  /** Every collection caught up. */
+  caughtUp: boolean;
+  /** `true` when any collection has remote data, `false` once all answered none. */
+  hasRemoteData: boolean | undefined;
+  /** Summed; `total` only once every collection has one. */
+  progress: { pulled: number; total: number | undefined };
+  /** Each collection's own state. */
+  collections: Record<TCollectionName, CollectionPullState>;
 }

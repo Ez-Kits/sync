@@ -122,6 +122,22 @@ export interface PullOptions<
   commitChanges: (options: PullCommitChangesOptions<C, N, TCheckpoint>) => void;
   /** Report provider listener failures so the client can retry the pull stream. */
   onError?: (error: unknown) => void;
+  /**
+   * The backend's current state of `collections` (default: every collection this stream
+   * pulls) was delivered through `commitChanges`, e.g. Firestore's first snapshot that is not
+   * from the cache. Call it once per stream. An adapter that cannot tell calls it after its
+   * first batch; one that never calls it never reports `caughtUp`. Core applies it once the
+   * batches delivered before it have committed.
+   */
+  onCaughtUp?: (collections?: readonly N[]) => void;
+  /**
+   * A preview of `collection` (a few rows, fetched first so the app can show them) was
+   * delivered with `commitChanges({ preview: true })`. `hasData`: whether the backend
+   * returned any row, as the server answered it (not from a cache).
+   */
+  onPreviewed?: (options: { collection: N; hasData: boolean }) => void;
+  /** How many changes this stream's full pull of `collection` delivers, for progress. */
+  onCount?: (options: { collection: N; total: number }) => void;
 }
 
 export interface PullCommitChangesOptions<
@@ -138,7 +154,44 @@ export interface PullCommitChangesOptions<
    * New checkpoint to use for the next pull operation.
    */
   checkpoint: PullCheckpointMap<C, N, TCheckpoint>;
+  /**
+   * The rows of a preview (see `PullOptions.onPreviewed`): applied like any batch but not
+   * counted in pull progress, since the full pull delivers them again. Give it no checkpoint.
+   */
+  preview?: boolean;
 }
+
+/** One collection's pull, as `SyncClient.subscribePullState` reports it. */
+export interface CollectionPullState {
+  /**
+   * Local data is good enough to show: the collection was pulled before on this device (it
+   * has a checkpoint), its preview committed, or it caught up.
+   */
+  available: boolean;
+  /**
+   * Whether the backend has rows for the collection: answered by the preview, by catching
+   * up, or `true` when it has a checkpoint. `undefined` until then.
+   */
+  hasRemoteData: boolean | undefined;
+  /** The backend's current state is applied; `false` again whenever the pull restarts or stops. */
+  caughtUp: boolean;
+  /**
+   * Changes the current pull stream committed, and how many it delivers in all when the
+   * adapter counted them (`undefined` otherwise). Both restart with the stream.
+   */
+  progress: { pulled: number; total: number | undefined };
+  /** When a pulled batch last committed, or the collection caught up (ms). Not stored. */
+  lastPulledAt: number | undefined;
+}
+
+/** What a sync handler reports about one collection's pull. */
+export type PullStateEvent =
+  | { type: "started" }
+  | { type: "stopped" }
+  | { type: "committed"; count: number; at: number }
+  | { type: "previewed"; hasData: boolean }
+  | { type: "count"; total: number }
+  | { type: "caughtUp"; at: number };
 
 export interface PushOptions<C extends ChangeBusEventDataMap, N extends keyof C = keyof C> {
   /**

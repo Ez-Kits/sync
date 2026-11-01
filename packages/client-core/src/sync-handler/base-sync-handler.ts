@@ -18,7 +18,15 @@ import type {
   StoredChangeBusEvent,
 } from "../local-change-store";
 import { isPermanentPushError } from "./errors";
-import type { ConflictResolution, PushRejection, SyncAdapter } from "./types";
+import type { ConflictResolution, PullStateEvent, PushRejection, SyncAdapter } from "./types";
+
+/**
+ * Changes applied per pull transaction. A larger batch commits in chunks with a pause between
+ * them, so local writes and the page are not held up for the whole batch.
+ */
+export const PULL_COMMIT_CHUNK_SIZE = 200;
+
+const yieldToEventLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 export type SyncHandlerDataMap<C extends CollectionConfigMap> =
   ChangeBusEventDataMapFromCollectionConfigMap<C>;
@@ -50,6 +58,8 @@ export interface BaseSyncHandlerConfig<
   onPushRejected?: (rejection: PushRejection<SyncHandlerDataMap<C>>) => void;
   /** Called after this handler removed events from the outbox, or parked new ones. */
   onOutboxChanged?: () => void;
+  /** Progress of a collection's pull (see `CollectionPullState`). */
+  onPullState?: (collection: string, event: PullStateEvent) => void;
 }
 
 export abstract class BaseSyncHandler<
@@ -210,6 +220,44 @@ export abstract class BaseSyncHandler<
     };
   }
 
+  /**
+   * Report a new pull stream of `collections` and build its readiness callbacks. Each signal
+   * waits in `enqueue` (the stream's commit queue) behind the batches delivered before it, and
+   * is dropped once the stream is no longer active. The returned `onError` also reports the
+   * collections as stopped.
+   */
+  protected pullSignals<N extends CollectionNames<C>>(
+    collections: readonly N[],
+    stream: PullStream,
+    enqueue: (task: () => void) => void,
+  ) {
+    const report = (names: readonly N[], event: PullStateEvent) => {
+      for (const name of names) this.config.onPullState?.(String(name), event);
+    };
+    const queued = (task: () => void) =>
+      enqueue(() => {
+        if (this.mayCommit() && stream.isActive()) task();
+      });
+    report(collections, { type: "started" });
+    return {
+      onError: (error: unknown) => {
+        if (stream.isActive()) report(collections, { type: "stopped" });
+        stream.onError(error);
+      },
+      onCaughtUp: (names?: readonly N[]) =>
+        queued(() => report(names ?? collections, { type: "caughtUp", at: Date.now() })),
+      onPreviewed: ({ collection, hasData }: { collection: N; hasData: boolean }) =>
+        queued(() => report([collection], { type: "previewed", hasData })),
+      onCount: ({ collection, total }: { collection: N; total: number }) =>
+        queued(() => report([collection], { type: "count", total })),
+    };
+  }
+
+  /** Report the pull of `collections` stopped. */
+  protected reportPullStopped(collections: readonly CollectionNames<C>[]): void {
+    for (const name of collections) this.config.onPullState?.(String(name), { type: "stopped" });
+  }
+
   protected async applyEvent<N extends CollectionNames<C>>(
     collectionName: N,
     event: ChangeBusEvent<SyncHandlerDataMap<C>, N>,
@@ -241,9 +289,13 @@ export abstract class BaseSyncHandler<
   }
 
   /**
-   * Apply one pulled batch and save its checkpoint in a single transaction (a batch without
-   * changes still opens one, for its checkpoint), then announce what it applied. Resolves
-   * `true` when conflict resolution queued an outbox event to push.
+   * Apply one pulled batch and save its checkpoint (a batch without changes still opens a
+   * transaction, for its checkpoint), then announce what it applied. A batch of more than
+   * {@link PULL_COMMIT_CHUNK_SIZE} changes commits in chunks, each in its own transaction and
+   * announced when it commits, yielding to the event loop between them; only the last saves
+   * the checkpoint, so a batch cut short is pulled and applied again (pulled rows are
+   * upserted). It stops between chunks once `isActive` turns false or this handler may no
+   * longer write. Resolves `true` when conflict resolution queued an outbox event to push.
    */
   protected async commitPulledChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
@@ -252,6 +304,30 @@ export abstract class BaseSyncHandler<
       event: ChangeBusEvent<SyncHandlerDataMap<C>>,
       tx: DBAdapterOperations<C>,
     ) => Promise<void>,
+    options: { isActive?: () => boolean; preview?: boolean } = {},
+  ): Promise<boolean> {
+    let needsPush = false;
+    for (let offset = 0; ; offset += PULL_COMMIT_CHUNK_SIZE) {
+      const chunk = changes.slice(offset, offset + PULL_COMMIT_CHUNK_SIZE);
+      const last = offset + PULL_COMMIT_CHUNK_SIZE >= changes.length;
+      needsPush =
+        (await this.commitPulledChunk(chunk, last ? checkpoint : {}, apply, options)) || needsPush;
+      if (last) break;
+      await yieldToEventLoop();
+      if (!this.mayCommit() || options.isActive?.() === false) return needsPush;
+    }
+    this.config.onSyncSuccess?.();
+    return needsPush;
+  }
+
+  private async commitPulledChunk(
+    changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
+    checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
+    apply: (
+      event: ChangeBusEvent<SyncHandlerDataMap<C>>,
+      tx: DBAdapterOperations<C>,
+    ) => Promise<void>,
+    options: { preview?: boolean },
   ): Promise<boolean> {
     let applied: ChangeBusEvent<SyncHandlerDataMap<C>>[] = [];
     let needsPush = false;
@@ -275,7 +351,15 @@ export abstract class BaseSyncHandler<
 
     this.config.changeBus.publishRemoteBatch(applied);
     if (applied.length > 0) this.config.onRemoteChangesCommitted?.(applied);
-    this.config.onSyncSuccess?.();
+    const counts = new Map<string, number>(Object.keys(checkpoint).map((name) => [name, 0]));
+    for (const { collection } of changes) {
+      const name = String(collection);
+      counts.set(name, (counts.get(name) ?? 0) + (options.preview ? 0 : 1));
+    }
+    const at = Date.now();
+    for (const [name, count] of counts) {
+      this.config.onPullState?.(name, { type: "committed", count, at });
+    }
     return needsPush;
   }
 
@@ -808,6 +892,12 @@ interface ParkedPush<D extends ChangeBusEventDataMapFromCollectionConfigMap<any>
   event: ChangeBusEvent<D>;
   queueKey: string;
   recordKey: string;
+}
+
+/** A pull stream, as `retryPull` hands it out. */
+export interface PullStream {
+  isActive: () => boolean;
+  onError: (error: unknown) => void;
 }
 
 /** One `pushPending` run: its queue and the permanent errors it parked events with. */

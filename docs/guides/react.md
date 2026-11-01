@@ -154,6 +154,28 @@ function SyncLine() {
 }
 ```
 
+## Show the first sync
+
+`usePullState` follows the pull (see [First sync and pull state](syncing.md#first-sync-and-pull-state)). Render as soon as data is `available`, never block on `caughtUp`:
+
+```tsx
+function Sessions() {
+  const { available, hasRemoteData, caughtUp, progress } = usePullState(["sessions"]);
+  if (!available) return <Spinner />;
+  if (hasRemoteData === false) return <Onboarding />;
+  return (
+    <>
+      <SessionList /> {/* a live query: fills in as the pull commits */}
+      {!caughtUp && progress.total !== undefined && (
+        <small>
+          Downloading {progress.pulled} of {progress.total}…
+        </small>
+      )}
+    </>
+  );
+}
+```
+
 ## One client per user
 
 When each user syncs their own data (a per-user Firestore path, or a query that filters by user), give each user their own local database too. Then switching users never mixes rows, pending writes or checkpoints. `createScopedSyncClientReact` builds one client per **scope** from a function:

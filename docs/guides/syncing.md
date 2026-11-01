@@ -69,6 +69,45 @@ Errors never contain your document data, so they are safe to log.
 
 A sync `error` status is usually temporary (the network, an expired token): EzSync retries with backoff. An error that does not go away is often a database problem (for example a missing table) or a bad sync adapter configuration.
 
+## First sync and pull state
+
+`status` says whether sync runs, not how far the pull got. `subscribePullState` reports it per collection:
+
+```ts
+const stop = client.subscribePullState(({ sessions }) => {
+  // { available: true, hasRemoteData: true, caughtUp: false,
+  //   progress: { pulled: 120, total: 3000 }, lastPulledAt: 1767225600000 }
+});
+```
+
+| Field           | Meaning                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `available`     | Local data is good enough to show: the collection was pulled before on this device, its preview committed, or it caught up.                         |
+| `hasRemoteData` | Whether the backend has rows: answered by the preview or by catching up; `true` when the collection was pulled before. `undefined` until then.      |
+| `caughtUp`      | The backend's current state is applied. `false` again whenever the pull restarts (back online, `startSync()`, a new leader tab) or stops.           |
+| `progress`      | `pulled`: changes this pull committed so far. `total`: how many it delivers, when the adapter counts (`countInitialPull` of the Firebase adapters). |
+| `lastPulledAt`  | When a pulled batch last committed, or the collection caught up, for "Synced · 2 min ago". Kept in memory only.                                     |
+
+Every tab shows the leader's state. `getPullState()` returns it without subscribing.
+
+### Don't gate the screen on `caughtUp`
+
+On a new device the full pull can take a while. Show data as soon as there is some, and let it fill in:
+
+```ts
+client.startSync();
+await client.waitForPulled({ collections: ["sessions"], until: "available", timeoutMs: 15_000 });
+const { sessions } = client.getPullState();
+router.go(sessions.hasRemoteData ? "/home" : "/onboarding");
+```
+
+1. `until: "available"` resolves after the preview (one small query, see [Firestore](firestore.md#show-rows-on-the-first-sync) or [Realtime Database](realtime-database.md#show-rows-on-the-first-sync)), or at once on a device that synced before.
+2. `hasRemoteData` tells a returning user from a new one without downloading everything.
+3. Live queries show the preview rows, then fill in as the full pull commits: large batches commit in chunks of 200 rows, so the page and local writes are never held up for the whole download.
+4. While `!caughtUp`, show a small "Downloading 120 of 3,000…" from `progress`.
+
+Wait for `caughtUp` (the default of `waitForPulled`) only for flows that read everything and then change it, such as replacing an account's data. `waitForPulled` rejects with a `WaitForPulledError` (`reason`: `"timeout"`, `"stopped"` or `"disposed"`) after `timeoutMs`, when `stopSync()` is called meanwhile, or on `dispose()`. Offline, `caughtUp` stays `false`, so pass a timeout.
+
 ## Pending writes
 
 `status` says whether sync runs, not whether everything was pushed. For that, count the outbox: the local writes the backend has not confirmed yet.

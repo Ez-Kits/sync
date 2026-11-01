@@ -56,29 +56,32 @@ Throws synchronously when `dbAdapter` is not a complete DB adapter (it needs `db
 
 ### `SyncClient`
 
-| Member                                       | Description                                                                                                                                                                                           |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collections.<name>.insert(data)`            | Insert a record (with its primary key). Resolves when saved locally.                                                                                                                                  |
-| `collections.<name>.update(data)`            | Update a record: its primary key plus the changed fields.                                                                                                                                             |
-| `collections.<name>.delete(id)`              | Delete a record by primary key.                                                                                                                                                                       |
-| `collections.<name>.get(id)`                 | Read one record. Rejects if missing.                                                                                                                                                                  |
-| `collections.<name>.getMany()`               | Read every record of the collection.                                                                                                                                                                  |
-| `liveQuery({ collections?, query, onData })` | Run `query(queryBuilder, querySchema)` now and after every change to `collections` (or to any collection when omitted). Returns a function that stops it.                                             |
-| `subscribe(cb, options?)`                    | Listen to change events of every collection. Returns an unsubscribe function.                                                                                                                         |
-| `subscribe(collection, cb, options?)`        | ...of one collection.                                                                                                                                                                                 |
-| `subscribe(collections[], cb, options?)`     | ...of several collections. `options.stream`: `"local"` (writes in this tab), `"remote"` (pulled changes and other tabs' writes) or `"both"` (default).                                                |
-| `startSync()`                                | Start syncing (in a follower: ask the leader to sync). Also listens to `online` / `offline`.                                                                                                          |
-| `stopSync()`                                 | Pause syncing. Local reads and writes keep working.                                                                                                                                                   |
-| `retryRejectedPushes()`                      | Push parked (rejected) writes now instead of after their backoff, e.g. after sign-in.                                                                                                                 |
-| `dispose()`                                  | `Promise<void>`. Stop sync, close the adapter (`dbAdapter.close?.()`), release the storage and all listeners for good.                                                                                |
-| `role`                                       | `"leader"` or `"follower"`. Only the leader syncs.                                                                                                                                                    |
-| `subscribeRole(listener)`                    | Called now with the current role, then on every change. Returns an unsubscribe function.                                                                                                              |
-| `subscribeStatus(listener)`                  | Called now with the current `SyncStatusEvent`, then on every change. Returns an unsubscribe function.                                                                                                 |
-| `getPendingWrites()`                         | `Promise<PendingWrites>`: the local writes the backend has not confirmed yet. Works in every tab, before `startSync()` and offline.                                                                   |
-| `subscribePendingWrites(listener)`           | Called with the `PendingWrites` once read, then whenever they change. Returns an unsubscribe function.                                                                                                |
-| `waitForPushed({ timeoutMs? })`              | `Promise<void>`: resolves once every pending write except the parked ones is pushed. Rejects with a `WaitForPushedError` when writes are pending while offline, after `timeoutMs`, or on `dispose()`. |
-| `getCheckpoint(collection)`                  | `Promise<TCheckpoint \| undefined>`: the last committed pull checkpoint.                                                                                                                              |
-| `saveCheckpoint(collection, checkpoint)`     | `Promise<void>`: replace it; `undefined` removes it, so the next pull starts from scratch. Takes effect when the collection's pull (re)starts.                                                        |
+| Member                                                | Description                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collections.<name>.insert(data)`                     | Insert a record (with its primary key). Resolves when saved locally.                                                                                                                                                                                                                                  |
+| `collections.<name>.update(data)`                     | Update a record: its primary key plus the changed fields.                                                                                                                                                                                                                                             |
+| `collections.<name>.delete(id)`                       | Delete a record by primary key.                                                                                                                                                                                                                                                                       |
+| `collections.<name>.get(id)`                          | Read one record. Rejects if missing.                                                                                                                                                                                                                                                                  |
+| `collections.<name>.getMany()`                        | Read every record of the collection.                                                                                                                                                                                                                                                                  |
+| `liveQuery({ collections?, query, onData })`          | Run `query(queryBuilder, querySchema)` now and after every change to `collections` (or to any collection when omitted). Returns a function that stops it.                                                                                                                                             |
+| `subscribe(cb, options?)`                             | Listen to change events of every collection. Returns an unsubscribe function.                                                                                                                                                                                                                         |
+| `subscribe(collection, cb, options?)`                 | ...of one collection.                                                                                                                                                                                                                                                                                 |
+| `subscribe(collections[], cb, options?)`              | ...of several collections. `options.stream`: `"local"` (writes in this tab), `"remote"` (pulled changes and other tabs' writes) or `"both"` (default).                                                                                                                                                |
+| `startSync()`                                         | Start syncing (in a follower: ask the leader to sync). Also listens to `online` / `offline`.                                                                                                                                                                                                          |
+| `stopSync()`                                          | Pause syncing. Local reads and writes keep working.                                                                                                                                                                                                                                                   |
+| `retryRejectedPushes()`                               | Push parked (rejected) writes now instead of after their backoff, e.g. after sign-in.                                                                                                                                                                                                                 |
+| `dispose()`                                           | `Promise<void>`. Stop sync, close the adapter (`dbAdapter.close?.()`), release the storage and all listeners for good.                                                                                                                                                                                |
+| `role`                                                | `"leader"` or `"follower"`. Only the leader syncs.                                                                                                                                                                                                                                                    |
+| `subscribeRole(listener)`                             | Called now with the current role, then on every change. Returns an unsubscribe function.                                                                                                                                                                                                              |
+| `subscribeStatus(listener)`                           | Called now with the current `SyncStatusEvent`, then on every change. Returns an unsubscribe function.                                                                                                                                                                                                 |
+| `getPendingWrites()`                                  | `Promise<PendingWrites>`: the local writes the backend has not confirmed yet. Works in every tab, before `startSync()` and offline.                                                                                                                                                                   |
+| `subscribePendingWrites(listener)`                    | Called with the `PendingWrites` once read, then whenever they change. Returns an unsubscribe function.                                                                                                                                                                                                |
+| `waitForPushed({ timeoutMs? })`                       | `Promise<void>`: resolves once every pending write except the parked ones is pushed. Rejects with a `WaitForPushedError` when writes are pending while offline, after `timeoutMs`, or on `dispose()`.                                                                                                 |
+| `getPullState()`                                      | The current `PullState`: each pulled collection's `CollectionPullState`. The same object until it changes.                                                                                                                                                                                            |
+| `subscribePullState(listener)`                        | Called now with the `PullState`, then on every change. Every tab shows the leader's. Returns an unsubscribe function.                                                                                                                                                                                 |
+| `waitForPulled({ collections?, until?, timeoutMs? })` | `Promise<void>`: resolves once the collections (default: every pulled one) are `available` or `caughtUp` (`until`, default `"caughtUp"`). Rejects with a `WaitForPulledError` after `timeoutMs`, when `stopSync()` is called meanwhile, or on `dispose()`; at once for a collection no adapter pulls. |
+| `getCheckpoint(collection)`                           | `Promise<TCheckpoint \| undefined>`: the last committed pull checkpoint.                                                                                                                                                                                                                              |
+| `saveCheckpoint(collection, checkpoint)`              | `Promise<void>`: replace it; `undefined` removes it, so the next pull starts from scratch. Takes effect when the collection's pull (re)starts.                                                                                                                                                        |
 
 ### `PendingWrites`
 
@@ -91,6 +94,20 @@ interface PendingWrites {
 ```
 
 It counts **outbox events**, not records: two updates to one row count 2. `rejected` counts the writes the leading tab has parked since it started; after a reload, a parked write counts as rejected again once its next push is refused. See [Syncing](../guides/syncing.md#pending-writes).
+
+### `CollectionPullState`
+
+```ts
+interface CollectionPullState {
+  available: boolean; // local data can be shown: pulled before on this device, preview committed, or caught up
+  hasRemoteData: boolean | undefined; // the backend has rows; undefined until the preview or catching up answers
+  caughtUp: boolean; // the backend's current state is applied; false again when the pull restarts or stops
+  progress: { pulled: number; total: number | undefined }; // this pull stream; total when the adapter counts
+  lastPulledAt: number | undefined; // ms: last committed batch, or catching up; not stored
+}
+```
+
+`PullState` is `Record<CollectionName, CollectionPullState>` over the collections a sync adapter pulls. See [Syncing](../guides/syncing.md#first-sync-and-pull-state).
 
 ### `SyncStatusEvent`
 
@@ -242,6 +259,7 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 | `DBStorageClosedError`         | The storage was closed.                                                                                                  |             |
 | `DBStorageWorkerError`         | The storage worker failed to load; `ready` and every request reject with it.                                             |             |
 | `PushRejectedError`            | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                                            |             |
+| `WaitForPulledError`           | `waitForPulled()` gave up. `reason`: `"timeout"`, `"stopped"` or `"disposed"`; `state`: the last `PullState`.            |             |
 | `WaitForPushedError`           | `waitForPushed()` gave up. `reason`: `"timeout"`, `"offline"` or `"disposed"`; `pending`: the last `PendingWrites` read. |             |
 
 | Helper                                                   | Description                                                |
@@ -379,8 +397,12 @@ interface PullOptions<C, N, TCheckpoint> {
   commitChanges(options: {
     changes: ChangeBusEvent<C, N>[];
     checkpoint: Partial<Record<N, TCheckpoint>>;
+    preview?: boolean; // a preview batch: applied, not counted as progress; give it no checkpoint
   }): void;
   onError?(error: unknown): void; // report a listener failure; the pull is restarted with backoff
+  onCaughtUp?(collections?: readonly N[]): void; // the backend's current state was delivered (default: all)
+  onPreviewed?(options: { collection: N; hasData: boolean }): void; // a preview batch was delivered
+  onCount?(options: { collection: N; total: number }): void; // how many changes the full pull delivers
 }
 
 interface PushOptions<C, N> {
@@ -390,6 +412,8 @@ interface PushOptions<C, N> {
 ```
 
 - `pull` opens a stream of remote changes starting at `checkpoint`. It returns a cleanup function that stops every listener.
+- Batches of more than `PULL_COMMIT_CHUNK_SIZE` (200) changes commit in chunks, each in its own transaction, yielding to the event loop between them; only the last saves the checkpoint.
+- `onCaughtUp`, `onPreviewed` and `onCount` take effect once the batches delivered before them have committed. An adapter that can't tell when it is caught up calls `onCaughtUp` after its first batch; one that never calls it never reports `caughtUp`.
 - `push` resolves only once the backend durably accepted the events, and calls (and awaits) `commitChanges` for the accepted ones. Throw a `PushRejectedError` for a refusal that resending would meet again; throw anything else to retry.
 
 | Type                                                   | Description                                                                     |

@@ -8,6 +8,8 @@ import {
   onChildAdded,
   onChildChanged,
   onChildRemoved,
+  onValue,
+  get,
   ref,
   update,
   type DataSnapshot,
@@ -170,6 +172,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
     checkpointSerializer: common.checkpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
+      let stopped = false;
       const unsubscribeFns: Array<() => void> = [];
 
       for (const collectionConfig of collections) {
@@ -197,113 +200,171 @@ export function createRealtimeDBSyncAdapterFromResolved<
           return nextCheckpoint;
         };
 
-        const unsubscribeAdded = onChildAdded(
-          listenTarget,
-          (snapshot) => {
-            const raw = snapshot.val();
-            if (isDeleted(raw, { snapshot })) {
-              const id = collectionConfig.deserializeDeleteId
-                ? collectionConfig.deserializeDeleteId({ snapshot })
-                : (snapshot.key as C[N]["delete"]);
-              commitChanges({
-                changes: [
-                  {
-                    type: "delete",
-                    collection: collectionName,
-                    id,
-                    deletedAt:
-                      collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
-                  } as unknown as ChangeBusEvent<C, N>,
-                ],
-                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-              });
-              return;
-            }
-            const data = collectionConfig.deserializeCreate
-              ? collectionConfig.deserializeCreate(raw, { snapshot })
-              : (raw as C[N]["create"]);
-            commitChanges({
-              changes: [
-                {
-                  type: "create",
-                  collection: collectionName,
-                  data,
-                } as unknown as ChangeBusEvent<C, N>,
-              ],
-              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-            });
-          },
-          (error: Error) => pullOptions.onError?.(error),
-        );
-
-        const unsubscribeChanged = onChildChanged(
-          listenTarget,
-          (snapshot) => {
-            const raw = snapshot.val();
-            if (isDeleted(raw, { snapshot })) {
-              const id = collectionConfig.deserializeDeleteId
-                ? collectionConfig.deserializeDeleteId({ snapshot })
-                : (snapshot.key as C[N]["delete"]);
-              commitChanges({
-                changes: [
-                  {
-                    type: "delete",
-                    collection: collectionName,
-                    id,
-                    deletedAt:
-                      collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
-                  } as unknown as ChangeBusEvent<C, N>,
-                ],
-                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-              });
-              return;
-            }
-            const data = collectionConfig.deserializeUpdate
-              ? collectionConfig.deserializeUpdate(raw, { snapshot })
-              : (raw as C[N]["update"]);
-            commitChanges({
-              changes: [
-                {
-                  type: "update",
-                  collection: collectionName,
-                  data,
-                } as unknown as ChangeBusEvent<C, N>,
-              ],
-              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-            });
-          },
-          (error: Error) => pullOptions.onError?.(error),
-        );
-
-        const unsubscribeRemoved = onChildRemoved(
-          listenTarget,
-          (snapshot) => {
+        /** A child as it arrives: a create, or a delete when it is a tombstone. */
+        const addedEvent = (snapshot: DataSnapshot): ChangeBusEvent<C, N> => {
+          const raw = snapshot.val();
+          if (isDeleted(raw, { snapshot })) {
             const id = collectionConfig.deserializeDeleteId
               ? collectionConfig.deserializeDeleteId({ snapshot })
               : (snapshot.key as C[N]["delete"]);
-            const raw = snapshot.val();
-            const deletedAt =
-              collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw);
-            commitChanges({
-              changes: [
-                {
-                  type: "delete",
-                  collection: collectionName,
-                  id,
-                  deletedAt,
-                } as unknown as ChangeBusEvent<C, N>,
-              ],
-              checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-            });
-          },
-          (error: Error) => pullOptions.onError?.(error),
-        );
+            return {
+              type: "delete",
+              collection: collectionName,
+              id,
+              deletedAt:
+                collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
+            } as unknown as ChangeBusEvent<C, N>;
+          }
+          const data = collectionConfig.deserializeCreate
+            ? collectionConfig.deserializeCreate(raw, { snapshot })
+            : (raw as C[N]["create"]);
+          return { type: "create", collection: collectionName, data } as unknown as ChangeBusEvent<
+            C,
+            N
+          >;
+        };
 
-        // The modular SDK returns an unsubscribe function, not the callback `off` matches.
-        unsubscribeFns.push(unsubscribeAdded, unsubscribeChanged, unsubscribeRemoved);
+        const listen = () => {
+          if (stopped) return;
+          const unsubscribeAdded = onChildAdded(
+            listenTarget,
+            (snapshot) => {
+              commitChanges({
+                changes: [addedEvent(snapshot)],
+                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+              });
+            },
+            (error: Error) => pullOptions.onError?.(error),
+          );
+
+          const unsubscribeChanged = onChildChanged(
+            listenTarget,
+            (snapshot) => {
+              const raw = snapshot.val();
+              if (isDeleted(raw, { snapshot })) {
+                const id = collectionConfig.deserializeDeleteId
+                  ? collectionConfig.deserializeDeleteId({ snapshot })
+                  : (snapshot.key as C[N]["delete"]);
+                commitChanges({
+                  changes: [
+                    {
+                      type: "delete",
+                      collection: collectionName,
+                      id,
+                      deletedAt:
+                        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ??
+                        deletedAtFrom(raw),
+                    } as unknown as ChangeBusEvent<C, N>,
+                  ],
+                  checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+                });
+                return;
+              }
+              const data = collectionConfig.deserializeUpdate
+                ? collectionConfig.deserializeUpdate(raw, { snapshot })
+                : (raw as C[N]["update"]);
+              commitChanges({
+                changes: [
+                  {
+                    type: "update",
+                    collection: collectionName,
+                    data,
+                  } as unknown as ChangeBusEvent<C, N>,
+                ],
+                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+              });
+            },
+            (error: Error) => pullOptions.onError?.(error),
+          );
+
+          const unsubscribeRemoved = onChildRemoved(
+            listenTarget,
+            (snapshot) => {
+              const id = collectionConfig.deserializeDeleteId
+                ? collectionConfig.deserializeDeleteId({ snapshot })
+                : (snapshot.key as C[N]["delete"]);
+              const raw = snapshot.val();
+              const deletedAt =
+                collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw);
+              commitChanges({
+                changes: [
+                  {
+                    type: "delete",
+                    collection: collectionName,
+                    id,
+                    deletedAt,
+                  } as unknown as ChangeBusEvent<C, N>,
+                ],
+                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
+              });
+            },
+            (error: Error) => pullOptions.onError?.(error),
+          );
+
+          // A value event fires after the child events of the data it holds: the children
+          // existing when the listeners opened were all delivered.
+          const unsubscribeLoaded = onValue(
+            listenTarget,
+            () => pullOptions.onCaughtUp?.([collectionName]),
+            (error: Error) => pullOptions.onError?.(error),
+            { onlyOnce: true },
+          );
+
+          // The modular SDK returns an unsubscribe function, not the callback `off` matches.
+          unsubscribeFns.push(
+            unsubscribeAdded,
+            unsubscribeChanged,
+            unsubscribeRemoved,
+            unsubscribeLoaded,
+          );
+        };
+
+        const firstPull = previousFromStorage === undefined;
+        const count = collectionConfig.countInitialPull;
+        if (firstPull && count) {
+          Promise.resolve()
+            .then(() => count({ db, collectionPath }))
+            .then(
+              (total) => {
+                if (!stopped && Number.isFinite(total)) {
+                  pullOptions.onCount?.({ collection: collectionName, total });
+                }
+              },
+              // Progress only: the pull goes on without a total.
+              () => undefined,
+            );
+        }
+
+        const buildPreview = collectionConfig.buildPreviewQuery;
+        if (!firstPull || !buildPreview) {
+          listen();
+          continue;
+        }
+        // The listeners open once the preview is queued, so the preview never lands after
+        // (and over) newer children they delivered.
+        void (async () => {
+          try {
+            const snapshot = await get(buildPreview({ db, collectionPath }));
+            if (stopped) return;
+            const changes: ChangeBusEvent<C, N>[] = [];
+            snapshot.forEach((child) => {
+              changes.push(addedEvent(child));
+            });
+            commitChanges({ changes, checkpoint: {}, preview: true });
+            pullOptions.onPreviewed?.({
+              collection: collectionName,
+              hasData: changes.some((change) => change.type !== "delete"),
+            });
+          } catch {
+            // Offline or refused: the full pull shows the rows instead.
+          } finally {
+            listen();
+          }
+        })();
       }
 
       return () => {
+        stopped = true;
         for (const unsubscribe of unsubscribeFns) unsubscribe();
       };
     },

@@ -20,6 +20,7 @@ import type {
   SyncStatusEvent,
 } from "../sync-handler";
 import type { PendingWrites, WaitForPushedOptions } from "./pending-writes";
+import type { PullState, WaitForPulledOptions } from "./pull-state";
 
 /**
  * The client-level sync adapter type for collections `C`. A custom adapter factory that takes
@@ -121,6 +122,21 @@ export interface SyncClient<
    * `dispose`. Nothing pushes unless sync runs in the leading context.
    */
   waitForPushed: (options?: WaitForPushedOptions) => Promise<void>;
+  /**
+   * Called now with the pull state of every pulled collection (see `CollectionPullState`),
+   * then on every change. Every context shows the leader's. Returns an unsubscribe function.
+   */
+  /** The current pull state (see `subscribePullState`); the same object until it changes. */
+  getPullState: () => PullState<CollectionNames<C>>;
+  subscribePullState: (listener: (state: PullState<CollectionNames<C>>) => void) => () => void;
+  /**
+   * Resolve once `collections` (default: every pulled one) are `available` or `caughtUp`
+   * (`until`, default `"caughtUp"`). Rejects with a `WaitForPulledError` after `timeoutMs`,
+   * when `stopSync` is called meanwhile, or on `dispose`; at once for a collection no sync
+   * adapter pulls. Wait for `available` to show a screen; `caughtUp` only for flows that read
+   * everything and then change it.
+   */
+  waitForPulled: (options?: WaitForPulledOptions<CollectionNames<C>>) => Promise<void>;
   /**
    * The last committed pull checkpoint of a collection, read from the database (deserialized
    * with `checkpoint.deserialize`). Waits for the storage to be initialized.

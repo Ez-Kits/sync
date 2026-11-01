@@ -7,10 +7,13 @@ import type {
 import {
   doc,
   collection as getCollectionRef,
+  getCountFromServer,
+  getDocsFromServer,
   onSnapshot,
   query,
   writeBatch,
   type CollectionReference,
+  type DocumentChangeType,
   type DocumentData,
   type Firestore,
   type Query,
@@ -55,6 +58,39 @@ function buildPullSource(
   return query(collectionRef, ...constraints);
 }
 
+/** One snapshot document as a pulled change event, by how it changed (`DocumentChangeType`). */
+function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<C>, TCheckpoint>(
+  collectionConfig: ResolvedFirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>,
+  snapshot: QueryDocumentSnapshot<DocumentData>,
+  kind: DocumentChangeType,
+): ChangeBusEvent<C, N> {
+  const collectionName = collectionConfig.collectionName;
+  const raw = getSnapshotData(snapshot);
+  const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
+  if (kind === "removed" || isDeleted(raw, { snapshot })) {
+    const id = collectionConfig.deserializeDeleteId
+      ? collectionConfig.deserializeDeleteId({ snapshot })
+      : (snapshot.id as C[N]["delete"]);
+    return {
+      type: "delete",
+      collection: collectionName,
+      id,
+      deletedAt:
+        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw.deletedAt),
+    } as unknown as ChangeBusEvent<C, N>;
+  }
+  if (kind === "added") {
+    const data = collectionConfig.deserializeCreate
+      ? collectionConfig.deserializeCreate(raw, { snapshot })
+      : (raw as C[N]["create"]);
+    return { type: "create", collection: collectionName, data } as unknown as ChangeBusEvent<C, N>;
+  }
+  const data = collectionConfig.deserializeUpdate
+    ? collectionConfig.deserializeUpdate(raw, { snapshot })
+    : (raw as C[N]["update"]);
+  return { type: "update", collection: collectionName, data } as unknown as ChangeBusEvent<C, N>;
+}
+
 export function createFirestoreSyncAdapterFromResolved<
   C extends ChangeBusEventDataMap,
   N extends CollectionKey<C>,
@@ -73,96 +109,95 @@ export function createFirestoreSyncAdapterFromResolved<
     checkpointSerializer: common.checkpointSerializer,
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
-      const unsubscribes = collections.map((collectionConfig) => {
+      let stopped = false;
+      const unsubscribes: Array<() => void> = [];
+
+      for (const collectionConfig of collections) {
         const collectionName = collectionConfig.collectionName;
         const collectionRef = getCollectionRef(db, collectionConfig.collectionPath);
         const previousFromStorage = checkpointMap?.[collectionName];
         let previousCheckpoint: TCheckpoint | undefined = previousFromStorage;
-        const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
-
-        const constraints =
-          collectionConfig.buildPullQueryConstraints?.({
-            checkpoint: previousFromStorage,
-          }) ?? [];
-
-        const pullSource = buildPullSource(collectionRef, constraints);
-        const includeMetadataChanges =
-          collectionConfig.includeMetadataChanges ?? common.includeMetadataChanges ?? false;
-
-        return onSnapshot(
-          pullSource,
-          { includeMetadataChanges },
-          (snapshot) => {
-            const changes = snapshot.docChanges().map((change) => {
-              if (change.type === "removed") {
-                const raw = getSnapshotData(change.doc);
-                const id = collectionConfig.deserializeDeleteId
-                  ? collectionConfig.deserializeDeleteId({ snapshot: change.doc })
-                  : (change.doc.id as C[N]["delete"]);
-                return {
-                  type: "delete",
-                  collection: collectionName,
-                  id,
-                  deletedAt:
-                    collectionConfig.resolveDeletedAt?.(raw, { snapshot: change.doc }) ??
-                    deletedAtFrom(raw.deletedAt),
-                } as unknown as ChangeBusEvent<C, N>;
-              }
-
-              const raw = getSnapshotData(change.doc);
-              if (isDeleted(raw, { snapshot: change.doc })) {
-                const id = collectionConfig.deserializeDeleteId
-                  ? collectionConfig.deserializeDeleteId({ snapshot: change.doc })
-                  : (change.doc.id as C[N]["delete"]);
-                return {
-                  type: "delete",
-                  collection: collectionName,
-                  id,
-                  deletedAt:
-                    collectionConfig.resolveDeletedAt?.(raw, { snapshot: change.doc }) ??
-                    deletedAtFrom(raw.deletedAt),
-                } as unknown as ChangeBusEvent<C, N>;
-              }
-
-              if (change.type === "added") {
-                const data = collectionConfig.deserializeCreate
-                  ? collectionConfig.deserializeCreate(raw, { snapshot: change.doc })
-                  : (raw as C[N]["create"]);
-                return {
-                  type: "create",
-                  collection: collectionName,
-                  data,
-                } as unknown as ChangeBusEvent<C, N>;
-              }
-
-              const data = collectionConfig.deserializeUpdate
-                ? collectionConfig.deserializeUpdate(raw, { snapshot: change.doc })
-                : (raw as C[N]["update"]);
-              return {
-                type: "update",
-                collection: collectionName,
-                data,
-              } as unknown as ChangeBusEvent<C, N>;
-            });
-
-            if (changes.length > 0) {
-              const nextCheckpoint =
-                collectionConfig.createPullCheckpoint?.({
-                  snapshot,
-                  previousCheckpoint,
-                }) ?? collectionConfig.createCheckpoint();
-              previousCheckpoint = nextCheckpoint;
-              commitChanges({
-                changes,
-                checkpoint: checkpointMapForCollection(collectionName, nextCheckpoint),
-              });
-            }
-          },
-          (error: Error) => pullOptions.onError?.(error),
+        const toEvent = (snapshot: QueryDocumentSnapshot<DocumentData>, kind: DocumentChangeType) =>
+          toChangeEvent(collectionConfig, snapshot, kind);
+        const pullSource = buildPullSource(
+          collectionRef,
+          collectionConfig.buildPullQueryConstraints?.({ checkpoint: previousFromStorage }) ?? [],
         );
-      });
+        const firstPull = previousFromStorage === undefined;
+
+        if (firstPull && collectionConfig.countInitialPull) {
+          getCountFromServer(pullSource).then(
+            (snapshot) => {
+              if (!stopped) {
+                pullOptions.onCount?.({ collection: collectionName, total: snapshot.data().count });
+              }
+            },
+            // Progress only: the pull goes on without a total.
+            () => undefined,
+          );
+        }
+
+        const listen = () => {
+          if (stopped) return;
+          let caughtUp = false;
+          unsubscribes.push(
+            onSnapshot(
+              pullSource,
+              // Metadata changes tell a server snapshot from a cached one, even when nothing changed.
+              { includeMetadataChanges: true },
+              (snapshot) => {
+                const changes = snapshot
+                  .docChanges()
+                  .map((change) => toEvent(change.doc, change.type));
+                if (changes.length > 0) {
+                  const nextCheckpoint =
+                    collectionConfig.createPullCheckpoint?.({
+                      snapshot,
+                      previousCheckpoint,
+                    }) ?? collectionConfig.createCheckpoint();
+                  previousCheckpoint = nextCheckpoint;
+                  commitChanges({
+                    changes,
+                    checkpoint: checkpointMapForCollection(collectionName, nextCheckpoint),
+                  });
+                }
+                if (!caughtUp && !snapshot.metadata.fromCache) {
+                  caughtUp = true;
+                  pullOptions.onCaughtUp?.([collectionName]);
+                }
+              },
+              (error: Error) => pullOptions.onError?.(error),
+            ),
+          );
+        };
+
+        const buildPreview = collectionConfig.buildPreviewQueryConstraints;
+        if (!firstPull || !buildPreview) {
+          listen();
+          continue;
+        }
+        // The listener opens once the preview is queued, so the preview never lands after
+        // (and over) newer rows the listener delivered.
+        void (async () => {
+          try {
+            const snapshot = await getDocsFromServer(query(collectionRef, ...buildPreview()));
+            if (stopped) return;
+            const changes = snapshot.docs.map((document) => toEvent(document, "added"));
+            commitChanges({ changes, checkpoint: {}, preview: true });
+            pullOptions.onPreviewed?.({
+              collection: collectionName,
+              hasData: changes.some((change) => change.type !== "delete"),
+            });
+          } catch {
+            // Offline or refused: the full pull shows the rows instead.
+          } finally {
+            listen();
+          }
+        })();
+      }
 
       return () => {
+        stopped = true;
         for (const unsubscribe of unsubscribes) unsubscribe();
       };
     },
