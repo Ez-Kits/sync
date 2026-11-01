@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.2](https://github.com/Ez-Kits/sync/compare/sync-client-drizzle-adapter-v0.1.1...sync-client-drizzle-adapter-v0.1.2) (2026-11-01)
+
+
+### Features
+
+* **client-core:** add upsert, bulk writes and multi-collection transactions ([#9](https://github.com/Ez-Kits/sync/issues/9)) ([7473bfc](https://github.com/Ez-Kits/sync/commit/7473bfc96ffbfc05593ae7b5e03db681ed400cec))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.2
+    * @ez-kits/sync-client-storage-pglite bumped to 0.0.3
+    * @ez-kits/sync-client-storage-sqljs bumped to 0.0.3
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.2
+
 ## [0.1.1](https://github.com/Ez-Kits/sync/compare/sync-client-drizzle-adapter-v0.1.0...sync-client-drizzle-adapter-v0.1.1) (2026-11-01)
 
 

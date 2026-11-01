@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.1.1...sync-client-core-v0.1.2) (2026-11-01)
+
+
+### Features
+
+* **client-core:** add upsert, bulk writes and multi-collection transactions ([#9](https://github.com/Ez-Kits/sync/issues/9)) ([7473bfc](https://github.com/Ez-Kits/sync/commit/7473bfc96ffbfc05593ae7b5e03db681ed400cec))
+* pull readiness, progress and first-row previews ([#6](https://github.com/Ez-Kits/sync/issues/6)) ([26889af](https://github.com/Ez-Kits/sync/commit/26889afc3d317b45bdd07c5f28aa6e0b427d8eee))
+
 ## [0.1.1](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.1.0...sync-client-core-v0.1.1) (2026-11-01)
 
 
