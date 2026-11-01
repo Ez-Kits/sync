@@ -71,6 +71,28 @@ defineRealtimeDBCollectionSyncAdapterConfig({
 - `startAt` includes the checkpoint value itself, so the last record is pulled once more. That is harmless (it is applied again), and it means records with the same `updatedAt` are not missed.
 - Add an index on `updatedAt` in your database rules (`".indexOn": ["updatedAt"]`) so the query is efficient.
 
+## Show rows on the first sync
+
+On a collection's first pull on a device (no checkpoint yet), every child arrives through the listeners before the pull is done. Read a few first, and tell EzSync how many to expect:
+
+```ts
+import { get, limitToLast, orderByChild, query, ref } from "firebase/database";
+
+defineRealtimeDBCollectionSyncAdapterConfig({
+  // ...
+  buildPreviewQuery: ({ db, collectionPath }) =>
+    query(ref(db, collectionPath), orderByChild("updatedAt"), limitToLast(50)),
+  // Realtime Database has no server-side count: read a counter your writes keep up to date.
+  countInitialPull: async ({ db }) => Number((await get(ref(db, "counts/todos"))).val() ?? 0),
+});
+```
+
+- **The preview** runs once with `get`. Its rows commit right away (without a checkpoint), the collection becomes `available`, and `hasRemoteData` is answered. The child listeners open after it and deliver those children again, which is harmless. Offline or refused, the preview is skipped and the full pull answers instead.
+- **The count** is yours to supply, since Realtime Database cannot count without downloading every child. A counter node updated with your writes (or by a Cloud Function) is cheap. A failure or a non-finite number leaves `progress.total` unknown.
+- The collection is `caughtUp` after a one-time `value` event of the listen query, which Firebase delivers after the existing children.
+
+Use `limitToLast(1)` when you only need `hasRemoteData`. See [First sync and pull state](syncing.md#first-sync-and-pull-state).
+
 ## Deletes
 
 Like the Firestore adapter, deletes are **tombstones** by default: the node gets `deleted: true` and `deletedAt` (milliseconds) merged in, and stays. Other devices see the change and delete their local row. A node that is really removed (`onChildRemoved`) is also applied as a delete.

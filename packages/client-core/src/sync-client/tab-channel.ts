@@ -1,5 +1,6 @@
 import type { ChangeBusEvent } from "../change-bus";
 import type { BroadcastChannelConstructor } from "../db-storage/protocol";
+import type { PullState } from "./pull-state";
 
 /** Events committed by another context. */
 export interface ChangeNotice {
@@ -16,8 +17,10 @@ export interface SyncTabListener {
   syncRequest?(): void;
   /** The leader's parked (rejected) outbox event ids, sent whenever its outbox changed. */
   outbox?(parked: string[]): void;
-  /** Another context wants the leader's `outbox` message; only the leader acts on it. */
-  outboxRequest?(): void;
+  /** The leader's pull state, sent whenever it changed. */
+  pullState?(state: PullState): void;
+  /** Another context wants the leader's `outbox` and `pullState`; only the leader answers. */
+  stateRequest?(): void;
 }
 
 type SyncTabMessage =
@@ -31,7 +34,8 @@ type SyncTabMessage =
     }
   | { t: "sync-request" }
   | { t: "outbox"; parked: string[] }
-  | { t: "outbox-request" };
+  | { t: "pull-state"; state: PullState }
+  | { t: "state-request" };
 
 export const syncChannelName = (key: string) => `ez-sync:${key}:sync`;
 
@@ -82,8 +86,12 @@ export class SyncTabChannel {
     this.channel?.postMessage({ t: "outbox", parked } satisfies SyncTabMessage);
   }
 
-  requestOutbox(): void {
-    this.channel?.postMessage({ t: "outbox-request" } satisfies SyncTabMessage);
+  broadcastPullState(state: PullState): void {
+    this.channel?.postMessage({ t: "pull-state", state } satisfies SyncTabMessage);
+  }
+
+  requestState(): void {
+    this.channel?.postMessage({ t: "state-request" } satisfies SyncTabMessage);
   }
 
   /** Forget sequence numbers, e.g. after the leader changed and everything was re-read. */
@@ -106,8 +114,12 @@ export class SyncTabChannel {
       for (const listener of this.listeners) listener.outbox?.(message.parked);
       return;
     }
-    if (message?.t === "outbox-request") {
-      for (const listener of this.listeners) listener.outboxRequest?.();
+    if (message?.t === "pull-state") {
+      for (const listener of this.listeners) listener.pullState?.(message.state);
+      return;
+    }
+    if (message?.t === "state-request") {
+      for (const listener of this.listeners) listener.stateRequest?.();
       return;
     }
     if (message?.t !== "changes") return;

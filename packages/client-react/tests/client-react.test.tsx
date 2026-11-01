@@ -508,3 +508,60 @@ test("usePendingWrites is pending until the outbox is read, then follows it", as
     }),
   );
 });
+
+test("usePullState combines the pull state of the requested collections", async () => {
+  const streams: any[] = [];
+  const client = createSyncClientReact({
+    collections: [todoCollection, { ...todoCollection, name: "notes" }],
+    dbAdapter: createDB(),
+    syncAdapter: {
+      push: async () => {},
+      pull: (options: any) => {
+        streams.push(options);
+        return () => {};
+      },
+    },
+  } as never);
+  const { result } = renderHook(() => client.usePullState(), {
+    wrapper: client.SyncClientProvider,
+  });
+  expect(result.current).toMatchObject({
+    available: false,
+    caughtUp: false,
+    hasRemoteData: undefined,
+    progress: { pulled: 0, total: undefined },
+  });
+
+  client.syncClient.startSync();
+  await waitFor(() => expect(streams).toHaveLength(1));
+  await act(async () => {
+    streams[0].onPreviewed({ collection: "todos", hasData: true });
+    streams[0].onPreviewed({ collection: "notes", hasData: false });
+    streams[0].onCount({ collection: "todos", total: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(result.current).toMatchObject({
+    available: true,
+    caughtUp: false,
+    hasRemoteData: true,
+    progress: { pulled: 0, total: undefined },
+    collections: { notes: { hasRemoteData: false }, todos: { progress: { total: 5 } } },
+  });
+
+  const notes = renderHook(() => client.usePullState(["notes"]), {
+    wrapper: client.SyncClientProvider,
+  });
+  expect(notes.result.current).toMatchObject({ hasRemoteData: false, available: true });
+  await act(async () => {
+    streams[0].onCount({ collection: "notes", total: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  // Every collection has a total now: they add up.
+  expect(result.current.progress).toEqual({ pulled: 0, total: 7 });
+  await act(async () => {
+    streams[0].onCaughtUp(["notes"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(notes.result.current.caughtUp).toBe(true);
+  expect(result.current.caughtUp).toBe(false);
+});

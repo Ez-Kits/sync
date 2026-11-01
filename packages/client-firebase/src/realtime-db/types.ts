@@ -31,6 +31,21 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
     checkpoint?: TCheckpoint;
   }) => Query;
   /**
+   * A small query read first, on the collection's first pull on this device (no checkpoint
+   * yet), so the app can show rows before the full pull arrives: e.g.
+   * `query(ref(db, collectionPath), orderByChild("updatedAt"), limitToLast(50))`. Its rows
+   * commit without a checkpoint, and the child listeners open after it; it also answers
+   * `hasRemoteData`. Offline or refused, it is skipped.
+   */
+  buildPreviewQuery?: (args: { db: Database; collectionPath: string }) => Query;
+  /**
+   * On the collection's first pull on this device, how many children the full pull
+   * delivers, for `progress.total`. Realtime Database has no server-side count, so supply it:
+   * e.g. read a counter node your writes (or a Cloud Function) keep up to date. A failure or a
+   * non-finite number leaves the total unknown.
+   */
+  countInitialPull?: (args: { db: Database; collectionPath: string }) => number | Promise<number>;
+  /**
    * Build the next persisted checkpoint after a child event.
    * Defaults to {@link createCheckpoint}.
    */

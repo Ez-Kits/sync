@@ -143,7 +143,7 @@ test("followers count every context's writes and learn the leader's parked write
   // A context that opens later asks the leader for its parked writes.
   const late = client(fixture.adapter());
   await settle();
-  expect(FakeBroadcastChannel.messages("outbox-request").length).toBeGreaterThan(0);
+  expect(FakeBroadcastChannel.messages("state-request").length).toBeGreaterThan(0);
   expect(await late.getPendingWrites()).toEqual({
     total: 1,
     rejected: 1,

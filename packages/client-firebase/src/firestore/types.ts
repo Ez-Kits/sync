@@ -40,7 +40,24 @@ export interface FirestoreSyncAdapterCollectionHandlers<
     snapshot: QuerySnapshot<DocumentData>;
     previousCheckpoint?: TCheckpoint;
   }) => TCheckpoint;
-  /** Forwarded to {@link onSnapshot} (useful with metadata-driven flows). */
+  /**
+   * A small query run first, on the collection's first pull on this device (no checkpoint
+   * yet), so the app can show rows before the full pull arrives: e.g.
+   * `[orderBy("updatedAt", "desc"), limit(50)]`. Its rows commit without a checkpoint, and
+   * the full listener opens after it; it also answers `hasRemoteData`. Read from the server
+   * only: offline, it is skipped.
+   */
+  buildPreviewQueryConstraints?: () => QueryConstraint[];
+  /**
+   * On the collection's first pull on this device, count the documents of the full pull
+   * query with `getCountFromServer`, for `progress.total`. Costs one read per 1,000
+   * documents (at least one). Default: `false`.
+   */
+  countInitialPull?: boolean;
+  /**
+   * @deprecated Always on: the adapter listens with metadata changes to know when a snapshot
+   * comes from the server rather than the cache (`caughtUp`).
+   */
   includeMetadataChanges?: boolean;
   resolveRemoteId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (
@@ -93,6 +110,7 @@ export interface FirestoreCollectionSyncAdapterConfig<
 /** Common Firestore adapter configuration shared by all collections. */
 export interface FirestoreSyncCommonAdapterConfig {
   db: Firestore;
+  /** @deprecated Always on (see the per-collection option). */
   includeMetadataChanges?: boolean;
 }
 

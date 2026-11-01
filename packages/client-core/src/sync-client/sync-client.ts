@@ -27,6 +27,12 @@ import {
   type PendingWrites,
   type WaitForPushedOptions,
 } from "./pending-writes";
+import {
+  PullStateTracker,
+  WaitForPulledError,
+  type PullState,
+  type WaitForPulledOptions,
+} from "./pull-state";
 import { SyncTabChannel } from "./tab-channel";
 import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
 
@@ -115,8 +121,9 @@ export class SyncClientImpl<
   private roleListeners = new Set<(role: DBRole) => void>();
   private liveQueries = new Set<() => void>();
   private readonly pendingWrites: PendingWritesTracker;
-  /** Rejects the open `waitForPushed` calls; called by `dispose`. */
-  private pushWaiters = new Set<() => void>();
+  private readonly pullState: PullStateTracker;
+  /** Rejects the open `waitForPushed` and `waitForPulled` calls; called by `dispose`. */
+  private waiters = new Set<() => void>();
   private cleanups: Array<() => void> = [];
 
   constructor(
@@ -140,6 +147,15 @@ export class SyncClientImpl<
     );
     this.dbStorage = config.dbAdapter.dbStorage;
     this.tabs = new SyncTabChannel(this.dbStorage.key);
+    // The leader's state is the one every context shows.
+    this.pullState = new PullStateTracker(
+      config.collections
+        .map(({ name }) => String(name))
+        .filter((name) => !this.localOnly.has(name)),
+      (state) => {
+        if (this.appliedRole === "leader") this.tabs.broadcastPullState(state);
+      },
+    );
     this.pendingWrites = new PendingWritesTracker(async () => {
       await this.initialized;
       const store = this.dbAdapter.localChangeStore;
@@ -166,7 +182,7 @@ export class SyncClientImpl<
         this.tabs.reset();
         this.rerunLiveQueries();
         this.pendingWrites.refresh();
-        if (this.appliedRole === "follower") this.tabs.requestOutbox();
+        if (this.appliedRole === "follower") this.tabs.requestState();
         // A new leader does not know this context wants sync.
         if (this.wantsSync && this.appliedRole === "follower") this.tabs.requestSync();
       }),
@@ -188,8 +204,14 @@ export class SyncClientImpl<
         outbox: (parked) => {
           if (this.appliedRole !== "leader") this.pendingWrites.setParked(parked);
         },
-        outboxRequest: () => {
-          if (this.appliedRole === "leader") this.publishParked();
+        pullState: (state) => {
+          if (this.appliedRole !== "leader") this.pullState.replace(state);
+        },
+        stateRequest: () => {
+          // Only the leader has a sync handler, and answers.
+          if (!this.syncHandler) return;
+          this.publishParked(this.syncHandler);
+          this.tabs.broadcastPullState(this.pullState.current);
         },
       }),
       // Every committed local write, pull and other context's write can change the outbox.
@@ -205,6 +227,7 @@ export class SyncClientImpl<
       () => {
         this.isInitialized = true;
         this.applyRole(this.dbStorage.role);
+        void this.markCheckpointedCollections();
       },
       (error: unknown) => this.setStatus("error", error),
     );
@@ -320,11 +343,8 @@ export class SyncClientImpl<
     new Promise<void>((resolve, reject) => {
       let last: PendingWrites | undefined;
       let offline = false;
-      let done = false;
       const cleanups: Array<() => void> = [];
       const finish = (reason?: WaitForPushedError["reason"]) => {
-        if (done) return;
-        done = true;
         for (const cleanup of cleanups) cleanup();
         if (reason) reject(new WaitForPushedError(reason, last));
         else resolve();
@@ -336,8 +356,8 @@ export class SyncClientImpl<
         else if (offline) finish("offline");
       };
       const onDispose = () => finish("disposed");
-      this.pushWaiters.add(onDispose);
-      cleanups.push(() => this.pushWaiters.delete(onDispose));
+      this.waiters.add(onDispose);
+      cleanups.push(() => this.waiters.delete(onDispose));
       if (timeoutMs !== undefined) {
         const timer = setTimeout(() => finish("timeout"), timeoutMs);
         cleanups.push(() => clearTimeout(timer));
@@ -354,14 +374,62 @@ export class SyncClientImpl<
       );
     });
 
+  getPullState = () => this.pullState.current as PullState<CollectionNames<C>>;
+
+  subscribePullState = (listener: (state: PullState<CollectionNames<C>>) => void) =>
+    this.pullState.subscribe(listener as (state: PullState) => void);
+
+  waitForPulled = ({
+    collections,
+    until = "caughtUp",
+    timeoutMs,
+  }: WaitForPulledOptions<CollectionNames<C>> = {}) =>
+    new Promise<void>((resolve, reject) => {
+      const names: string[] = collections ? [...collections] : Object.keys(this.pullState.current);
+      const missing = names.find((name) => !this.pullState.has(name));
+      if (missing !== undefined) {
+        reject(new Error(`Collection "${missing}" is not pulled: no sync adapter syncs it.`));
+        return;
+      }
+      let done = false;
+      const cleanups: Array<() => void> = [];
+      const finish = (reason?: WaitForPulledError["reason"]) => {
+        done = true;
+        for (const cleanup of cleanups) cleanup();
+        if (reason) reject(new WaitForPulledError(reason, this.pullState.current));
+        else resolve();
+      };
+      const onDispose = () => finish("disposed");
+      this.waiters.add(onDispose);
+      cleanups.push(() => this.waiters.delete(onDispose));
+      if (timeoutMs !== undefined) {
+        const timer = setTimeout(() => finish("timeout"), timeoutMs);
+        cleanups.push(() => clearTimeout(timer));
+      }
+      // The current status is emitted at once: only a later stop ends the wait.
+      let current = true;
+      cleanups.push(
+        this.subscribeStatus(({ status }) => {
+          if (!current && status === "stopped") finish("stopped");
+          current = false;
+        }),
+        this.pullState.subscribe((state) => {
+          if (names.every((name) => state[name]![until])) finish();
+        }),
+      );
+      // Finished while subscribing: the subscriptions added after `finish` ran are ended too.
+      if (done) for (const cleanup of cleanups) cleanup();
+    });
+
   dispose = async () => {
-    for (const reject of this.pushWaiters) reject();
+    for (const reject of this.waiters) reject();
     this.stopSync();
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.tabs.close();
     this.liveQueries.clear();
     this.pendingWrites.close();
+    this.pullState.close();
     this.statusListeners.clear();
     this.roleListeners.clear();
     try {
@@ -438,12 +506,18 @@ export class SyncClientImpl<
     const previousRole = this.role;
     this.appliedRole = role;
     this.syncHandler?.stopAll();
-    this.syncHandler = role === "leader" ? this.createSyncHandler() : undefined;
-    // A new leader's handler has parked nothing yet; a follower asks the leader.
-    if (role === "leader") this.publishParked();
-    else {
+    const handler = role === "leader" ? this.createSyncHandler() : undefined;
+    this.syncHandler = handler;
+    // A new leader's handler has parked nothing and pulled nothing yet; a follower asks the leader.
+    if (handler) {
+      this.publishParked(handler);
+      for (const name of Object.keys(this.pullState.current)) {
+        this.pullState.apply(name, { type: "stopped" });
+      }
+      this.tabs.broadcastPullState(this.pullState.current);
+    } else {
       this.pendingWrites.setParked([]);
-      this.tabs.requestOutbox();
+      this.tabs.requestState();
     }
     if (previousRole !== role) {
       for (const listener of this.roleListeners) {
@@ -478,16 +552,31 @@ export class SyncClientImpl<
         }
       },
       onOutboxChanged: () => {
-        if (this.syncHandler === handler) this.publishParked();
+        if (this.syncHandler === handler) this.publishParked(handler);
+      },
+      onPullState: (collection, event) => {
+        if (this.syncHandler === handler) this.pullState.apply(collection, event);
       },
       canCommit: () => this.syncHandler === handler && this.dbStorage.role === "leader",
     });
     return handler;
   }
 
+  /** Collections with a stored checkpoint were pulled before: their local data can be shown. */
+  private async markCheckpointedCollections(): Promise<void> {
+    const store = this.dbAdapter.localChangeStore;
+    try {
+      const names = Object.keys(this.pullState.current);
+      const stored = await Promise.all(names.map((name) => store.getCheckpoint(name)));
+      this.pullState.markCheckpointed(names.filter((_, index) => stored[index] !== undefined));
+    } catch {
+      // Only an earlier `available`; the pull reports it too.
+    }
+  }
+
   /** Take the leader's parked event ids, and send them to the other contexts. */
-  private publishParked(): void {
-    const parked = this.syncHandler?.parkedEventIds() ?? [];
+  private publishParked(handler: SyncHandler<C, DB, TCheckpoint>): void {
+    const parked = handler.parkedEventIds();
     this.pendingWrites.setParked(parked);
     this.tabs.broadcastOutbox(parked);
   }

@@ -4,6 +4,7 @@ import type { BaseDBAdapter } from "../db-adapter";
 import {
   BaseSyncHandler,
   type BaseSyncHandlerConfig,
+  type PullStream,
   type SyncHandlerDataMap,
 } from "./base-sync-handler";
 import type { SyncAdapter } from "./types";
@@ -76,14 +77,18 @@ export class GlobalSyncHandler<
         if (this.startToken !== startToken) return;
 
         this.pullCleanup = this.retryPull(async (onError, isActive) => {
+          const signals = this.pullSignals(this.pushCollections, { isActive, onError }, (task) =>
+            this.enqueuePullTask(task),
+          );
+          const stream = { isActive, onError: signals.onError };
           const checkpointMap = await this.readCheckpointMap();
           if (!isActive()) return;
           return syncAdapter.pull({
             checkpoint: checkpointMap,
-            commitChanges: ({ changes, checkpoint }) => {
-              void this.commitPullChanges(changes, checkpoint, { isActive, onError });
+            commitChanges: ({ changes, checkpoint, preview }) => {
+              void this.commitPullChanges(changes, checkpoint, stream, preview);
             },
-            onError,
+            ...signals,
           });
         });
       } catch (error) {
@@ -97,6 +102,9 @@ export class GlobalSyncHandler<
   }
 
   stop(): void {
+    if (this.config.syncAdapter && (this.pullCleanup || this.startToken)) {
+      this.reportPullStopped(this.pushCollections);
+    }
     this.startToken = undefined;
     this.pushController?.abort();
     this.pushController = undefined;
@@ -142,19 +150,28 @@ export class GlobalSyncHandler<
   private async commitPullChanges(
     changes: ChangeBusEvent<SyncHandlerDataMap<C>>[],
     checkpoint: Partial<Record<CollectionNames<C>, TCheckpoint>>,
-    stream: { isActive: () => boolean; onError: (error: unknown) => void },
+    stream: PullStream,
+    preview?: boolean,
   ): Promise<void> {
     const next = this.pullCommitQueue
       .catch(() => undefined)
       .then(async () => {
         if (!this.mayCommit() || !stream.isActive()) return;
-        const needsPush = await this.commitPulledChanges(changes, checkpoint, (event, tx) =>
-          this.applyAnyCollectionEvent(event, tx),
+        const needsPush = await this.commitPulledChanges(
+          changes,
+          checkpoint,
+          (event, tx) => this.applyAnyCollectionEvent(event, tx),
+          { isActive: stream.isActive, preview },
         );
         if (needsPush) this.schedulePush();
       });
     // A failed batch fails its stream, which resubscribes from the persisted checkpoint.
     this.pullCommitQueue = next.catch((error) => stream.onError(error));
     return this.pullCommitQueue;
+  }
+
+  /** Run `task` after the pulled batches queued before it. */
+  private enqueuePullTask(task: () => void): void {
+    this.pullCommitQueue = this.pullCommitQueue.then(task).catch(() => undefined);
   }
 }

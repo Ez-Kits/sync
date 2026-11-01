@@ -23,6 +23,14 @@ const sdk = vi.hoisted(() => ({
   validationError: undefined as unknown,
   /** Document id whose writes the security rules refuse: its whole batch fails. */
   deniedDocument: undefined as string | undefined,
+  /** Queries sent to `getDocsFromServer` / `getCountFromServer`, by function. */
+  serverQueries: [] as Array<[string, unknown]>,
+  /** What the next `getDocsFromServer` resolves (or rejects) with. */
+  previewResult: Promise.resolve({ docs: [] as unknown[] }) as Promise<{ docs: unknown[] }>,
+  countResult: Promise.resolve(0) as Promise<number>,
+  /** Children the next Realtime Database `get` resolves with (or its rejection). */
+  rtdbGetResult: Promise.resolve([] as unknown[]) as Promise<unknown[]>,
+  rtdbGets: [] as unknown[],
 }));
 
 /** An SDK error as Firebase throws it: a `FirebaseError` with its `code`. */
@@ -49,13 +57,24 @@ vi.mock("firebase/firestore", async (importOriginal) => ({
   collection: (_db: unknown, path: string) => ({ path }),
   query: (ref: unknown, ...constraints: unknown[]) => ({ ref, constraints }),
   doc: (_db: unknown, path: string, id: string) => ({ path: `${path}/${id}`, id }),
+  getDocsFromServer: (source: unknown) => {
+    sdk.serverQueries.push(["docs", source]);
+    return sdk.previewResult;
+  },
+  getCountFromServer: (source: unknown) => {
+    sdk.serverQueries.push(["count", source]);
+    return sdk.countResult.then((count) => ({ data: () => ({ count }) }));
+  },
   onSnapshot: (
     _source: unknown,
     _options: unknown,
     callback: (snapshot: any) => void,
     onError: (error: Error) => void,
   ) => {
-    sdk.firestoreCallbacks.push(callback);
+    // A snapshot without metadata is a server one, as most tests deliver.
+    sdk.firestoreCallbacks.push((snapshot) =>
+      callback({ metadata: { fromCache: false }, ...snapshot }),
+    );
     sdk.firestoreErrorCallbacks.push(onError);
     const unsubscribe = vi.fn();
     sdk.firestoreUnsubscribes.push(unsubscribe);
@@ -103,6 +122,13 @@ vi.mock("firebase/database", () => {
     onChildAdded: listen("added"),
     onChildChanged: listen("changed"),
     onChildRemoved: listen("removed"),
+    onValue: listen("value"),
+    get: (target: unknown) => {
+      sdk.rtdbGets.push(target);
+      return sdk.rtdbGetResult.then((children) => ({
+        forEach: (visit: (child: unknown) => void) => children.forEach(visit),
+      }));
+    },
     update: (target: unknown, updates: Record<string, unknown>) => {
       // Like the SDK, invalid keys or values throw before a promise is returned.
       if (sdk.validationError) throw sdk.validationError;
@@ -163,6 +189,11 @@ beforeEach(() => {
   sdk.writeError = undefined;
   sdk.validationError = undefined;
   sdk.deniedDocument = undefined;
+  sdk.serverQueries.length = 0;
+  sdk.previewResult = Promise.resolve({ docs: [] });
+  sdk.countResult = Promise.resolve(0);
+  sdk.rtdbGetResult = Promise.resolve([]);
+  sdk.rtdbGets.length = 0;
 });
 
 test("Firebase pull adapters report listener failures to core", () => {
@@ -1152,4 +1183,209 @@ test("one write refused by Firestore rules is parked without blocking its batch 
   expect(outbox.size).toBe(0);
   expect(dirty.size).toBe(0);
   handler.stop();
+});
+
+const flush = async () => {
+  for (let i = 0; i < 4; i += 1) await Promise.resolve();
+};
+
+function firestorePreviewAdapter(extra: Record<string, unknown> = {}) {
+  return createFirestoreSyncAdapter({
+    db: {} as never,
+    collections: [
+      {
+        collectionName: "todos",
+        collectionPath: "todos",
+        createCheckpoint: () => "cp",
+        buildPullQueryConstraints: ({ checkpoint }: any) => (checkpoint ? ["after"] : ["full"]),
+        buildPreviewQueryConstraints: () => ["newest", "limit"],
+        countInitialPull: true,
+        ...extra,
+      },
+    ],
+  } as never);
+}
+
+test("Firestore first pull: preview rows commit first, then the listener opens; the count uses the full pull query", async () => {
+  const log: string[] = [];
+  const commitChanges = vi.fn(({ preview }: any) => log.push(preview ? "preview" : "batch"));
+  const onPreviewed = vi.fn(() => log.push("previewed"));
+  const onCount = vi.fn();
+  sdk.previewResult = Promise.resolve({
+    docs: [docSnapshot("1", { id: "1" }), docSnapshot("2", { deleted: true })],
+  });
+  sdk.countResult = Promise.resolve(3_000);
+  void firestorePreviewAdapter().pull({ commitChanges, onPreviewed, onCount } as never);
+
+  expect(sdk.firestoreCallbacks).toHaveLength(0);
+  await flush();
+  expect(sdk.serverQueries).toEqual([
+    ["count", { ref: { path: "todos" }, constraints: ["full"] }],
+    ["docs", { ref: { path: "todos" }, constraints: ["newest", "limit"] }],
+  ]);
+  expect(commitChanges).toHaveBeenCalledWith({
+    changes: [
+      { type: "create", collection: "todos", data: { id: "1" } },
+      { type: "delete", collection: "todos", id: "2", deletedAt: expect.any(Number) },
+    ],
+    checkpoint: {},
+    preview: true,
+  });
+  expect(onPreviewed).toHaveBeenCalledWith({ collection: "todos", hasData: true });
+  expect(onCount).toHaveBeenCalledWith({ collection: "todos", total: 3_000 });
+  expect(sdk.firestoreCallbacks).toHaveLength(1);
+  sdk.firestoreCallbacks[0]!({ docChanges: () => [{ type: "added", doc: docSnapshot("1", {}) }] });
+  expect(log).toEqual(["preview", "previewed", "batch"]);
+});
+
+test("Firestore preview and count run only on a first pull; a failed preview still opens the listener", async () => {
+  void firestorePreviewAdapter().pull({
+    checkpoint: { todos: "cp" },
+    commitChanges: vi.fn(),
+  } as never);
+  expect(sdk.serverQueries).toEqual([]);
+  expect(sdk.firestoreCallbacks).toHaveLength(1);
+
+  sdk.previewResult = Promise.reject(new Error("offline"));
+  sdk.countResult = Promise.reject(new Error("offline"));
+  const commitChanges = vi.fn();
+  const onPreviewed = vi.fn();
+  void firestorePreviewAdapter().pull({ commitChanges, onPreviewed } as never);
+  await flush();
+  expect(commitChanges).not.toHaveBeenCalled();
+  expect(onPreviewed).not.toHaveBeenCalled();
+  expect(sdk.firestoreCallbacks).toHaveLength(2);
+});
+
+test("Firestore pull stopped during the preview never opens its listener", async () => {
+  let resolve!: (value: { docs: unknown[] }) => void;
+  sdk.previewResult = new Promise((done) => (resolve = done));
+  const commitChanges = vi.fn();
+  const cleanup = firestorePreviewAdapter().pull({ commitChanges } as never) as () => void;
+  cleanup();
+  resolve({ docs: [docSnapshot("1", { id: "1" })] });
+  await flush();
+  expect(commitChanges).not.toHaveBeenCalled();
+  expect(sdk.firestoreCallbacks).toHaveLength(0);
+});
+
+test("Firestore pull catches up on the first snapshot from the server, once, even without changes", () => {
+  const commitChanges = vi.fn();
+  const onCaughtUp = vi.fn();
+  void firestorePreviewAdapter({
+    buildPreviewQueryConstraints: undefined,
+    countInitialPull: false,
+  }).pull({ checkpoint: { todos: "cp" }, commitChanges, onCaughtUp } as never);
+  sdk.firestoreCallbacks[0]!({
+    metadata: { fromCache: true },
+    docChanges: () => [{ type: "added", doc: docSnapshot("1", { id: "1" }) }],
+  });
+  expect(commitChanges).toHaveBeenCalledOnce();
+  expect(onCaughtUp).not.toHaveBeenCalled();
+  sdk.firestoreCallbacks[0]!({ metadata: { fromCache: false }, docChanges: () => [] });
+  expect(commitChanges).toHaveBeenCalledOnce();
+  expect(onCaughtUp).toHaveBeenCalledExactlyOnceWith(["todos"]);
+  sdk.firestoreCallbacks[0]!({ metadata: { fromCache: false }, docChanges: () => [] });
+  expect(onCaughtUp).toHaveBeenCalledOnce();
+});
+
+test("Realtime Database pull catches up on a one-time value event, after the child events", () => {
+  const log: string[] = [];
+  const onError = vi.fn();
+  const cleanup = createRealtimeDBCollectionSyncAdapter({
+    db: {} as never,
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+  } as never).pull({
+    commitChanges: () => log.push("child"),
+    onCaughtUp: (collections: string[]) => log.push(`caught up ${collections.join(",")}`),
+    onError,
+  } as never) as () => void;
+  sdk.rtdbCallbacks.added![0]!(docSnapshot("1", { id: "1" }));
+  sdk.rtdbCallbacks.value![0]!({});
+  expect(log).toEqual(["child", "caught up todos"]);
+  // A refused value read fails the stream like any listener.
+  const denied = firebaseError("permission-denied");
+  sdk.rtdbCancelCallbacks.value![0]!(denied);
+  expect(onError).toHaveBeenCalledWith(denied);
+  cleanup();
+  expect(sdk.rtdbUnsubscribes.value![0]).toHaveBeenCalledOnce();
+});
+
+function rtdbPreviewAdapter(count = vi.fn(async () => 3_000)) {
+  return createRealtimeDBCollectionSyncAdapter({
+    db: {} as never,
+    collectionPath: "todos",
+    createCheckpoint: () => 1,
+    buildPreviewQuery: ({ collectionPath }: any) => ({ preview: collectionPath }),
+    countInitialPull: count,
+  } as never);
+}
+
+test("Realtime Database first pull: preview children commit first, then the listeners open; the app counts", async () => {
+  const log: string[] = [];
+  const commitChanges = vi.fn(({ preview }: any) => log.push(preview ? "preview" : "child"));
+  const onPreviewed = vi.fn(() => log.push("previewed"));
+  const onCount = vi.fn();
+  const count = vi.fn(async () => 3_000);
+  sdk.rtdbGetResult = Promise.resolve([
+    docSnapshot("1", { id: "1" }),
+    docSnapshot("2", { deleted: true, deletedAt: 5 }),
+  ]);
+  void rtdbPreviewAdapter(count).pull({ commitChanges, onPreviewed, onCount } as never);
+  expect(sdk.rtdbCallbacks.added).toBeUndefined();
+  await flush();
+
+  expect(sdk.rtdbGets).toEqual([{ preview: "todos" }]);
+  expect(count).toHaveBeenCalledWith({ db: {}, collectionPath: "todos" });
+  expect(onCount).toHaveBeenCalledWith({ collection: "todos", total: 3_000 });
+  expect(commitChanges).toHaveBeenCalledWith({
+    changes: [
+      { type: "create", collection: "todos", data: { id: "1" } },
+      { type: "delete", collection: "todos", id: "2", deletedAt: 5 },
+    ],
+    checkpoint: {},
+    preview: true,
+  });
+  expect(onPreviewed).toHaveBeenCalledWith({ collection: "todos", hasData: true });
+  sdk.rtdbCallbacks.added![0]!(docSnapshot("1", { id: "1" }));
+  expect(log).toEqual(["preview", "previewed", "child"]);
+});
+
+test("Realtime Database preview and count run only on a first pull; failures still open the listeners", async () => {
+  const count = vi.fn(async () => 1);
+  void rtdbPreviewAdapter(count).pull({
+    checkpoint: { todos: 9 },
+    commitChanges: vi.fn(),
+  } as never);
+  expect(sdk.rtdbGets).toEqual([]);
+  expect(count).not.toHaveBeenCalled();
+  expect(sdk.rtdbCallbacks.added).toHaveLength(1);
+
+  sdk.rtdbGetResult = Promise.reject(new Error("offline"));
+  const commitChanges = vi.fn();
+  const onCount = vi.fn();
+  void rtdbPreviewAdapter(
+    vi.fn(async () => {
+      throw new Error("no counter");
+    }),
+  ).pull({ commitChanges, onCount } as never);
+  await flush();
+  expect(commitChanges).not.toHaveBeenCalled();
+  expect(onCount).not.toHaveBeenCalled();
+  expect(sdk.rtdbCallbacks.added).toHaveLength(2);
+});
+
+test("Realtime Database pull stopped during the preview never opens its listeners", async () => {
+  let resolve!: (children: unknown[]) => void;
+  sdk.rtdbGetResult = new Promise((done) => (resolve = done));
+  const commitChanges = vi.fn();
+  const onCount = vi.fn();
+  const cleanup = rtdbPreviewAdapter().pull({ commitChanges, onCount } as never) as () => void;
+  cleanup();
+  resolve([docSnapshot("1", { id: "1" })]);
+  await flush();
+  expect(commitChanges).not.toHaveBeenCalled();
+  expect(onCount).not.toHaveBeenCalled();
+  expect(sdk.rtdbCallbacks.added).toBeUndefined();
 });

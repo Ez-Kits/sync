@@ -3,6 +3,7 @@ import type {
   CollectionConfigMap,
   CollectionNames,
   InferCheckpointMap,
+  CollectionPullState,
   PendingWrites,
   SyncClient,
 } from "@ez-kits/sync-client-core";
@@ -31,6 +32,7 @@ import type {
   UseLiveQueryOptions,
   UseLiveQueryResult,
   UsePendingWritesResult,
+  UsePullStateResult,
 } from "./types.ts";
 
 export type * from "./types.ts";
@@ -191,7 +193,52 @@ function createHooks<
       : { total: 0, rejected: 0, byCollection: {}, isPending: true };
   }
 
-  return { useSyncClient, useLiveQuery, usePendingWrites };
+  function usePullState<N extends CollectionNames<C>>(
+    collections?: readonly N[],
+  ): UsePullStateResult<N> {
+    const client = useSyncClient();
+    const state = useSyncExternalStore(
+      useCallback((onChange) => client.subscribePullState(onChange), [client]),
+      client.getPullState,
+    );
+    const collectionKey = collections?.join("\0");
+    return useMemo(() => {
+      const names = (collections ?? Object.keys(state)) as N[];
+      return summarizePullState(
+        Object.fromEntries(names.map((name) => [name, state[name]])) as Record<
+          N,
+          CollectionPullState
+        >,
+      );
+    }, [state, collectionKey]);
+  }
+
+  return { useSyncClient, useLiveQuery, usePendingWrites, usePullState };
+}
+
+/** The pull state of several collections at once (see `UsePullStateResult`). */
+function summarizePullState<N extends string>(
+  collections: Record<N, CollectionPullState>,
+): UsePullStateResult<N> {
+  const states = Object.values<CollectionPullState>(collections);
+  const answers = states.map((state) => state.hasRemoteData);
+  const totals = states.map((state) => state.progress.total);
+  return {
+    available: states.every((state) => state.available),
+    caughtUp: states.every((state) => state.caughtUp),
+    hasRemoteData: answers.includes(true)
+      ? true
+      : answers.every((answer) => answer === false)
+        ? false
+        : undefined,
+    progress: {
+      pulled: states.reduce((sum, state) => sum + state.progress.pulled, 0),
+      total: totals.every((total) => total !== undefined)
+        ? totals.reduce((sum, total) => sum + total!, 0)
+        : undefined,
+    },
+    collections,
+  };
 }
 
 /** A number that changes whenever an item of `deps` changes (compared with `Object.is`). */

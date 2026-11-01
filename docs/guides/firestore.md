@@ -151,6 +151,24 @@ Why each piece matters:
 
 The complete version of this setup is in the [Drizzle + Firestore example](../../examples/todo-react-drizzle-firestore/src/sync.ts).
 
+## Show rows on the first sync
+
+On a collection's first pull on a device (no checkpoint yet), the listener's first snapshot holds every document, so nothing shows until all of them have downloaded. Fetch a few first, and count the rest:
+
+```ts
+defineFirestoreCollectionSyncAdapterConfig({
+  // ...
+  buildPreviewQueryConstraints: () => [orderBy("updatedAt", "desc"), limit(50)],
+  countInitialPull: true,
+});
+```
+
+- **The preview** runs once with `getDocsFromServer`. Its rows commit right away (without a checkpoint), the collection becomes `available`, and `hasRemoteData` is answered. The full listener opens after it and delivers those rows again, which is harmless. Offline or refused, the preview is skipped and the full pull answers instead.
+- **The count** runs `getCountFromServer` on the full pull query, for `progress.total`. It costs one read per 1,000 documents (at least one), so it is off by default.
+- The collection is `caughtUp` on the listener's first snapshot that comes from the server, not the cache.
+
+Use `limit(1)` when you only need `hasRemoteData`, for example to route a returning user. See [First sync and pull state](syncing.md#first-sync-and-pull-state).
+
 ## Deletes
 
 A local delete does not remove the Firestore document. By default it writes a **tombstone** with `merge: true`:
@@ -220,4 +238,4 @@ If you prefer to attach the adapter to a single collection's definition, use `cr
 
 - **Pushes may repeat.** If the network fails after Firestore saved a batch, the batch is sent again. A `set` of the same data is harmless, so this is safe.
 - **Offline persistence of the Firebase SDK is not needed.** EzSync already keeps everything locally. Plain `getFirestore()` is enough.
-- `includeMetadataChanges` (on the adapter or per collection) is passed to `onSnapshot`. Leave it off unless you know you need it.
+- The listener always asks for metadata changes, to tell a snapshot from the server from a cached one. `includeMetadataChanges` is deprecated and has no effect.

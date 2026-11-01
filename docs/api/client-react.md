@@ -19,13 +19,14 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
 
 `options` are exactly [`SyncClientConfig`](client-core.md#syncclientconfig). The function calls `createSyncClient(options)` once and returns:
 
-| Value                | Type                                      | Description                                                |
-| -------------------- | ----------------------------------------- | ---------------------------------------------------------- |
-| `syncClient`         | `SyncClient`                              | The client. Usable outside React.                          |
-| `SyncClientProvider` | `ComponentType<{ children: ReactNode }>`  | Provides `syncClient` to the hooks below.                  |
-| `useSyncClient`      | `() => SyncClient`                        | The client. Throws when used outside `SyncClientProvider`. |
-| `useLiveQuery`       | `(options) => { data, isPending, error }` | A live query bound to the component's lifetime.            |
-| `usePendingWrites`   | `() => PendingWrites & { isPending }`     | The client's pending (unpushed) writes, kept current.      |
+| Value                | Type                                      | Description                                                 |
+| -------------------- | ----------------------------------------- | ----------------------------------------------------------- |
+| `syncClient`         | `SyncClient`                              | The client. Usable outside React.                           |
+| `SyncClientProvider` | `ComponentType<{ children: ReactNode }>`  | Provides `syncClient` to the hooks below.                   |
+| `useSyncClient`      | `() => SyncClient`                        | The client. Throws when used outside `SyncClientProvider`.  |
+| `useLiveQuery`       | `(options) => { data, isPending, error }` | A live query bound to the component's lifetime.             |
+| `usePendingWrites`   | `() => PendingWrites & { isPending }`     | The client's pending (unpushed) writes, kept current.       |
+| `usePullState`       | `(collections?) => UsePullStateResult`    | The pull state of some collections, combined, kept current. |
 
 ## `createScopedSyncClientReact(options)`
 
@@ -54,7 +55,7 @@ export const { SyncClientProvider, useSyncClient, useLiveQuery } = createScopedS
 | -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createConfig` | `(scope: string) => SyncClientConfig` | The whole client config of a scope. Give each scope its own storage `key` and database name. Called each time a scope is opened, never while that scope's previous client is still closing. |
 
-It returns `SyncClientProvider`, `useSyncClient`, `useLiveQuery` and `usePendingWrites`, typed from the config `createConfig` returns. There is no `syncClient`: clients exist only while a provider renders their scope.
+It returns `SyncClientProvider`, `useSyncClient`, `useLiveQuery`, `usePendingWrites` and `usePullState`, typed from the config `createConfig` returns. There is no `syncClient`: clients exist only while a provider renders their scope.
 
 ### `<SyncClientProvider scope fallback?>`
 
@@ -99,6 +100,22 @@ const { total, rejected, byCollection, isPending } = usePendingWrites();
 
 The client's [`PendingWrites`](client-core.md#pendingwrites), kept current through `subscribePendingWrites`. `isPending` is `true` until the outbox was first read; the counts are `0` until then.
 
+## `usePullState(collections?)`
+
+```ts
+const { available, hasRemoteData, caughtUp, progress, collections } = usePullState(["sessions"]);
+```
+
+The [pull state](client-core.md#collectionpullstate) of `collections` (default: every pulled one), combined:
+
+| Result          | Description                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| `available`     | Every collection's local data can be shown.                                 |
+| `caughtUp`      | Every collection caught up.                                                 |
+| `hasRemoteData` | `true` when any collection has remote data, `false` once all answered none. |
+| `progress`      | `pulled` summed; `total` summed once every collection has one.              |
+| `collections`   | Each collection's own `CollectionPullState`.                                |
+
 ## Types
 
 | Export                               | Description                        |
@@ -112,3 +129,4 @@ The client's [`PendingWrites`](client-core.md#pendingwrites), kept current throu
 | `UseLiveQueryOptions`                | `{ collections?, query, deps? }`   |
 | `UseLiveQueryResult`                 | `{ data, isPending, error }`       |
 | `UsePendingWritesResult`             | `PendingWrites & { isPending }`    |
+| `UsePullStateResult`                 | The result of `usePullState`.      |
