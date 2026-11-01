@@ -185,7 +185,7 @@ export function createOperations<C extends CollectionConfigMap>(
 }
 ```
 
-Pulled changes are applied through these operations too: EzSync calls `getOptional`, then `update` if the row exists or `insert` if not, and `delete` for deletes.
+Pulled changes are applied through these operations too: EzSync calls `getOptional`, then `update` if the row exists or `insert` if not, and `delete` for deletes. A local `upsert` decides the same way, inside its transaction. One `commitLocalMutation` can carry many rows (a `*Many` call or a `client.transaction`): `mutate` writes them all, then `persistOutboxEvent` and `persistDirtyRecord` save every event and record.
 
 ## Step 4: the local-change store
 

@@ -82,6 +82,14 @@ export interface SyncClient<
   TCheckpoint = InferCheckpointMap<C>,
 > {
   collections: TCollectionRuntimeRecord<C>;
+  /**
+   * Run `fn` in one local transaction: the rows written through `tx.collections` and their
+   * outbox events commit together, or none do if it throws. Resolves to its result once
+   * committed; live queries refresh once. Atomic locally only: the push may send the events
+   * in several batches. Await only `tx` calls inside `fn`: other database work waits for the
+   * transaction to end, so it stalls until the transaction timeout.
+   */
+  transaction: <T>(fn: (tx: SyncClientTransaction<C>) => Promise<T>) => Promise<T>;
   subscribe: SubscribeFn<C>;
   liveQuery: LiveQueryFn<C, DB>;
   /** Start syncing; on a follower, also asks the leader to sync. */
@@ -151,6 +159,12 @@ export interface SyncClient<
     collection: N,
     checkpoint: TCheckpoint | undefined,
   ) => Promise<void>;
+}
+
+/** The argument of {@link SyncClient.transaction}. */
+export interface SyncClientTransaction<C extends CollectionConfigMap> {
+  /** The client's collections, reading and writing inside the transaction. */
+  collections: TCollectionRuntimeRecord<C>;
 }
 
 export interface SubscribeFn<

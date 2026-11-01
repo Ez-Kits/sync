@@ -50,9 +50,23 @@ export type ConfigForName<C extends CollectionConfigMap, N extends CollectionNam
 >;
 
 export interface TCollectionRuntime<C extends CollectionConfig<any, any, any, any, any, any>> {
+  /** Create a record; rejects with the database's constraint error if its primary key exists. */
   insert: (data: InferCollectionInsertModel<C>) => Promise<void>;
   update: (data: InferCollectionUpdateModel<C>) => Promise<void>;
+  /**
+   * Insert the record if its primary key is missing, else update the row with its fields, in
+   * one transaction. The outbox records what happened: a `create` or an `update`.
+   */
+  upsert: (data: InferCollectionInsertModel<C>) => Promise<void>;
   delete: (id: InferCollectionPrimaryFieldType<C>) => Promise<void>;
+  /**
+   * The `*Many` writes apply every record in one transaction (all or none), with one outbox
+   * event per record, in order, and refresh live queries once. An empty list does nothing.
+   */
+  insertMany: (data: readonly InferCollectionInsertModel<C>[]) => Promise<void>;
+  updateMany: (data: readonly InferCollectionUpdateModel<C>[]) => Promise<void>;
+  upsertMany: (data: readonly InferCollectionInsertModel<C>[]) => Promise<void>;
+  deleteMany: (ids: readonly InferCollectionPrimaryFieldType<C>[]) => Promise<void>;
   get: (id: InferCollectionPrimaryFieldType<C>) => Promise<InferCollectionSelectModel<C>>;
   getMany: () => Promise<InferCollectionSelectModel<C>[]>;
 }

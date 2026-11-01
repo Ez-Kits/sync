@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
 import {
   createLocalMutationSink,
+  executeLocalMutation,
   isLocalMutationCommitted,
   type LocalMutation,
 } from "../src/collection/local-mutation";
@@ -124,7 +125,6 @@ test("local mutations never fall back to sequential writes", async () => {
 test("retried mutations are recognised by their applied event, even once acknowledged", async () => {
   const db = makeDb();
   const store = atomicMemoryStore();
-  const sink = createLocalMutationSink(db, store);
   const base = { collection: "todos", recordId: "1", createdAt: 1, id: "1" };
   const mutations: LocalMutation[] = [
     { ...base, type: "create", eventId: "e1", data: { id: "1" } },
@@ -133,7 +133,7 @@ test("retried mutations are recognised by their applied event, even once acknowl
   ];
   for (const mutation of mutations) {
     expect(await isLocalMutationCommitted(store, mutation)).toBe(false);
-    await sink.commit(mutation);
+    expect(await executeLocalMutation(db, store, mutation)).toEqual(mutation);
     expect(await isLocalMutationCommitted(store, mutation)).toBe(true);
     // Pushed and acknowledged: the applied record still proves it.
     await store.deleteEvents([mutation.eventId]);

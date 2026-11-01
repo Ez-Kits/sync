@@ -6,15 +6,19 @@ import type {
 import { createCheckpointStorage, type CheckpointStorage } from "../checkpoint-storage";
 import {
   CollectionRuntime,
+  TransactionCollection,
   type CollectionConfigMap,
   type CollectionNames,
   type CollectionRuntimeStorage,
   type TCollectionRuntimeRecord,
 } from "../collection";
 import {
-  executeLocalMutation,
+  executeLocalMutations,
   isLocalMutationCommitted,
-  type LocalMutation,
+  toChangeBusEvent,
+  type CommittedLocalMutation,
+  type LocalMutationOutcome,
+  type LocalMutationWriter,
   type MutationSink,
 } from "../collection/local-mutation";
 import type { BaseDBAdapter } from "../db-adapter";
@@ -34,7 +38,13 @@ import {
   type WaitForPulledOptions,
 } from "./pull-state";
 import { SyncTabChannel } from "./tab-channel";
-import type { LiveQueryFn, SubscribeFn, SyncClient, SyncClientConfig } from "./types";
+import type {
+  LiveQueryFn,
+  SubscribeFn,
+  SyncClient,
+  SyncClientConfig,
+  SyncClientTransaction,
+} from "./types";
 
 type NetworkHost = {
   navigator?: { onLine?: boolean };
@@ -162,7 +172,7 @@ export class SyncClientImpl<
       return store.getPendingEventKeys ? store.getPendingEventKeys() : store.getPendingEvents();
     });
 
-    const mutations: MutationSink = { commit: (mutation) => this.commitMutation(mutation) };
+    const mutations: MutationSink = { commit: (fn) => this.commitMutations(fn) };
     const storage: CollectionRuntimeStorage = {
       resolve: async () => {
         await this.initialized;
@@ -459,21 +469,45 @@ export class SyncClientImpl<
     return () => this.roleListeners.delete(listener);
   };
 
+  transaction = async <T>(fn: (tx: SyncClientTransaction<C>) => Promise<T>): Promise<T> => {
+    await this.initialized;
+    const { result, applied } = await this.commitMutations((writer) =>
+      fn({ collections: this.transactionCollections(writer) }),
+    );
+    this.changeBus.publishLocalBatch(applied.map(toChangeBusEvent));
+    return result;
+  };
+
+  private transactionCollections(writer: LocalMutationWriter): TCollectionRuntimeRecord<C> {
+    return Object.fromEntries(
+      this.config.collections.map((col) => [col.name, new TransactionCollection(col, writer)]),
+    ) as unknown as TCollectionRuntimeRecord<C>;
+  }
+
   /**
    * Commit through the adapter. A leader change aborts the transaction; retry it on the
-   * next leader unless the first attempt already reached the database.
+   * next leader unless the previous attempt already reached the database. A transaction
+   * commits all its mutations or none, so its first one tells.
    */
-  private async commitMutation(mutation: LocalMutation): Promise<void> {
+  private async commitMutations<T>(
+    fn: (writer: LocalMutationWriter) => Promise<T>,
+  ): Promise<LocalMutationOutcome<T>> {
     const { localChangeStore } = this.dbAdapter;
+    let previous: LocalMutationOutcome<T> | undefined;
     for (let attempt = 1; ; attempt += 1) {
       try {
-        if (attempt > 1 && (await isLocalMutationCommitted(localChangeStore, mutation))) {
-          return;
-        }
-        await executeLocalMutation(this.dbAdapter, localChangeStore, mutation, {
-          localOnly: this.localOnly.has(mutation.collection),
-        });
-        return;
+        const first = previous?.applied[0];
+        if (first && (await isLocalMutationCommitted(localChangeStore, first))) return previous!;
+        const applied: CommittedLocalMutation[] = [];
+        const outcome = { applied } as LocalMutationOutcome<T>;
+        previous = outcome;
+        await executeLocalMutations(
+          this.dbAdapter,
+          localChangeStore,
+          async (writer) => (outcome.result = await fn(writer)),
+          { applied, localOnly: (collection) => this.localOnly.has(collection) },
+        );
+        return outcome;
       } catch (error) {
         if (!isRetriableError(error) || attempt >= MAX_COMMIT_ATTEMPTS) throw error;
       }
