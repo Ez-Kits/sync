@@ -39,6 +39,9 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
     async getPendingEvents(scope) {
       return Array.from(events.values()).filter((event) => inScope(event, scope));
     },
+    async getPendingEventKeys() {
+      return Array.from(events.values(), ({ id, collection }) => ({ id, collection }));
+    },
     async deleteEvents(ids) {
       for (const id of ids) {
         events.delete(id);

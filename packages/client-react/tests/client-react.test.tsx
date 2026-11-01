@@ -484,3 +484,27 @@ test("a scope closed twice in a row is reopened only after both closes", async (
   await third.client;
   expect(createConfig).toHaveBeenCalledTimes(3);
 });
+
+test("usePendingWrites is pending until the outbox is read, then follows it", async () => {
+  const { client, db } = setup();
+  const outbox: Array<{ id: string; collection: string }> = [];
+  db.localChangeStore.getPendingEvents.mockImplementation(async () => outbox as never);
+  const { result } = renderHook(() => client.usePendingWrites(), {
+    wrapper: client.SyncClientProvider,
+  });
+  expect(result.current).toEqual({ total: 0, rejected: 0, byCollection: {}, isPending: true });
+  await waitFor(() => expect(result.current.isPending).toBe(false));
+
+  outbox.push({ id: "e1", collection: "todos" });
+  await act(async () => {
+    await client.syncClient.collections.todos.insert({ id: "t1" } as never);
+  });
+  await waitFor(() =>
+    expect(result.current).toEqual({
+      total: 1,
+      rejected: 0,
+      byCollection: { todos: 1 },
+      isPending: false,
+    }),
+  );
+});

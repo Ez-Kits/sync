@@ -19,6 +19,7 @@ import type {
   SyncAdapter,
   SyncStatusEvent,
 } from "../sync-handler";
+import type { PendingWrites, WaitForPushedOptions } from "./pending-writes";
 
 /**
  * The client-level sync adapter type for collections `C`. A custom adapter factory that takes
@@ -98,6 +99,28 @@ export interface SyncClient<
   subscribeRole: (listener: (role: DBRole) => void) => () => void;
   /** Subscribe to lifecycle notifications; the current status is emitted immediately. */
   subscribeStatus: (listener: (event: SyncStatusEvent) => void) => () => void;
+  /**
+   * Count the local writes the backend has not confirmed yet: outbox events, so two writes
+   * to one record count twice. Works in every context, before `startSync` and offline.
+   * `rejected` counts the parked writes the leading context knows of: after a reload, a
+   * parked write counts as rejected again once its next push is refused.
+   */
+  getPendingWrites: () => Promise<PendingWrites<CollectionNames<C>>>;
+  /**
+   * Called with the pending writes once read, then whenever they change: after a local write
+   * commits (in any context), a push is confirmed, a write is parked or discarded, or a pull
+   * resolves a conflict. Returns an unsubscribe function.
+   */
+  subscribePendingWrites: (
+    listener: (pending: PendingWrites<CollectionNames<C>>) => void,
+  ) => () => void;
+  /**
+   * Resolve once every pending write but the parked ones is pushed (`total === rejected`),
+   * e.g. before deleting the database at sign-out; check `rejected` separately. Rejects with
+   * a `WaitForPushedError` when writes are pending while offline, after `timeoutMs`, or on
+   * `dispose`. Nothing pushes unless sync runs in the leading context.
+   */
+  waitForPushed: (options?: WaitForPushedOptions) => Promise<void>;
   /**
    * The last committed pull checkpoint of a collection, read from the database (deserialized
    * with `checkpoint.deserialize`). Waits for the storage to be initialized.

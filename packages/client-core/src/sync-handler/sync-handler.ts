@@ -58,6 +58,14 @@ export class SyncHandler<
     this.collectionSyncHandler.retryRejectedPushes();
   }
 
+  /** Ids of the events parked after a rejection, in every handler. */
+  parkedEventIds(): string[] {
+    return [
+      ...this.globalSyncHandler.parkedEventIds(),
+      ...this.collectionSyncHandler.parkedEventIds(),
+    ];
+  }
+
   /**
    * Push outbox events written outside this context, such as by another tab.
    * Only handlers that are currently started schedule a push.

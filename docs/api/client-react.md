@@ -25,6 +25,7 @@ export const { syncClient, SyncClientProvider, useSyncClient, useLiveQuery } =
 | `SyncClientProvider` | `ComponentType<{ children: ReactNode }>`  | Provides `syncClient` to the hooks below.                  |
 | `useSyncClient`      | `() => SyncClient`                        | The client. Throws when used outside `SyncClientProvider`. |
 | `useLiveQuery`       | `(options) => { data, isPending, error }` | A live query bound to the component's lifetime.            |
+| `usePendingWrites`   | `() => PendingWrites & { isPending }`     | The client's pending (unpushed) writes, kept current.      |
 
 ## `createScopedSyncClientReact(options)`
 
@@ -53,7 +54,7 @@ export const { SyncClientProvider, useSyncClient, useLiveQuery } = createScopedS
 | -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createConfig` | `(scope: string) => SyncClientConfig` | The whole client config of a scope. Give each scope its own storage `key` and database name. Called each time a scope is opened, never while that scope's previous client is still closing. |
 
-It returns `SyncClientProvider`, `useSyncClient` and `useLiveQuery`, typed from the config `createConfig` returns. There is no `syncClient`: clients exist only while a provider renders their scope.
+It returns `SyncClientProvider`, `useSyncClient`, `useLiveQuery` and `usePendingWrites`, typed from the config `createConfig` returns. There is no `syncClient`: clients exist only while a provider renders their scope.
 
 ### `<SyncClientProvider scope fallback?>`
 
@@ -90,6 +91,14 @@ const { data, isPending, error } = useLiveQuery({
 | `isPending` | `boolean`            | `true` until the first result, and while the query reruns. |
 | `error`     | `Error \| undefined` | Set when the query threw; cleared when it runs again.      |
 
+## `usePendingWrites()`
+
+```ts
+const { total, rejected, byCollection, isPending } = usePendingWrites();
+```
+
+The client's [`PendingWrites`](client-core.md#pendingwrites), kept current through `subscribePendingWrites`. `isPending` is `true` until the outbox was first read; the counts are `0` until then.
+
 ## Types
 
 | Export                               | Description                        |
@@ -102,3 +111,4 @@ const { data, isPending, error } = useLiveQuery({
 | `UseLiveQuery`                       | The type of `useLiveQuery`.        |
 | `UseLiveQueryOptions`                | `{ collections?, query, deps? }`   |
 | `UseLiveQueryResult`                 | `{ data, isPending, error }`       |
+| `UsePendingWritesResult`             | `PendingWrites & { isPending }`    |

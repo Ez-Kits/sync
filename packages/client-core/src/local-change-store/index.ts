@@ -5,6 +5,7 @@ export type {
   AtomicLocalChangeStore,
   ILocalChangeStore,
   LocalChangeScope,
+  PendingEventKey,
   SkippedRemoteEvent,
   StoredChangeBusEvent,
 } from "./types";

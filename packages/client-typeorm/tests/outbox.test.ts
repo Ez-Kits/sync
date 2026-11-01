@@ -91,6 +91,10 @@ for (const dialect of dialects) {
     await localChangeStore.appendEvents([event("m", 5), event("b", 5, "b")]);
     await localChangeStore.appendEvents([event("a", 5)]);
     expect(ids(await localChangeStore.getPendingEvents())).toEqual(["z", "m", "b", "a"]);
+    // What the client counts: ids and collections only.
+    expect(
+      (await localChangeStore.getPendingEventKeys!()).sort((a, b) => a.id.localeCompare(b.id)),
+    ).toEqual(["a", "b", "m", "z"].map((id) => ({ id, collection: "todos" })));
     const recordA = await localChangeStore.getPendingEvents({ collection: "todos", recordId: "a" });
     // `seq` stays internal: events read back have the stored fields only.
     expect(recordA).toEqual([event("z", 5), event("m", 5), event("a", 5)]);

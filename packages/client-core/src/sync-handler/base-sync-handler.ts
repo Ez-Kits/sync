@@ -48,6 +48,8 @@ export interface BaseSyncHandlerConfig<
    * `discard` removes it.
    */
   onPushRejected?: (rejection: PushRejection<SyncHandlerDataMap<C>>) => void;
+  /** Called after this handler removed events from the outbox, or parked new ones. */
+  onOutboxChanged?: () => void;
 }
 
 export abstract class BaseSyncHandler<
@@ -87,6 +89,11 @@ export abstract class BaseSyncHandler<
    * events are due or a discard released a record.
    */
   protected abstract requestPush(queueKey: string): void;
+
+  /** Ids of the events parked here (see `parkedEvents`). */
+  parkedEventIds(): string[] {
+    return [...this.parkedEvents.keys()];
+  }
 
   /**
    * Serialize provider pushes and retry failures without acknowledging events. A push that
@@ -426,9 +433,11 @@ export abstract class BaseSyncHandler<
   ): Promise<boolean> {
     // A parked event can leave the outbox without this handler, e.g. by a conflict decision.
     const pendingIds = new Set(events.map(({ eventId }) => eventId));
+    const parkedBefore = this.parkedEvents.size;
     for (const [eventId, parked] of this.parkedEvents) {
       if (parked.queueKey === queueKey && !pendingIds.has(eventId)) this.forgetParked(eventId);
     }
+    if (this.parkedEvents.size !== parkedBefore) this.config.onOutboxChanged?.();
 
     const pass: PushPass = { queueKey, rejections: [] };
     let toPush = events;
@@ -538,6 +547,7 @@ export abstract class BaseSyncHandler<
     });
     pass.rejections.push(error);
     if (this.reportedRejections.has(eventId)) return;
+    this.config.onOutboxChanged?.();
     this.reportedRejections.add(eventId);
     this.config.onPushRejected?.({
       event,
@@ -703,6 +713,7 @@ export abstract class BaseSyncHandler<
     });
 
     for (const eventId of eventIds) this.forgetParked(eventId);
+    this.config.onOutboxChanged?.();
     if (applied.length > 0) {
       this.config.changeBus.publishRemoteBatch(applied);
       this.config.onRemoteChangesCommitted?.(applied);
