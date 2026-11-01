@@ -30,24 +30,51 @@ release. Add a tool name to select part of the graph. For example, run
 
 <!--VITE PLUS END-->
 
+# Test coverage
+
+After any task that changes code, run `vp run test:coverage` at the repo root before calling the task done. Coverage must stay at 100% for statements, branches, functions and lines. If it drops, add tests for the uncovered code until it is back at 100%. Do not lower the thresholds in `vite.config.ts` or add coverage-ignore comments to get there.
+
 # Git convention
 
 ## Branch
 
-Add no brand identifies to branch name. Such as: claude, codex,...
+Follow [Conventional Branch](https://conventional-branch.github.io/): `<type>/<description>`.
 
-- Fix bug: `fix/<task>`
-- New feature: `feature/<task>`
-- Refactor: `refactor/<task>` . Touch no feature. Preserve all behavior.
-- Other: `chore/<task>`
+- `feature/` (or `feat/`): new feature, e.g. `feature/pull-readiness`
+- `bugfix/` (or `fix/`): bug fix, e.g. `fix/queue-ordering`
+- `hotfix/`: urgent fix, e.g. `hotfix/security-patch`
+- `release/`: release preparation, e.g. `release/v1.2.0`
+- `chore/`: non-code work such as docs, deps or tooling, e.g. `chore/update-deps`
+- `refactor/`: code restructuring. Touch no feature. Preserve all behavior.
+
+Rules:
+
+- Use lowercase `a-z`, `0-9` and hyphens. Dots are allowed only in release versions.
+- No leading, trailing or consecutive hyphens or dots.
+- Keep it short and descriptive. Ticket numbers are fine, e.g. `feature/issue-123-pending-writes`.
+- Add no brand identifiers, such as `claude`, `codex`, ...
 
 ## Commit message
 
-Use one line message. Add no brand identifies to commit message. Such as: claude, codex,...
+Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>[optional scope][!]: <description>`.
 
-- Fix bugs: `fix: <describe the task>`
-- New feature: `feat: <describe the task>`
-- Refactor: `refactor: <describe the task>`
-- Other: `chore: <describe the task>`
+- `feat`: new feature
+- `fix`: bug fix
+- `refactor`: code change that touches no feature and preserves all behavior
+- `perf`: performance improvement
+- `docs`: documentation only
+- `test`: add or fix tests
+- `build`: build system or dependencies
+- `ci`: CI configuration
+- `style`: formatting only
+- `chore`: anything else
+- `revert`: revert a previous commit
 
-PRs are squash-merged, so the PR title follows the same format and becomes the commit on `main`. release-please reads those commits to bump versions and write changelogs: `feat` bumps patch, `fix` bumps patch, and `!`/`BREAKING CHANGE` bumps minor while packages are below 1.0. `refactor` and `chore` do not release.
+Rules:
+
+- Use a one-line message in the imperative mood, lowercase, with no trailing period, e.g. `feat(client-core): expose pending writes`.
+- Scope is optional and names the affected package by its `packages/` folder, e.g. `fix(client-firebase): ...`.
+- Mark breaking changes with `!` after the type/scope, e.g. `feat(client-core)!: rename sync options`.
+- Add no brand identifiers, such as `claude`, `codex`, ...
+
+PRs are squash-merged, so the PR title follows the same format and becomes the commit on `main`. release-please reads those commits to bump versions and write changelogs: `feat`, `fix`, `perf` and `revert` bump patch, and `!`/`BREAKING CHANGE` bumps minor while packages are below 1.0. Other types (`refactor`, `docs`, `test`, `build`, `ci`, `style`, `chore`) do not release.
