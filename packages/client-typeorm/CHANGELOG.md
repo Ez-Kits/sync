@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2](https://github.com/Ez-Kits/sync/compare/sync-client-typeorm-adapter-v0.1.1...sync-client-typeorm-adapter-v0.1.2) (2026-11-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.2
+    * @ez-kits/sync-client-storage-pglite bumped to 0.0.3
+    * @ez-kits/sync-client-storage-sqljs bumped to 0.0.3
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.1.2
+
 ## [0.1.1](https://github.com/Ez-Kits/sync/compare/sync-client-typeorm-adapter-v0.1.0...sync-client-typeorm-adapter-v0.1.1) (2026-11-01)
 
 
