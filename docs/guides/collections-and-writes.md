@@ -58,9 +58,15 @@ await todos.insert({
 // Update. Pass the primary key and only the fields that change.
 await todos.update({ id, completed: true, updatedAt: Date.now() });
 
+// Create or update. Pass the full record: it is inserted if its primary key is missing,
+// else the row is updated with these fields.
+await client.collections.settings.upsert({ id: "me", weeklyGoal: 4, updatedAt: Date.now() });
+
 // Delete by primary key.
 await todos.delete(id);
 ```
+
+`insert` requires a new primary key. If the key exists, it rejects with your ORM's unique-key error (Drizzle wraps the database's error, such as SQLite's `UNIQUE constraint failed`, as its `cause`) and writes nothing. Use `upsert` when a record may or may not exist yet: a singleton such as settings, an import, or resuming an interrupted copy. It checks and writes in one transaction, so a pull landing in between cannot race it, and its outbox event is the `create` or `update` that actually happened.
 
 Each call:
 
@@ -73,11 +79,46 @@ You can call these from **any tab**, leader or follower. A follower's write is f
 
 > **Always write through `client.collections`.** A write made with the ORM directly, for example `dbAdapter.db.insert(todos).values(...)`, is not recorded in the outbox. It is never pushed, and live queries do not notice it.
 
+### Bulk writes
+
+To write many records of one collection, use the `*Many` methods:
+
+```ts
+await sets.insertMany(rows);
+await sets.updateMany([{ id, reps: 8, updatedAt: Date.now() } /* , ... */]);
+await sets.upsertMany(rows);
+await sets.deleteMany(ids);
+```
+
+Each call is **one transaction**: every record is written, or none is (one bad record rolls back the whole call). Each record still gets **its own outbox event**, in order, so pushing, conflict handling and [rejected writes](rejected-writes.md) stay per record. Live queries refresh **once** per call. An empty array does nothing.
+
+A call is never split. The transaction timeout (`transactionTimeoutMs`) only fires when a transaction goes idle, so a call of thousands of rows stays one atomic transaction. While it runs, the leader serves no other statement, so other tabs wait for it.
+
+### Transactions
+
+To change several collections together, use `client.transaction`:
+
+```ts
+await client.transaction(async (tx) => {
+  await tx.collections.sessions.update({ id, status: "done", updatedAt: Date.now() });
+  await tx.collections.milestones.insert({ id: crypto.randomUUID(), kind: "chapter" });
+});
+```
+
+- `tx.collections` has every collection method, including the `*Many` ones, and its reads (`get`, `getMany`) see the transaction's writes.
+- The rows and all their outbox events **commit together**. If the callback throws, nothing is written; `transaction` rejects with that error. Otherwise it resolves to the callback's return value.
+- Live queries refresh **once**, after the commit.
+- It is atomic **locally**, not on the backend: the push may still send the events in several batches.
+- **Inside the callback, await only `tx` calls.** Any other database work, including `client.collections`, waits for the transaction to end, so the callback stalls until the transaction timeout. Do network calls and other slow work before or after.
+- If the leader tab changes mid-commit, EzSync retries the transaction like a single write (see [Errors when writing](#errors-when-writing)), so the callback may run more than once. Keep it free of side effects other than `tx` calls.
+
+Bulk writes and transactions work from any tab, leader or follower.
+
 ### Good habits
 
 - **Keep an `updatedAt` field** set to `Date.now()` on every write. It makes [conflict resolution](conflict-resolution.md) with `lastWriteWins` easy, and makes incremental pulls possible.
 - **Do not wait on the network.** Writes are local; show the result right away. Sync status is a separate concern (see [Syncing](syncing.md)).
-- **Bulk inserts** are one transaction each. For thousands of records, insert in a loop and yield now and then (`await new Promise((r) => setTimeout(r, 0))`) so the page stays responsive.
+- **Write many records with one `*Many` call**, not a loop of single writes: it is one transaction instead of one per record, and live queries refresh once. For very large imports, a few calls of some thousand rows each keep the leader free for other tabs in between.
 
 ## Errors when writing
 

@@ -63,6 +63,11 @@ describe("collection runtime", () => {
     expectTypeOf<Todos["insert"]>().parameter(0).toEqualTypeOf<TodoInsert>();
     expectTypeOf<Todos["update"]>().parameter(0).toEqualTypeOf<TodoUpdate>();
     expectTypeOf<Todos["delete"]>().parameter(0).toEqualTypeOf<number>();
+    expectTypeOf<Todos["upsert"]>().parameter(0).toEqualTypeOf<TodoInsert>();
+    expectTypeOf<Todos["insertMany"]>().parameter(0).toEqualTypeOf<readonly TodoInsert[]>();
+    expectTypeOf<Todos["updateMany"]>().parameter(0).toEqualTypeOf<readonly TodoUpdate[]>();
+    expectTypeOf<Todos["upsertMany"]>().parameter(0).toEqualTypeOf<readonly TodoInsert[]>();
+    expectTypeOf<Todos["deleteMany"]>().parameter(0).toEqualTypeOf<readonly number[]>();
     expectTypeOf<Todos["get"]>().returns.resolves.toEqualTypeOf<TodoSelect>();
     expectTypeOf<Todos["getMany"]>().returns.resolves.toEqualTypeOf<TodoSelect[]>();
   });

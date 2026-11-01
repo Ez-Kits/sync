@@ -132,3 +132,14 @@ test("an adapter typed with SyncAdapterFor infers from its collection configs", 
     syncAdapter: createCustomSyncAdapter({ collections: [todoConfig, userConfig] }),
   });
 });
+
+test("transactions expose typed collections and resolve to the callback's result", async () => {
+  const result = await client.transaction(async (tx) => {
+    expectTypeOf(tx.collections).toEqualTypeOf<typeof client.collections>();
+    await tx.collections.todos.upsert({} as TodoInsert);
+    // @ts-expect-error todos are keyed by numeric id
+    await tx.collections.todos.deleteMany(["1"]);
+    return tx.collections.todos.get(1);
+  });
+  expectTypeOf(result).toEqualTypeOf<TodoSelect>();
+});
