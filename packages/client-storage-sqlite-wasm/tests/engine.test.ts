@@ -1,7 +1,7 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { expect, test, vi } from "vite-plus/test";
 import { createSqliteWasmDBStorage } from "../src";
-import { openSqliteWasmEngine } from "../src/worker";
+import { destroySqliteWasmDatabase, openSqliteWasmEngine } from "../src/worker";
 
 test("runs migrations, binds parameters and returns rows in both row modes", async () => {
   const engine = await openSqliteWasmEngine({ filename: "/t.sqlite3", vfs: "memory" });
@@ -64,6 +64,35 @@ test("the OPFS pool is opened for the leader and paused when it steps down", asy
   expect(pool.unpauseVfs).toHaveBeenCalledOnce();
   expect((fake as any).installOpfsSAHPoolVfs).toHaveBeenLastCalledWith({ name: "custom" });
   await second.close();
+});
+
+test("destroySqliteWasmDatabase removes the file and its journals from the pool, then releases it", async () => {
+  const sqlite3 = await sqlite3InitModule();
+  const files = new Set(["/todos.sqlite3", "/todos.sqlite3-journal", "/other.sqlite3"]);
+  const pool = {
+    isPaused: () => false,
+    unlink: vi.fn((name: string) => files.delete(name)),
+    pauseVfs: vi.fn(),
+  };
+  const fake = { ...sqlite3, installOpfsSAHPoolVfs: vi.fn(async () => pool) } as never;
+  await destroySqliteWasmDatabase({ filename: "/todos.sqlite3", poolName: "p", sqlite3: fake });
+  expect((fake as any).installOpfsSAHPoolVfs).toHaveBeenCalledWith({ name: "p" });
+  expect([...files]).toEqual(["/other.sqlite3"]);
+  expect(pool.unlink).toHaveBeenCalledWith("/todos.sqlite3-wal");
+  expect(pool.unlink).toHaveBeenCalledWith("/todos.sqlite3-shm");
+  expect(pool.pauseVfs).toHaveBeenCalledOnce();
+
+  // The pool is released even when removing fails; in-memory databases have nothing to delete.
+  pool.unlink.mockImplementationOnce(() => {
+    throw new Error("in use");
+  });
+  await expect(
+    destroySqliteWasmDatabase({ filename: "/todos.sqlite3", sqlite3: fake }),
+  ).rejects.toThrow("in use");
+  expect((fake as any).installOpfsSAHPoolVfs).toHaveBeenLastCalledWith({ name: "ez-sync" });
+  expect(pool.pauseVfs).toHaveBeenCalledTimes(2);
+  await destroySqliteWasmDatabase({ filename: "/todos.sqlite3", vfs: "memory", sqlite3: fake });
+  expect((fake as any).installOpfsSAHPoolVfs).toHaveBeenCalledTimes(2);
 });
 
 test("the page-side storage speaks SQLite to its worker", () => {

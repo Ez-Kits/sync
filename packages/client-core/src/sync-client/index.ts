@@ -2,6 +2,7 @@ export * from "./sync-client";
 export * from "./types";
 export * from "./create-sync-client";
 export {
+  PendingWritesError,
   WaitForPushedError,
   type PendingWrites,
   type WaitForPushedOptions,

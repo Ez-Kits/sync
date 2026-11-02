@@ -42,6 +42,10 @@ Make committed data durable. The storage calls it after every `COMMIT` and after
 
 Release everything: file handles, locks, workers. In the browser, the **next leader** opens the same database right after the old one closes, so a handle left open blocks it.
 
+### Deleting the database (optional)
+
+`DBStorage.destroy()` needs a function that deletes what `open` opens, given the same engine options. Export one next to `open...Engine`, and have apps pass it as `destroy` (see below). It runs in a worker while **no** engine is open, so it must not need one: delete the files or IndexedDB database directly, and resolve when there is nothing to delete.
+
 ## Example: `node:sqlite` in Node.js
 
 Node 24+ ships a SQLite engine, `node:sqlite`. This engine wraps it:
@@ -153,13 +157,17 @@ export function createMyStorage(options: MyStorageOptions): DBStorage {
 ```ts
 // app: db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
-import { openMyEngine, type MyEngineOptions } from "my-storage/worker";
+import { destroyMyDatabase, openMyEngine, type MyEngineOptions } from "my-storage/worker";
 
-startDBStorageWorker<MyEngineOptions>(async (options, { signal }) => {
-  const engine = await openMyEngine(options);
-  // `signal` aborts when this worker stops leading; useful for long-running opens.
-  await migrate(engine);
-  return engine;
+startDBStorageWorker<MyEngineOptions>({
+  open: async (options, { signal }) => {
+    const engine = await openMyEngine(options);
+    // `signal` aborts when this worker stops leading; useful for long-running opens.
+    await migrate(engine);
+    return engine;
+  },
+  // Optional: enables `dbStorage.destroy()` and `client.destroy()`.
+  destroy: destroyMyDatabase,
 });
 ```
 
@@ -199,6 +207,7 @@ If you do implement it, every rule of the [`DBStorage` interface](../api/client-
 - `onRoleChange`, `onInvalidate` (call it when changes may have been missed, such as after a leader change) and `onError` return unsubscribe functions.
 - When a write's outcome is unknown (the holder of the database went away mid-request), reject with an error that has `retriable: true` (`LeaderChangedError`). The sync client then checks whether the write landed before retrying it.
 - `close()` releases everything; later calls reject with `DBStorageClosedError`.
+- `destroy()` and `onDestroyed()` are optional. Without `destroy`, `client.destroy()` rejects with `DBStorageDestroyUnsupportedError`. With it, delete the data in every context, call the `onDestroyed` listeners (in every context), and close.
 
 ## Checklist
 

@@ -49,6 +49,15 @@ export interface DBStorage extends DBExecutor {
   transaction<T>(fn: (tx: DBExecutor) => Promise<T>): Promise<T>;
   /** Release leadership and the engine, and stop listening to other contexts. */
   close(): Promise<void>;
+  /**
+   * Delete the database of this `key` in every context: the others close (their
+   * `onDestroyed` listeners are called), then this one deletes the data with the engine's
+   * own method and closes. Resolves once the data is gone, or at once if it already was. A
+   * failed delete leaves the storage closed to queries, but `destroy` can be retried.
+   */
+  destroy?(): Promise<void>;
+  /** The database was deleted, by this or another context; the storage is closed. */
+  onDestroyed?(listener: () => void): () => void;
 }
 
 /** The real database, opened only by the leader. */
@@ -67,3 +76,15 @@ export type OpenDBEngine<TOptions = unknown> = (
   options: TOptions,
   context: OpenDBEngineContext,
 ) => DBEngine | Promise<DBEngine>;
+
+/**
+ * Delete the database that `open` opens with the same options. Runs while no context has
+ * the engine open. Deleting a database that does not exist resolves.
+ */
+export type DestroyDBEngine<TOptions = unknown> = (options: TOptions) => void | Promise<void>;
+
+/** How a storage worker opens its engine, and deletes its database for `DBStorage.destroy`. */
+export interface DBEngineFactory<TOptions = unknown> {
+  open: OpenDBEngine<TOptions>;
+  destroy?: DestroyDBEngine<TOptions>;
+}

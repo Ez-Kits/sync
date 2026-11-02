@@ -2,7 +2,7 @@ import { IDBFactory } from "fake-indexeddb";
 import initSqlJs from "sql.js";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { createSqlJsDBStorage } from "../src";
-import { openSqlJsEngine, sqlJsConfig } from "../src/worker";
+import { destroySqlJsDatabase, openSqlJsEngine, sqlJsConfig } from "../src/worker";
 import { loadSnapshot, saveSnapshot } from "../src/snapshot";
 
 const run = (sql: string, params: unknown[] = []) => ({ sql, params, method: "run" as const });
@@ -160,4 +160,36 @@ test("sql.js loads its wasm from wasmUrl when given", () => {
   expect(sqlJsConfig("/assets/sql-wasm.wasm")?.locateFile?.("sql-wasm.wasm", "")).toBe(
     "/assets/sql-wasm.wasm",
   );
+});
+
+test("destroySqlJsDatabase deletes the IndexedDB snapshot", async () => {
+  const indexedDBFactory = new IDBFactory();
+  const first = await openSqlJsEngine({ indexedDBName: "todos", indexedDBFactory });
+  await first.exec(run("CREATE TABLE t (v TEXT)"));
+  await first.flush!();
+  await first.close();
+
+  await destroySqlJsDatabase({ indexedDBName: "todos", indexedDBFactory });
+  expect(await indexedDBFactory.databases()).toEqual([]);
+  const reopened = await openSqlJsEngine({ indexedDBName: "todos", indexedDBFactory });
+  await expect(reopened.exec(run("SELECT * FROM t"))).rejects.toThrow("no such table");
+  await reopened.close();
+
+  // Deleting again, or an in-memory database, does nothing.
+  await destroySqlJsDatabase({ indexedDBName: "todos", indexedDBFactory });
+  await destroySqlJsDatabase();
+});
+
+test("a failed snapshot delete surfaces", async () => {
+  const error = new Error("delete failed");
+  const factory = {
+    deleteDatabase: () => {
+      const request = { error, onerror: undefined as (() => void) | undefined };
+      queueMicrotask(() => request.onerror?.());
+      return request;
+    },
+  } as unknown as IDBFactory;
+  await expect(
+    destroySqlJsDatabase({ indexedDBName: "x", indexedDBFactory: factory }),
+  ).rejects.toBe(error);
 });

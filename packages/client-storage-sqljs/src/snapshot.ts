@@ -20,6 +20,15 @@ function openDatabase({ name, factory }: SnapshotLocation): Promise<IDBDatabase>
   });
 }
 
+/** Delete the IndexedDB database holding the snapshot; resolves if there is none. */
+export function deleteSnapshot({ name, factory }: SnapshotLocation): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = factory.deleteDatabase(name);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
 export function toArrayBuffer(view: ArrayBufferView): ArrayBuffer {
   return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice().buffer;
 }

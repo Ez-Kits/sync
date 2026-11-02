@@ -100,8 +100,25 @@ export interface SyncClient<
    * backoff, e.g. once the user signed in. Acts in the leading context, which runs sync.
    */
   retryRejectedPushes: () => void;
-  /** Stop sync, release the storage and browser listeners permanently. */
-  dispose: () => Promise<void>;
+  /**
+   * Stop sync, release the storage and browser listeners permanently. With
+   * `deleteDatabase`, also delete the local database in every context (see `destroy`).
+   */
+  dispose: (options?: DisposeOptions) => Promise<void>;
+  /**
+   * Dispose this client and delete its local database (rows, outbox and checkpoints) in
+   * every context sharing its storage key. The other contexts' clients are disposed: their
+   * status turns `stopped` and `subscribeDestroyed` listeners are called. Rejects with a
+   * `PendingWritesError`, leaving the client running, while writes are unpushed, unless
+   * `ifPendingWrites` is `"discard"`. Safe to call twice; resolves at once if another
+   * context already deleted the database. Same as `dispose({ deleteDatabase: true })`.
+   */
+  destroy: (options?: DestroyOptions) => Promise<void>;
+  /**
+   * Called once the local database was deleted, by this or another context (e.g. route
+   * to sign-in); at once if it already was. Returns an unsubscribe function.
+   */
+  subscribeDestroyed: (listener: () => void) => () => void;
   /** Whether this context leads the storage (and is the only one that syncs). */
   readonly role: DBRole;
   /** Subscribe to role changes; the current role is emitted immediately. */
@@ -159,6 +176,21 @@ export interface SyncClient<
     collection: N,
     checkpoint: TCheckpoint | undefined,
   ) => Promise<void>;
+}
+
+export interface DestroyOptions {
+  /**
+   * `"reject"` (default): reject with a `PendingWritesError` while the outbox holds writes,
+   * parked ones included, and keep everything. `"discard"`: delete them with the rest, e.g.
+   * once the user confirmed. Use `"discard"` too when the database cannot be opened. The
+   * check reads this context's view: a write committed by another tab meanwhile is lost.
+   */
+  ifPendingWrites?: "reject" | "discard";
+}
+
+export interface DisposeOptions extends DestroyOptions {
+  /** Delete the local database too, in every context. Defaults to `false`. */
+  deleteDatabase?: boolean;
 }
 
 /** The argument of {@link SyncClient.transaction}. */

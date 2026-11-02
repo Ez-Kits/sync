@@ -19,7 +19,7 @@ client.stopSync(); // pause; local reads and writes keep working
 - Call `startSync()` once your app is ready, for example after the user signed in. Call it in **every tab**: only the leader really syncs, and a follower's call asks the leader to sync.
 - Writes made **before** `startSync()` or while offline are not lost. They wait in the outbox and are pushed when sync runs.
 - `stopSync()` pauses sync in this tab. It does not delete anything.
-- `await client.dispose()` stops sync and closes the database for this tab for good. Use it on sign-out, or when a test ends.
+- `await client.dispose()` stops sync and closes the database for this tab for good. Use it on sign-out, or when a test ends. `await client.destroy()` also deletes the local database, in every tab (see [Deleting the local database](#deleting-the-local-database)).
 
 ### One adapter for all collections, or one per collection
 
@@ -222,12 +222,49 @@ onSignOut(async () => {
     }
     // Parked (refused) writes are still in the outbox: decide whether to drop them.
   }
-  client.stopSync();
-  // Optionally wipe local data: dispose the client, then delete the database.
+  // Delete the local database in every tab. Parked writes are still in the outbox, so this
+  // rejects with a PendingWritesError unless you drop them.
+  await client.destroy({ ifPendingWrites: "discard" });
 });
 ```
 
 For per-user data, consider one storage `key` and database name per user, so users never see each other's local data.
+
+## Deleting the local database
+
+`client.destroy()` deletes the local database: rows, outbox and checkpoints. Use it on sign-out, after switching accounts, or when a temporary database is no longer needed.
+
+```ts
+try {
+  await client.destroy();
+} catch (error) {
+  if (error instanceof PendingWritesError) {
+    // error.pending: the unpushed writes. Ask the user, then:
+    await client.destroy({ ifPendingWrites: "discard" });
+  }
+}
+```
+
+- **Every tab.** It tells every tab with the same storage `key` to close, waits for them, then deletes the data with the engine's own method. Even the OPFS pool of SQLite WASM, which only one worker can hold, works this way. The other tabs' clients are disposed: their status turns `stopped` and their `subscribeDestroyed` listeners run, so they can send the user to sign-in.
+- **Unpushed writes.** By default it refuses while the outbox has writes, parked ones included: it rejects with a `PendingWritesError` (`pending`: the counts) and the client keeps running. Pass `ifPendingWrites: "discard"` to delete them anyway. The check sees this tab's view, so a write committed in another tab at the same moment can still be lost.
+- **Safe to call twice.** Once the database is gone, `destroy()` resolves at once, in any tab. Deleting a database that never existed also resolves.
+- **`dispose({ deleteDatabase: true })`** does the same, if you prefer to decide at dispose time.
+- **Without a client**, for example to delete a database left behind by an interrupted flow: `await dbStorage.destroy()`. It does not check the outbox.
+- **A database that cannot be opened** (for example a corrupt file) is deleted too: the delete runs without opening the engine. `getPendingWrites()` fails then, so pass `ifPendingWrites: "discard"`.
+
+The storage worker needs to know how to delete its database. Give `startDBStorageWorker` an `{ open, destroy }` object, with the storage package's `destroy...Database` function. See [Choosing a storage engine](storage-engines.md). Without it, `destroy()` rejects with a `DBStorageDestroyUnsupportedError`.
+
+```ts
+// db/worker.ts
+startDBStorageWorker<SqliteWasmEngineOptions>({
+  open: async (options) => {
+    const engine = await openSqliteWasmEngine(options);
+    await migrate(engine);
+    return engine;
+  },
+  destroy: destroySqliteWasmDatabase,
+});
+```
 
 ## Next
 

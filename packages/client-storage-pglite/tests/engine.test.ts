@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { createPGliteDBStorage } from "../src";
-import { openPGliteEngine } from "../src/worker";
+import { destroyPGliteDatabase, openPGliteEngine } from "../src/worker";
 
 test("runs migrations, binds parameters and returns rows in both row modes", async () => {
   const engine = await openPGliteEngine();
@@ -45,5 +45,93 @@ test("the page-side storage speaks Postgres to its worker", () => {
   expect(storage.dialect).toBe("postgres");
   expect(endpoint.postMessage).toHaveBeenCalledWith(
     expect.objectContaining({ t: "init", engineOptions: { dataDir: "idb://todos" } }),
+  );
+});
+
+/** OPFS directories as nested maps; `removeEntry` reports a missing entry like the browser. */
+interface FakeDirectory {
+  entries: Record<string, FakeDirectory>;
+  getDirectoryHandle: ReturnType<typeof vi.fn>;
+  removeEntry: ReturnType<typeof vi.fn>;
+}
+
+function directory(entries: Record<string, FakeDirectory> = {}): FakeDirectory {
+  const notFound = () => Object.assign(new Error("missing"), { name: "NotFoundError" });
+  const handle = {
+    entries,
+    getDirectoryHandle: vi.fn(async (name: string) => {
+      if (!entries[name]) throw notFound();
+      return entries[name];
+    }),
+    removeEntry: vi.fn(async (name: string, _options: { recursive: boolean }) => {
+      if (!entries[name]) throw notFound();
+      delete entries[name];
+    }),
+  };
+  return handle;
+}
+
+function deletingFactory(error?: Error) {
+  const deleted: string[] = [];
+  const factory = {
+    deleted,
+    deleteDatabase: (name: string) => {
+      const request = {
+        error,
+        onsuccess: undefined as (() => void) | undefined,
+        onerror: undefined as (() => void) | undefined,
+      };
+      queueMicrotask(() => {
+        if (error) request.onerror?.();
+        else {
+          deleted.push(name);
+          request.onsuccess?.();
+        }
+      });
+      return request;
+    },
+  };
+  return factory;
+}
+
+test("destroyPGliteDatabase deletes idb:// and opfs-ahp:// data dirs", async () => {
+  const indexedDB = deletingFactory();
+  const root = directory({ apps: directory({ todos: directory(), other: directory() }) });
+  const host = { indexedDB, navigator: { storage: { getDirectory: async () => root } } } as never;
+
+  await destroyPGliteDatabase({ dataDir: "idb://todos" }, host);
+  expect(indexedDB.deleted).toEqual(["/pglite/todos"]);
+
+  await destroyPGliteDatabase({ dataDir: "opfs-ahp://apps/todos" }, host);
+  expect(Object.keys(root.entries.apps!.entries)).toEqual(["other"]);
+  expect(root.entries.apps!.removeEntry).toHaveBeenCalledWith("todos", { recursive: true });
+  // Already gone, or no path: nothing to do.
+  await destroyPGliteDatabase({ dataDir: "opfs-ahp://apps/todos" }, host);
+  await destroyPGliteDatabase({ dataDir: "opfs-ahp://missing/todos" }, host);
+  await destroyPGliteDatabase({ dataDir: "opfs-ahp://" }, host);
+
+  // In-memory databases have nothing to delete.
+  await destroyPGliteDatabase();
+  await destroyPGliteDatabase({ dataDir: "memory://x" }, host);
+  expect(indexedDB.deleted).toHaveLength(1);
+});
+
+test("destroyPGliteDatabase surfaces failures and refuses file-system data dirs", async () => {
+  const error = new Error("blocked");
+  await expect(
+    destroyPGliteDatabase({ dataDir: "idb://todos" }, {
+      indexedDB: deletingFactory(error),
+    } as never),
+  ).rejects.toBe(error);
+
+  const root = directory({ todos: directory() });
+  root.removeEntry.mockRejectedValueOnce(new Error("in use"));
+  const host = { navigator: { storage: { getDirectory: async () => root } } } as never;
+  await expect(destroyPGliteDatabase({ dataDir: "opfs-ahp://todos" }, host)).rejects.toThrow(
+    "in use",
+  );
+
+  await expect(destroyPGliteDatabase({ dataDir: "./data" })).rejects.toThrow(
+    "remove the directory yourself",
   );
 });

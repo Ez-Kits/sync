@@ -22,10 +22,16 @@ import {
   type MutationSink,
 } from "../collection/local-mutation";
 import type { BaseDBAdapter } from "../db-adapter";
-import { isRetriableError, type DBRole, type DBStorage } from "../db-storage";
+import {
+  DBStorageDestroyUnsupportedError,
+  isRetriableError,
+  type DBRole,
+  type DBStorage,
+} from "../db-storage";
 import { SyncHandler, globalSyncCollections } from "../sync-handler";
 import type { SyncStatusEvent } from "../sync-handler";
 import {
+  PendingWritesError,
   PendingWritesTracker,
   WaitForPushedError,
   type PendingWrites,
@@ -39,6 +45,8 @@ import {
 } from "./pull-state";
 import { SyncTabChannel } from "./tab-channel";
 import type {
+  DestroyOptions,
+  DisposeOptions,
   LiveQueryFn,
   SubscribeFn,
   SyncClient,
@@ -129,6 +137,9 @@ export class SyncClientImpl<
   private status: SyncStatusEvent = { status: "stopped", changedAt: Date.now() };
   private statusListeners = new Set<(event: SyncStatusEvent) => void>();
   private roleListeners = new Set<(role: DBRole) => void>();
+  private destroyedListeners = new Set<() => void>();
+  /** The local database was deleted, by this or another context. */
+  private destroyed = false;
   private liveQueries = new Set<() => void>();
   private readonly pendingWrites: PendingWritesTracker;
   private readonly pullState: PullStateTracker;
@@ -197,6 +208,8 @@ export class SyncClientImpl<
         if (this.wantsSync && this.appliedRole === "follower") this.tabs.requestSync();
       }),
       this.dbStorage.onError((error) => this.setStatus("error", error)),
+      // Another context deleted the database: this client cannot be used anymore.
+      this.dbStorage.onDestroyed?.(() => void this.disposeDestroyed()) ?? (() => undefined),
       this.tabs.subscribe({
         changes: ({ events, source }) => {
           this.changeBus.publishRemoteBatch(events);
@@ -431,7 +444,75 @@ export class SyncClientImpl<
       if (done) for (const cleanup of cleanups) cleanup();
     });
 
-  dispose = async () => {
+  dispose = async ({ deleteDatabase = false, ifPendingWrites }: DisposeOptions = {}) => {
+    if (deleteDatabase) {
+      await this.deleteDatabase(ifPendingWrites);
+      return;
+    }
+    this.teardown();
+    try {
+      await this.dbAdapter.close?.();
+    } finally {
+      await this.dbStorage.close();
+    }
+  };
+
+  destroy = (options: DestroyOptions = {}) => this.dispose({ ...options, deleteDatabase: true });
+
+  subscribeDestroyed = (listener: () => void) => {
+    if (this.destroyed) {
+      this.notifyDestroyed(listener);
+      return () => undefined;
+    }
+    this.destroyedListeners.add(listener);
+    return () => this.destroyedListeners.delete(listener);
+  };
+
+  private async deleteDatabase(ifPendingWrites: DestroyOptions["ifPendingWrites"]): Promise<void> {
+    // Already deleted, here or by another context.
+    if (this.destroyed) return;
+    const { dbStorage } = this;
+    if (!dbStorage.destroy) throw new DBStorageDestroyUnsupportedError();
+    if (ifPendingWrites !== "discard") {
+      const pending = await this.getPendingWrites();
+      if (pending.total > 0) throw new PendingWritesError(pending);
+    }
+    this.teardown();
+    try {
+      await this.dbAdapter.close?.();
+    } finally {
+      await dbStorage.destroy();
+    }
+    this.markDestroyed();
+  }
+
+  /** Another context deleted the database: stop like `dispose`, then tell the app. */
+  private async disposeDestroyed(): Promise<void> {
+    this.teardown();
+    this.markDestroyed();
+    try {
+      await this.dbAdapter.close?.();
+    } catch {
+      // The database is gone; there is nothing left to report this to.
+    }
+  }
+
+  private markDestroyed(): void {
+    this.destroyed = true;
+    for (const listener of this.destroyedListeners) this.notifyDestroyed(listener);
+    this.destroyedListeners.clear();
+  }
+
+  private notifyDestroyed(listener: () => void): void {
+    try {
+      listener();
+    } catch {
+      // One observer must not block delivery to other observers.
+    }
+  }
+
+  /** Stop sync and release every listener; the storage is closed by the caller. */
+  private teardown(): void {
     for (const reject of this.waiters) reject();
     this.stopSync();
     for (const cleanup of this.cleanups) cleanup();
@@ -442,12 +523,7 @@ export class SyncClientImpl<
     this.pullState.close();
     this.statusListeners.clear();
     this.roleListeners.clear();
-    try {
-      await this.dbAdapter.close?.();
-    } finally {
-      await this.dbStorage.close();
-    }
-  };
+  }
 
   subscribeStatus = (listener: (event: SyncStatusEvent) => void) => {
     this.statusListeners.add(listener);

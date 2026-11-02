@@ -34,11 +34,18 @@ function execute(db: Database, query: DBQuery): DBQueryResult {
   return { rows: query.method === "get" ? rows.slice(0, 1) : rows };
 }
 
+function loadSqlite3(options: OpenSqliteWasmEngineOptions): Promise<Sqlite3Static> {
+  return Promise.resolve(options.sqlite3 ?? sqlite3InitModule());
+}
+
 async function openPool(sqlite3: Sqlite3Static, name: string): Promise<SAHPoolUtil> {
   const pool = await sqlite3.installOpfsSAHPoolVfs({ name });
   // A worker that led before paused the pool when it stepped down.
   return pool.isPaused() ? pool.unpauseVfs() : pool;
 }
+
+/** The pool files of one database: SQLite's journals sit next to it. */
+const DATABASE_FILE_SUFFIXES = ["", "-journal", "-wal", "-shm"];
 
 /**
  * Open SQLite in this (leader) worker. With the default `opfs-sahpool` VFS the file
@@ -47,7 +54,7 @@ async function openPool(sqlite3: Sqlite3Static, name: string): Promise<SAHPoolUt
 export async function openSqliteWasmEngine(
   options: OpenSqliteWasmEngineOptions,
 ): Promise<SqliteWasmEngine> {
-  const sqlite3 = await (options.sqlite3 ?? sqlite3InitModule());
+  const sqlite3 = await loadSqlite3(options);
   const pool =
     options.vfs === "memory" ? undefined : await openPool(sqlite3, options.poolName ?? "ez-sync");
   const db = pool ? new pool.OpfsSAHPoolDb(options.filename) : new sqlite3.oo1.DB(":memory:");
@@ -59,4 +66,21 @@ export async function openSqliteWasmEngine(
       pool?.pauseVfs();
     },
   };
+}
+
+/**
+ * Delete the database `openSqliteWasmEngine` opens with these options: its file (and
+ * journals) in the OPFS pool, which is released again afterwards. Pass it as `destroy` to
+ * `startDBStorageWorker` to enable `DBStorage.destroy`.
+ */
+export async function destroySqliteWasmDatabase(
+  options: OpenSqliteWasmEngineOptions,
+): Promise<void> {
+  if (options.vfs === "memory") return;
+  const pool = await openPool(await loadSqlite3(options), options.poolName ?? "ez-sync");
+  try {
+    for (const suffix of DATABASE_FILE_SUFFIXES) pool.unlink(`${options.filename}${suffix}`);
+  } finally {
+    pool.pauseVfs();
+  }
 }

@@ -14,7 +14,9 @@ export type NodeRequestBody =
 export type ControlMessage =
   | { t: "leader-hello"; epoch: string }
   | { t: "leader-bye"; epoch: string }
-  | { t: "who-is-leader" };
+  | { t: "who-is-leader" }
+  /** `from` deletes the database: every other context closes. */
+  | { t: "destroy"; from: string };
 
 /** Follower node → leader node, on the leader's channel. */
 export type LeaderRequest = NodeRequestBody & { id: string; from: string };
@@ -39,12 +41,15 @@ export type PortRequest =
   | { t: "request"; id: number; body: NodeRequestBody }
   | { t: "release" }
   | { t: "rejoin" }
-  | { t: "close"; id: number };
+  | { t: "close"; id: number }
+  | { t: "destroy"; id: number };
 
 /** Storage worker → main thread. */
 export type PortMessage =
   | { t: "role"; role: DBRole }
   | { t: "invalidate" }
+  /** Another context deleted the database; this worker's node is closed. */
+  | { t: "destroyed" }
   | { t: "error"; error: SerializedError }
   | { t: "response"; id: number; ok: true; result?: unknown }
   | { t: "response"; id: number; ok: false; error: SerializedError };
@@ -53,7 +58,11 @@ export const controlChannelName = (key: string) => `ez-sync:db:${key}`;
 export const leaderLockName = (key: string) => `ez-sync:db:${key}:leader`;
 export const leaderChannelName = (key: string, epoch: string) =>
   `ez-sync:db:${key}:leader:${epoch}`;
+const clientPrefix = (key: string) => `ez-sync:db:${key}:client:`;
 export const clientChannelName = (key: string, clientId: string) =>
-  `ez-sync:db:${key}:client:${clientId}`;
+  `${clientPrefix(key)}${clientId}`;
 /** Held by each context for its lifetime; the leader takes it to detect that context's death. */
 export const clientLockName = clientChannelName;
+/** Whether `lockName` is the lifetime lock of a context of `key`. */
+export const isClientLockOf = (key: string, lockName: string | undefined) =>
+  lockName?.startsWith(clientPrefix(key)) === true;

@@ -7,10 +7,10 @@ npm install @ez-kits/sync-client-storage-sqljs sql.js
 npm install -D @types/sql.js
 ```
 
-| Entry point                                 | Use it in            | Contents                         |
-| ------------------------------------------- | -------------------- | -------------------------------- |
-| `@ez-kits/sync-client-storage-sqljs`        | the page             | `createSqlJsDBStorage`           |
-| `@ez-kits/sync-client-storage-sqljs/worker` | the worker (or Node) | `openSqlJsEngine`, `sqlJsConfig` |
+| Entry point                                 | Use it in            | Contents                                                 |
+| ------------------------------------------- | -------------------- | -------------------------------------------------------- |
+| `@ez-kits/sync-client-storage-sqljs`        | the page             | `createSqlJsDBStorage`                                   |
+| `@ez-kits/sync-client-storage-sqljs/worker` | the worker (or Node) | `openSqlJsEngine`, `destroySqlJsDatabase`, `sqlJsConfig` |
 
 Setup walkthrough: [Choosing a storage engine → sql.js](../guides/storage-engines.md#sqljs).
 
@@ -57,6 +57,18 @@ Behaviour:
 - `flush()` saves a new snapshot. The storage calls it after every commit and every write outside a transaction.
 - A `run` statement **without parameters** may contain several statements.
 - Parameters: `undefined` becomes `NULL`, booleans become `1` / `0`, bigints become numbers.
+
+## `destroySqlJsDatabase(options?)`
+
+```ts
+function destroySqlJsDatabase(options?: OpenSqlJsEngineOptions): Promise<void>;
+```
+
+Deletes the IndexedDB database named `indexedDBName` (using `indexedDBFactory` when given). Does nothing for an in-memory database or a database that does not exist. Pass it to the worker to enable `DBStorage.destroy()` and `client.destroy()`:
+
+```ts
+startDBStorageWorker<SqlJsEngineOptions>({ open: ..., destroy: destroySqlJsDatabase });
+```
 
 ## `sqlJsConfig(wasmUrl)`
 

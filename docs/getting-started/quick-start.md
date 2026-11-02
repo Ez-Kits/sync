@@ -75,17 +75,22 @@ The database runs inside a **Web Worker**, so heavy queries never freeze your pa
 // src/db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
 import {
+  destroySqlJsDatabase,
   openSqlJsEngine,
   type SqlJsEngineOptions,
 } from "@ez-kits/sync-client-storage-sqljs/worker";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./migrations";
 
-startDBStorageWorker<SqlJsEngineOptions>(async (options) => {
+startDBStorageWorker<SqlJsEngineOptions>({
   // Runs only in the leader's worker.
-  const engine = await openSqlJsEngine({ ...options, wasmUrl });
-  await migrate(engine);
-  return engine;
+  open: async (options) => {
+    const engine = await openSqlJsEngine({ ...options, wasmUrl });
+    await migrate(engine);
+    return engine;
+  },
+  // Lets `client.destroy()` delete the database, e.g. on sign-out.
+  destroy: destroySqlJsDatabase,
 });
 ```
 

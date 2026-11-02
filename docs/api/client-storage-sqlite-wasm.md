@@ -6,10 +6,10 @@ The official [SQLite WASM](https://sqlite.org/wasm) build in a leader worker, sa
 npm install @ez-kits/sync-client-storage-sqlite-wasm @sqlite.org/sqlite-wasm
 ```
 
-| Entry point                                       | Use it in  | Contents                    |
-| ------------------------------------------------- | ---------- | --------------------------- |
-| `@ez-kits/sync-client-storage-sqlite-wasm`        | the page   | `createSqliteWasmDBStorage` |
-| `@ez-kits/sync-client-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`      |
+| Entry point                                       | Use it in  | Contents                                            |
+| ------------------------------------------------- | ---------- | --------------------------------------------------- |
+| `@ez-kits/sync-client-storage-sqlite-wasm`        | the page   | `createSqliteWasmDBStorage`                         |
+| `@ez-kits/sync-client-storage-sqlite-wasm/worker` | the worker | `openSqliteWasmEngine`, `destroySqliteWasmDatabase` |
 
 Setup walkthrough: [Choosing a storage engine → SQLite WASM](../guides/storage-engines.md#sqlite-wasm).
 
@@ -38,6 +38,18 @@ function openSqliteWasmEngine(options: OpenSqliteWasmEngineOptions): Promise<Sql
 Takes `SqliteWasmEngineOptions` plus `sqlite3?: Sqlite3Static | Promise<Sqlite3Static>` (a loaded SQLite module; default: the package's own build).
 
 Returns a `SqliteWasmEngine`: a `DBEngine` with `database`, the underlying `oo1` database. `close()` closes the database and pauses the pool, so the next leader's worker can open it.
+
+## `destroySqliteWasmDatabase(options)`
+
+```ts
+function destroySqliteWasmDatabase(options: OpenSqliteWasmEngineOptions): Promise<void>;
+```
+
+Removes `filename` and its journal files (`-journal`, `-wal`, `-shm`) from the OPFS pool `poolName`, then pauses the pool again so the next leader can open it. Does nothing for `vfs: "memory"` or a missing file. Pass it to the worker to enable `DBStorage.destroy()` and `client.destroy()`:
+
+```ts
+startDBStorageWorker<SqliteWasmEngineOptions>({ open: ..., destroy: destroySqliteWasmDatabase });
+```
 
 With Vite, add `optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] }` to `vite.config.ts`.
 
