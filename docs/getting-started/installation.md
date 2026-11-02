@@ -11,13 +11,13 @@ You install EzSync as a few small packages. A typical app needs **four**: the co
 
 ## Step 1: pick one package from each row
 
-| You need...                       | Pick one                                                                                                                                                                                            |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The core (always)                 | `@ez-kits/sync-client-core`                                                                                                                                                                         |
-| An ORM bridge (a **DB adapter**)  | `@ez-kits/sync-client-drizzle-adapter` + `drizzle-orm` **or** `@ez-kits/sync-client-typeorm-adapter` + `typeorm`                                                                                    |
-| A database (a **storage engine**) | `@ez-kits/sync-client-storage-sqljs` + `sql.js` **or** `@ez-kits/sync-client-storage-sqlite-wasm` + `@sqlite.org/sqlite-wasm` **or** `@ez-kits/sync-client-storage-pglite` + `@electric-sql/pglite` |
-| A backend (a **sync adapter**)    | `@ez-kits/sync-client-firebase` + `firebase`, or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                                            |
-| Optional extras                   | `@ez-kits/sync-client-react` (React hooks), `@ez-kits/sync-client-conflict-resolution` (conflict policies)                                                                                          |
+| You need...                       | Pick one                                                                                                                                                                                                                                                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The core (always)                 | `@ez-kits/sync-client-core`                                                                                                                                                                                                                                                    |
+| An ORM bridge (a **DB adapter**)  | `@ez-kits/sync-client-drizzle-adapter` + `drizzle-orm` **or** `@ez-kits/sync-client-typeorm-adapter` + `typeorm`                                                                                                                                                               |
+| A database (a **storage engine**) | `@ez-kits/sync-client-storage-sqljs` + `sql.js` **or** `@ez-kits/sync-client-storage-sqlite-wasm` + `@sqlite.org/sqlite-wasm` **or** `@ez-kits/sync-client-storage-wa-sqlite` + `@journeyapps/wa-sqlite` **or** `@ez-kits/sync-client-storage-pglite` + `@electric-sql/pglite` |
+| A backend (a **sync adapter**)    | `@ez-kits/sync-client-firebase` + `firebase`, or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                                                                                                                       |
+| Optional extras                   | `@ez-kits/sync-client-react` (React hooks), `@ez-kits/sync-client-conflict-resolution` (conflict policies)                                                                                                                                                                     |
 
 Not sure? Use the **recommended starter stack**. It is what the quick start uses:
 
@@ -26,7 +26,7 @@ Not sure? Use the **recommended starter stack**. It is what the quick start uses
 - **Firestore** (if you want a hosted backend),
 - **React** bindings (if your app uses React).
 
-The SQL dialect must match: sql.js and SQLite WASM speak **SQLite**; PGlite speaks **Postgres**. Both ORM adapters support both dialects. See [Choosing a storage engine](../guides/storage-engines.md) for the trade-offs.
+The SQL dialect must match: sql.js, SQLite WASM and wa-sqlite speak **SQLite**; PGlite speaks **Postgres**. Both ORM adapters support both dialects. See [Choosing a storage engine](../guides/storage-engines.md) for the trade-offs.
 
 ## Step 2: install
 
@@ -56,6 +56,7 @@ npm install -D @types/sql.js
 | `typeorm`                 | `^0.3.28`                                                                |
 | `sql.js`                  | `^1.14.1`                                                                |
 | `@sqlite.org/sqlite-wasm` | `3.54.1-build1`                                                          |
+| `@journeyapps/wa-sqlite`  | `^2.0.10`                                                                |
 | `@electric-sql/pglite`    | `^0.3.16`                                                                |
 | `firebase`                | `^12.12.1`                                                               |
 | `react`                   | `^19.2`                                                                  |

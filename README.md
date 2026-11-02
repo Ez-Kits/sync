@@ -6,7 +6,7 @@ You pick each piece separately: the local database engine, the ORM you query it 
 
 ## Why EzSync
 
-- **Local-first.** Collections live in SQLite (sql.js or the official SQLite WASM build) or Postgres (PGlite), persisted in the browser. Reads and live queries never wait for the network.
+- **Local-first.** Collections live in SQLite (sql.js, the official SQLite WASM build or wa-sqlite) or Postgres (PGlite), persisted in the browser. Reads and live queries never wait for the network.
 - **Writes are never lost.** Each local write commits together with its outbox entry in one transaction. Nothing leaves the outbox until the backend has accepted it, or until your app explicitly discards a write the backend refused.
 - **Many tabs, one database.** Tabs elect a leader that holds the database and runs sync; the other tabs forward their queries to it. Live queries refresh in every tab.
 - **Resumable pulls.** Pull checkpoints are stored in the same database as the rows and saved in the same transaction, so a failed or interrupted pull resumes without skipping changes.
@@ -24,7 +24,7 @@ DB adapter (Drizzle, TypeORM)
    │
 DB storage ── leader election across tabs
    │
-engine (sql.js, SQLite WASM, PGlite)
+engine (sql.js, SQLite WASM, wa-sqlite, PGlite)
 ```
 
 ```ts
@@ -45,6 +45,7 @@ client.startSync();
 | `@ez-kits/sync-client-react`               | React bindings: provider, `useSyncClient`, `useLiveQuery`                 |
 | `@ez-kits/sync-client-storage-sqljs`       | SQLite (sql.js) in a worker, snapshotted to IndexedDB                     |
 | `@ez-kits/sync-client-storage-sqlite-wasm` | Official SQLite WASM in a worker, persisted to OPFS (no COOP/COEP needed) |
+| `@ez-kits/sync-client-storage-wa-sqlite`   | wa-sqlite in a worker, persisted to OPFS or IndexedDB, your choice        |
 | `@ez-kits/sync-client-storage-pglite`      | Postgres (PGlite) in a worker, persisted to IndexedDB                     |
 | `@ez-kits/sync-client-firebase`            | Sync adapters for Cloud Firestore and the Firebase Realtime Database      |
 | `@ez-kits/sync-client-conflict-resolution` | Ready-made conflict policies: last write wins, field merge, and others    |

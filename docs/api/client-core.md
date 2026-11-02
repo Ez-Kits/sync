@@ -169,7 +169,7 @@ interface DBEngineFactory<TEngineOptions> {
 
 Call once at the top of the worker module. `open(engineOptions, { signal })` runs **only while this worker leads**, so it is the place for your migrations. `signal` is aborted when the worker stops leading.
 
-`destroy(engineOptions)` deletes the database for `DBStorage.destroy()` and `client.destroy()`. It runs while no worker has the engine open, so it also deletes a database that fails to open. Every storage package exports one: `destroySqlJsDatabase`, `destroySqliteWasmDatabase`, `destroyPGliteDatabase`.
+`destroy(engineOptions)` deletes the database for `DBStorage.destroy()` and `client.destroy()`. It runs while no worker has the engine open, so it also deletes a database that fails to open. Every storage package exports one: `destroySqlJsDatabase`, `destroySqliteWasmDatabase`, `destroyWaSqliteDatabase`, `destroyPGliteDatabase`.
 
 ### `createLocalDBStorage(options)`
 

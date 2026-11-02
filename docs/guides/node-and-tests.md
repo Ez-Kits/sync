@@ -21,7 +21,7 @@ const dbStorage = createLocalDBStorage({
 ```
 
 - `open` runs once, right away. This context is always the **leader**.
-- The `/worker` entry points (`openSqlJsEngine`, `openSqliteWasmEngine`, `openPGliteEngine`) are plain functions; they work outside a worker too.
+- The `/worker` entry points (`openSqlJsEngine`, `openSqliteWasmEngine`, `openWaSqliteEngine`, `openPGliteEngine`) are plain functions; they work outside a worker too. wa-sqlite's builds target browsers: in Node, pass `loadModule` and give the module its `.wasm` file as `wasmBinary`.
 - Transactions are still serialized and still rolled back after `transactionTimeoutMs` (10 seconds) of inactivity.
 
 With PGlite (Postgres):

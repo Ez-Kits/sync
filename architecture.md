@@ -20,7 +20,7 @@ DB adapter (ORM bridge: Drizzle, TypeORM)
 DBStorage (contract: exec, transaction, dialect, role)
    │  leader election and forwarding across tabs
    ▼
-DB engine (sql.js, SQLite WASM, PGlite), opened only by the leader
+DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 ```
 
 | ADR | Decision                                                                      |
@@ -316,6 +316,7 @@ Records without pending writes always take remote changes. A skipped remote even
 
 - **`sync-client-storage-sqljs`**: sql.js in memory, snapshotted to IndexedDB after every commit and every write outside a transaction (`DBEngine.flush`). A new leader reopens the last snapshot. Statements without parameters may contain several statements, to keep migrations simple.
 - **`sync-client-storage-sqlite-wasm`**: the official SQLite WASM build on the `opfs-sahpool` VFS, which needs no COOP/COEP headers. The pool allows one holder per origin, so the leader releases it when it steps down.
+- **`sync-client-storage-wa-sqlite`**: wa-sqlite with a VFS the application chooses: `OPFSCoopSyncVFS` (OPFS, synchronous build) or `IDBBatchAtomicVFS` (IndexedDB, asynchronous build). Each leader loads its own module and closes the VFS when it steps down.
 - **`sync-client-storage-pglite`**: PGlite (Postgres dialect) persisted to IndexedDB (`idb://...`).
 
 The application's worker module opens the engine and may run its own table migrations there.

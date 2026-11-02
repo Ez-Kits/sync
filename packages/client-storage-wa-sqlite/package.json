@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/package",
+  "name": "@ez-kits/sync-client-storage-wa-sqlite",
+  "version": "0.0.0",
+  "description": "SQLite (wa-sqlite) storage for EzSync in the browser, saved to OPFS or IndexedDB",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-storage-wa-sqlite#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
+  "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/client-storage-wa-sqlite"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./worker": "./dist/worker.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "test:types": "vp test run --typecheck.only",
+    "test:coverage": "vp test run --coverage",
+    "check": "vp check",
+    "prepublishOnly": "vp run build && node ../../scripts/copy-package-files.mjs"
+  },
+  "devDependencies": {
+    "@ez-kits/sync-client-core": "workspace:*",
+    "@journeyapps/wa-sqlite": "catalog:",
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "catalog:",
+    "fake-indexeddb": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "@ez-kits/sync-client-core": "workspace:^",
+    "@journeyapps/wa-sqlite": "catalog:"
+  }
+}
