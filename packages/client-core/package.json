@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-client-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first sync client for EzSync",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-core#readme",
   "bugs": {
