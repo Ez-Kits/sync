@@ -12,15 +12,23 @@ export function createEngine() {
 export type FakeDBStorage = DBStorage & {
   role: DBRole;
   close: ReturnType<typeof vi.fn>;
+  /** Set with `destroyable`. */
+  destroy?: ReturnType<typeof vi.fn>;
   setRole(role: DBRole): void;
   invalidate(): void;
   fail(error: unknown): void;
+  /** With `destroyable`: another context deleted the database. */
+  destroyRemotely(): void;
 };
 
 /** A DBStorage whose role, invalidations and errors the test drives. */
 export function fakeDBStorage(
-  options: { role?: DBRole; key?: string; ready?: Promise<void> } = {},
+  options: { role?: DBRole; key?: string; ready?: Promise<void>; destroyable?: boolean } = {},
 ): FakeDBStorage {
+  const destroyedListeners = new Set<() => void>();
+  const notifyDestroyed = () => {
+    for (const listener of destroyedListeners) listener();
+  };
   const roleListeners = new Set<(role: DBRole) => void>();
   const invalidateListeners = new Set<() => void>();
   const errorListeners = new Set<(error: unknown) => void>();
@@ -54,7 +62,15 @@ export function fakeDBStorage(
     fail(error) {
       for (const listener of errorListeners) listener(error);
     },
+    destroyRemotely: notifyDestroyed,
   };
+  if (options.destroyable) {
+    storage.destroy = vi.fn(async () => notifyDestroyed());
+    storage.onDestroyed = (listener) => {
+      destroyedListeners.add(listener);
+      return () => destroyedListeners.delete(listener);
+    };
+  }
   return storage;
 }
 

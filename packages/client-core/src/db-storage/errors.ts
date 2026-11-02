@@ -48,6 +48,24 @@ export class DBStorageClosedError extends Error {
   }
 }
 
+/** The database was deleted with `DBStorage.destroy`, in this or another context. */
+export class DBStorageDestroyedError extends Error {
+  override readonly name = "DBStorageDestroyedError";
+  constructor() {
+    super("The database was deleted.");
+  }
+}
+
+/** The storage cannot delete its database: its worker has no `destroy` function. */
+export class DBStorageDestroyUnsupportedError extends Error {
+  override readonly name = "DBStorageDestroyUnsupportedError";
+  constructor(
+    message = "This DB storage cannot delete its database: pass { open, destroy } to startDBStorageWorker.",
+  ) {
+    super(message);
+  }
+}
+
 /** The storage worker failed, for example because its script could not be loaded. */
 export class DBStorageWorkerError extends Error {
   override readonly name = "DBStorageWorkerError";
@@ -62,6 +80,8 @@ const errorTypes = {
   TransactionClosedError,
   TransactionStatementError,
   DBStorageClosedError,
+  DBStorageDestroyedError,
+  DBStorageDestroyUnsupportedError,
   CoordinationUnavailableError,
   DBStorageWorkerError,
 } as const;

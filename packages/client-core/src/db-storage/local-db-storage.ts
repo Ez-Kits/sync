@@ -1,4 +1,8 @@
-import { DBStorageClosedError } from "./errors";
+import {
+  DBStorageClosedError,
+  DBStorageDestroyedError,
+  DBStorageDestroyUnsupportedError,
+} from "./errors";
 import { TxScheduler } from "./tx-scheduler";
 import type {
   DBDialect,
@@ -17,6 +21,8 @@ export interface LocalDBStorageOptions {
   key?: string;
   /** Open the engine in this context. */
   open(context: OpenDBEngineContext): DBEngine | Promise<DBEngine>;
+  /** Delete the database, after the engine closed; enables `destroy`. */
+  destroy?: () => void | Promise<void>;
   /** Idle time after which an open transaction is rolled back. Defaults to 10 seconds. */
   transactionTimeoutMs?: number;
 }
@@ -35,8 +41,34 @@ export function createLocalDBStorage(options: LocalDBStorageOptions): DBStorage 
   const ready = scheduler.then(() => undefined);
   ready.catch(() => undefined);
   let closed: Promise<void> | undefined;
-  const use = <T>(task: (scheduler: TxScheduler) => Promise<T>): Promise<T> =>
-    closed ? Promise.reject(new DBStorageClosedError()) : scheduler.then(task);
+  let destroying: Promise<void> | undefined;
+  let destroyed = false;
+  const destroyedListeners = new Set<() => void>();
+  const use = <T>(task: (scheduler: TxScheduler) => Promise<T>): Promise<T> => {
+    if (destroyed) return Promise.reject(new DBStorageDestroyedError());
+    return closed ? Promise.reject(new DBStorageClosedError()) : scheduler.then(task);
+  };
+  const close = () => {
+    closed ??= (async () => {
+      controller.abort();
+      const opened = await scheduler.catch(() => undefined);
+      await opened?.close();
+    })();
+    return closed;
+  };
+  const destroy = async (remove: () => void | Promise<void>) => {
+    await close();
+    await remove();
+    destroyed = true;
+    for (const listener of destroyedListeners) {
+      try {
+        listener();
+      } catch {
+        // One observer must not block delivery to other observers.
+      }
+    }
+    destroyedListeners.clear();
+  };
 
   return {
     dialect: options.dialect,
@@ -61,13 +93,16 @@ export function createLocalDBStorage(options: LocalDBStorageOptions): DBStorage 
         await s.commit(txId);
         return result;
       }),
-    close: () => {
-      closed ??= (async () => {
-        controller.abort();
-        const opened = await scheduler.catch(() => undefined);
-        await opened?.close();
-      })();
-      return closed;
+    close,
+    destroy: () => {
+      if (destroyed) return Promise.resolve();
+      if (!options.destroy) return Promise.reject(new DBStorageDestroyUnsupportedError());
+      destroying ??= destroy(options.destroy).finally(() => (destroying = undefined));
+      return destroying;
+    },
+    onDestroyed: (listener) => {
+      destroyedListeners.add(listener);
+      return () => destroyedListeners.delete(listener);
     },
   };
 }

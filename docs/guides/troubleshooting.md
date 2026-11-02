@@ -35,6 +35,18 @@ The leader tab closed or crashed while a request was in flight, or could not be 
 
 The storage was closed with `client.dispose()` or `dbStorage.close()`. Create a new storage and client.
 
+### `DBStorageDestroyedError`
+
+The database was deleted with `client.destroy()` or `dbStorage.destroy()`, maybe in another tab. Watch for it with `client.subscribeDestroyed()`, for example to send the user to sign-in. Create a new storage and client to start over.
+
+### `DBStorageDestroyUnsupportedError`
+
+`destroy()` needs the storage worker to know how to delete its database. Pass `{ open, destroy }` to `startDBStorageWorker`, with the storage package's `destroy...Database` function. See [Choosing a storage engine](storage-engines.md).
+
+### `PendingWritesError`
+
+`client.destroy()` refused to delete writes that were not pushed yet. Wait for them with `waitForPushed()`, or pass `ifPendingWrites: "discard"` once the user agreed to lose them.
+
 ### `Primary field not found`
 
 `defineDrizzleCollection` could not find a primary key column in the table, or `defineTypeOrmCollection` found no `@PrimaryColumn`. Mark one column as the primary key, or pass `primaryField`.

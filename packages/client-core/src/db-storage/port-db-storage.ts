@@ -1,4 +1,9 @@
-import { DBStorageClosedError, DBStorageWorkerError, deserializeError } from "./errors";
+import {
+  DBStorageClosedError,
+  DBStorageDestroyedError,
+  DBStorageWorkerError,
+  deserializeError,
+} from "./errors";
 import type { NodeOptions, NodeRequestBody, PortMessage, PortRequest } from "./protocol";
 import type { DBDialect, DBExecutor, DBQuery, DBQueryResult, DBRole, DBStorage } from "./types";
 
@@ -61,11 +66,14 @@ class PortDBStorage implements DBStorage {
   private readonly roleListeners = new Set<(role: DBRole) => void>();
   private readonly invalidateListeners = new Set<() => void>();
   private readonly errorListeners = new Set<(error: unknown) => void>();
+  private readonly destroyedListeners = new Set<() => void>();
   private settleReady: { resolve(): void; reject(error: unknown): void } | undefined;
   private nextId = 0;
   /** Set when the worker failed before it became ready; every request then rejects with it. */
   private failure: Error | undefined;
   private closed: Promise<void> | undefined;
+  private destroying: Promise<void> | undefined;
+  private destroyed = false;
   private pageCleanup: (() => void) | undefined;
 
   constructor(
@@ -123,25 +131,56 @@ class PortDBStorage implements DBStorage {
     return () => this.errorListeners.delete(listener);
   }
 
+  onDestroyed(listener: () => void): () => void {
+    this.destroyedListeners.add(listener);
+    return () => this.destroyedListeners.delete(listener);
+  }
+
   close(): Promise<void> {
     this.closed ??= this.shutdown();
     return this.closed;
+  }
+
+  destroy(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (this.closed) return Promise.reject(new DBStorageClosedError());
+    if (this.failure) return Promise.reject(this.failure);
+    this.destroying ??= this.request({ t: "destroy", id: ++this.nextId })
+      .then(() => this.markDestroyed())
+      .finally(() => (this.destroying = undefined));
+    return this.destroying;
+  }
+
+  /** The database is gone: tell the listeners, then close. */
+  private markDestroyed(): Promise<void> {
+    this.destroyed = true;
+    for (const listener of this.destroyedListeners) {
+      try {
+        listener();
+      } catch {
+        // One observer must not block delivery to other observers.
+      }
+    }
+    return this.close();
   }
 
   private async shutdown(): Promise<void> {
     this.pageCleanup?.();
     // A worker that failed to load never answers.
     if (!this.failure) await this.request({ t: "close", id: ++this.nextId });
-    for (const pending of this.pending.values()) pending.reject(new DBStorageClosedError());
+    const error = this.destroyed ? new DBStorageDestroyedError() : new DBStorageClosedError();
+    for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
-    this.settleReady?.reject(new DBStorageClosedError());
+    this.settleReady?.reject(error);
     this.roleListeners.clear();
     this.invalidateListeners.clear();
     this.errorListeners.clear();
+    this.destroyedListeners.clear();
     (this.endpoint as Partial<Worker>).terminate?.();
   }
 
   private call(body: NodeRequestBody): Promise<unknown> {
+    if (this.destroyed) return Promise.reject(new DBStorageDestroyedError());
     if (this.closed) return Promise.reject(new DBStorageClosedError());
     if (this.failure) return Promise.reject(this.failure);
     return this.request({ t: "request", id: ++this.nextId, body });
@@ -187,6 +226,9 @@ class PortDBStorage implements DBStorage {
         return;
       case "invalidate":
         for (const listener of this.invalidateListeners) listener();
+        return;
+      case "destroyed":
+        void this.markDestroyed();
         return;
       case "error": {
         const error = deserializeError(message.error);

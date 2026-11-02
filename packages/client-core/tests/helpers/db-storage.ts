@@ -69,6 +69,7 @@ export function startNode(
   options: {
     disk?: ReturnType<typeof createDisk>;
     open?: (signal: AbortSignal) => Promise<DBEngine>;
+    destroy?: () => Promise<void>;
     key?: string;
     requestTimeoutMs?: number;
     transactionTimeoutMs?: number;
@@ -85,10 +86,12 @@ export function startNode(
   const roles: DBRole[] = [];
   const errors: unknown[] = [];
   const invalidate = vi.fn();
+  const destroyed = vi.fn();
   const events: NodeEvents = {
     role: (role) => roles.push(role),
     invalidate,
     error: (error) => errors.push(error),
+    destroyed,
   };
   const disk = options.disk ?? createDisk();
   const key = options.key ?? "default";
@@ -97,6 +100,7 @@ export function startNode(
     clientId: tag,
     requestTimeoutMs: options.requestTimeoutMs,
     transactionTimeoutMs: options.transactionTimeoutMs,
+    destroy: options.destroy,
     open:
       options.open ??
       (async () => {
@@ -117,6 +121,7 @@ export function startNode(
     roles,
     errors,
     invalidate,
+    destroyed,
     get role() {
       return roles.at(-1);
     },

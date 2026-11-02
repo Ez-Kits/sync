@@ -73,6 +73,9 @@ export class FakeLockManager {
       }),
   );
 
+  /** Like `navigator.locks.query()`: the held locks, by name. */
+  query = vi.fn(async () => ({ held: [...this.held.keys()].map((name) => ({ name })) }));
+
   /** Simulate the holder's context dying: the lock is freed without its callback finishing. */
   crash(name = "ez-sync:default") {
     this.held.delete(name);

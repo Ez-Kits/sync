@@ -99,13 +99,9 @@ Write the `CREATE TABLE` statements the same way. Do not rely on TypeORM's `sync
 
 ## Starting over
 
-To wipe the local database (for example on sign-out), delete it from browser storage after calling `await client.dispose()` in every tab:
+To wipe the local database (for example on sign-out), call `await client.destroy()`. It deletes the database in every tab, with the engine's own method. See [Deleting the local database](syncing.md#deleting-the-local-database).
 
-- sql.js: delete the IndexedDB database named in `engineOptions.indexedDBName`.
-- PGlite: delete the IndexedDB database of `dataDir` (`idb://name` uses `/pglite/name`).
-- SQLite WASM: remove the file from the OPFS pool, or use a new `filename`.
-
-Using a new storage `key` and database name per user is often simpler. Checkpoints live in the database too, so a fresh database starts a full pull.
+Checkpoints live in the database too, so a fresh database starts a full pull.
 
 ## Next
 

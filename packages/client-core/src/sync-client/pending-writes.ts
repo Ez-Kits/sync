@@ -33,6 +33,18 @@ export class WaitForPushedError extends Error {
   }
 }
 
+/** `dispose({ deleteDatabase: true })` refused to delete unpushed writes. */
+export class PendingWritesError extends Error {
+  override readonly name = "PendingWritesError";
+
+  constructor(readonly pending: PendingWrites) {
+    super(
+      `${pending.total} local write(s) are not pushed yet. Wait for them with waitForPushed(), ` +
+        'or pass ifPendingWrites: "discard" to delete them.',
+    );
+  }
+}
+
 export function summarizePendingWrites(
   keys: readonly PendingEventKey[],
   parked: ReadonlySet<string>,

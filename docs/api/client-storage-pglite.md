@@ -6,10 +6,10 @@ Postgres ([PGlite](https://pglite.dev)) in a leader worker, persisted to Indexed
 npm install @ez-kits/sync-client-storage-pglite @electric-sql/pglite
 ```
 
-| Entry point                                  | Use it in            | Contents                |
-| -------------------------------------------- | -------------------- | ----------------------- |
-| `@ez-kits/sync-client-storage-pglite`        | the page             | `createPGliteDBStorage` |
-| `@ez-kits/sync-client-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`      |
+| Entry point                                  | Use it in            | Contents                                    |
+| -------------------------------------------- | -------------------- | ------------------------------------------- |
+| `@ez-kits/sync-client-storage-pglite`        | the page             | `createPGliteDBStorage`                     |
+| `@ez-kits/sync-client-storage-pglite/worker` | the worker (or Node) | `openPGliteEngine`, `destroyPGliteDatabase` |
 
 Setup walkthrough: [Choosing a storage engine → PGlite](../guides/storage-engines.md#pglite).
 
@@ -41,6 +41,18 @@ Behaviour:
 
 - A `run` statement **without parameters** runs with `exec`, so it may contain several statements.
 - `affectedRows` is reported for `all` / `get` queries.
+
+## `destroyPGliteDatabase(options?)`
+
+```ts
+function destroyPGliteDatabase(options?: PGliteEngineOptions): Promise<void>;
+```
+
+Deletes the data of `dataDir`: the IndexedDB database `/pglite/<name>` for `idb://<name>`, or the OPFS directory for `opfs-ahp://<path>`. Does nothing for an in-memory database or data that does not exist. Throws for a file-system path (Node): delete that directory yourself. Pass it to the worker to enable `DBStorage.destroy()` and `client.destroy()`:
+
+```ts
+startDBStorageWorker<PGliteEngineOptions>({ open: ..., destroy: destroyPGliteDatabase });
+```
 
 With Vite, add `optimizeDeps: { exclude: ["@electric-sql/pglite"] }` to `vite.config.ts`.
 

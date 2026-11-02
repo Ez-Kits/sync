@@ -6,7 +6,7 @@ import initSqlJs, {
   type SqlValue,
 } from "sql.js";
 import type { SqlJsEngineOptions } from "./options";
-import { loadSnapshot, saveSnapshot, type SnapshotLocation } from "./snapshot";
+import { deleteSnapshot, loadSnapshot, saveSnapshot, type SnapshotLocation } from "./snapshot";
 
 export interface OpenSqlJsEngineOptions extends SqlJsEngineOptions {
   /** A loaded sql.js module, e.g. a custom build. Defaults to `initSqlJs()`. */
@@ -53,6 +53,12 @@ function execute(db: Database, query: DBQuery): DBQueryResult {
   }
 }
 
+function snapshotLocation(options: OpenSqlJsEngineOptions): SnapshotLocation | undefined {
+  return options.indexedDBName === undefined
+    ? undefined
+    : { name: options.indexedDBName, factory: options.indexedDBFactory ?? indexedDB };
+}
+
 /**
  * Open sql.js in this (leader) worker, restoring the IndexedDB snapshot. The storage
  * flushes after every commit and every write outside a transaction, which saves a new
@@ -60,10 +66,7 @@ function execute(db: Database, query: DBQuery): DBQueryResult {
  */
 export async function openSqlJsEngine(options: OpenSqlJsEngineOptions = {}): Promise<SqlJsEngine> {
   const SQL = await (options.sqlJs ?? initSqlJs(sqlJsConfig(options.wasmUrl)));
-  const location: SnapshotLocation | undefined =
-    options.indexedDBName === undefined
-      ? undefined
-      : { name: options.indexedDBName, factory: options.indexedDBFactory ?? indexedDB };
+  const location = snapshotLocation(options);
   const snapshot = location ? await loadSnapshot(location) : null;
   const db = new SQL.Database(snapshot ? new Uint8Array(snapshot) : undefined);
   return {
@@ -74,4 +77,13 @@ export async function openSqlJsEngine(options: OpenSqlJsEngineOptions = {}): Pro
     },
     close: async () => db.close(),
   };
+}
+
+/**
+ * Delete the database `openSqlJsEngine` opens with these options: its IndexedDB snapshot.
+ * Pass it as `destroy` to `startDBStorageWorker` to enable `DBStorage.destroy`.
+ */
+export async function destroySqlJsDatabase(options: OpenSqlJsEngineOptions = {}): Promise<void> {
+  const location = snapshotLocation(options);
+  if (location) await deleteSnapshot(location);
 }

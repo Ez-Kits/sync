@@ -1,6 +1,8 @@
 import {
   CoordinationUnavailableError,
   DBStorageClosedError,
+  DBStorageDestroyedError,
+  DBStorageDestroyUnsupportedError,
   deserializeError,
   LeaderChangedError,
   LeaderUnavailableError,
@@ -10,6 +12,7 @@ import {
   clientChannelName,
   clientLockName,
   controlChannelName,
+  isClientLockOf,
   leaderChannelName,
   leaderLockName,
   type BroadcastChannelConstructor,
@@ -28,6 +31,8 @@ export type LockManagerLike = {
     options: { mode: "exclusive"; signal?: AbortSignal },
     callback: (lock: unknown) => T | PromiseLike<T>,
   ): Promise<T>;
+  /** Lists the held locks; used to wait for every context to close before a delete. */
+  query?(): Promise<{ held?: Array<{ name?: string }> }>;
 };
 
 export interface NodeHost {
@@ -39,6 +44,8 @@ export interface NodeEvents {
   role(role: DBRole): void;
   invalidate(): void;
   error(error: unknown): void;
+  /** Another context deleted the database; this node closed itself. */
+  destroyed(): void;
 }
 
 interface Leadership {
@@ -123,10 +130,16 @@ export class DBStorageNode {
   private leaderSignals = 0;
   private nextId = 0;
   private closed = false;
+  /** Closed by `destroy`: the delete may still run, or be retried after it failed. */
+  private closedByDestroy = false;
+  private destroyed = false;
+  private destroying: Promise<void> | undefined;
 
   constructor(
     private readonly options: NodeOptions & {
       open(signal: AbortSignal): Promise<DBEngine>;
+      /** Delete the database; runs with the leader lock held and no engine open. */
+      destroy?: () => Promise<void>;
       host: NodeHost;
       events: NodeEvents;
     },
@@ -139,7 +152,7 @@ export class DBStorageNode {
   }
 
   request(body: NodeRequestBody): Promise<unknown> {
-    if (this.closed) return Promise.reject(new DBStorageClosedError());
+    if (this.closed) return Promise.reject(this.closedError());
     const leadership = this.leadership;
     if (leadership && !leadership.closing) {
       return this.executeLeading(leadership, body, this.clientId);
@@ -164,13 +177,93 @@ export class DBStorageNode {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.leave();
+    this.closeChannels();
+  }
+
+  /**
+   * Delete the database in every context. The others close and leave the leader queue; once
+   * their lifetime locks are free (or after the request timeout), this node takes the leader
+   * lock, so no engine is open, and deletes the data.
+   */
+  destroy(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (this.closed && !this.closedByDestroy) return Promise.reject(new DBStorageClosedError());
+    this.destroying ??= this.runDestroy().finally(() => (this.destroying = undefined));
+    return this.destroying;
+  }
+
+  private async runDestroy(): Promise<void> {
+    const { destroy } = this.options;
+    if (!destroy) throw new DBStorageDestroyUnsupportedError();
+    const locks = this.locks;
+    if (!locks || !this.control) throw new CoordinationUnavailableError();
+    this.closed = true;
+    this.closedByDestroy = true;
+    this.post({ t: "destroy", from: this.clientId });
+    // Step down, closing the engine, and stay out of the leader queue.
+    await this.leave();
+    await this.waitForOtherContexts(locks);
+    await locks.request(leaderLockName(this.key), { mode: "exclusive" }, () => destroy());
+    this.destroyed = true;
+    this.closeChannels();
+  }
+
+  /** Wait until the other contexts of this key released their lifetime locks, i.e. closed. */
+  private async waitForOtherContexts(locks: LockManagerLike): Promise<void> {
+    const own = clientLockName(this.key, this.clientId);
+    const held = (await locks.query?.())?.held ?? [];
+    const others = held
+      .map(({ name }) => name)
+      .filter((name): name is string => name !== own && isClientLockOf(this.key, name));
+    if (others.length === 0) return;
+    const controller = new AbortController();
+    // A context that never answers (hung or frozen) must not block the delete forever.
+    const timer = setTimeout(
+      () => controller.abort(),
+      this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    );
+    try {
+      await Promise.all(
+        others.map((name) =>
+          locks
+            .request(name, { mode: "exclusive", signal: controller.signal }, () => undefined)
+            .catch(() => undefined),
+        ),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Another context deletes the database: close, and tell this context. */
+  private async closeDestroyed(): Promise<void> {
+    this.closed = true;
+    this.destroyed = true;
+    await this.leave();
+    this.closeChannels();
+    this.options.events.destroyed();
+  }
+
+  /** Release leadership (closing the engine) and fail what waits for a leader. */
+  private async leave(): Promise<void> {
     this.lockController?.abort();
+    this.lockController = undefined;
     await this.lockReleased;
-    for (const [id, pending] of this.pending) this.reject(id, pending, new DBStorageClosedError());
+    for (const [id, pending] of this.pending) this.reject(id, pending, this.closedError());
+  }
+
+  private closeChannels(): void {
     this.leaderChannel?.close();
     this.replies?.close();
     this.control?.close();
     this.lifetime.abort();
+  }
+
+  private closedError(): Error {
+    return this.closedByDestroy || this.destroyed
+      ? new DBStorageDestroyedError()
+      : new DBStorageClosedError();
   }
 
   private start(): void {
@@ -392,6 +485,13 @@ export class DBStorageNode {
   }
 
   private handleControl(message: ControlMessage): void {
+    if (this.closed) {
+      // A context that started meanwhile took the lead: it must close before the delete too.
+      if (this.closedByDestroy && message?.t === "leader-hello") {
+        this.post({ t: "destroy", from: this.clientId });
+      }
+      return;
+    }
     switch (message?.t) {
       case "who-is-leader":
         if (this.leadership && !this.leadership.closing) {
@@ -403,6 +503,9 @@ export class DBStorageNode {
         return;
       case "leader-bye":
         this.clearLeader(message.epoch);
+        return;
+      case "destroy":
+        void this.closeDestroyed();
         return;
     }
   }

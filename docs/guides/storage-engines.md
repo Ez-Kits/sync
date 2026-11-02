@@ -22,7 +22,7 @@ The storage engine is the real database in the browser. EzSync ships three. All 
 
 Every engine follows the same two-file pattern:
 
-1. a **worker file** that calls `startDBStorageWorker` with the engine's `open...Engine` function, and
+1. a **worker file** that calls `startDBStorageWorker` with the engine's `open...Engine` function (and its `destroy...Database` function, so you can [delete the database](syncing.md#deleting-the-local-database)), and
 2. a `create...Storage` call on the page that starts that worker.
 
 The `key` option names the database: every tab with the same key shares it. `engineOptions` are sent to the worker, so they must be plain data (strings, numbers, objects).
@@ -33,16 +33,20 @@ The `key` option names the database: every tab with the same key shares it. `eng
 // db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
 import {
+  destroySqlJsDatabase,
   openSqlJsEngine,
   type SqlJsEngineOptions,
 } from "@ez-kits/sync-client-storage-sqljs/worker";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./migrations";
 
-startDBStorageWorker<SqlJsEngineOptions>(async (options) => {
-  const engine = await openSqlJsEngine({ ...options, wasmUrl });
-  await migrate(engine);
-  return engine;
+startDBStorageWorker<SqlJsEngineOptions>({
+  open: async (options) => {
+    const engine = await openSqlJsEngine({ ...options, wasmUrl });
+    await migrate(engine);
+    return engine;
+  },
+  destroy: destroySqlJsDatabase,
 });
 ```
 
@@ -73,15 +77,19 @@ The official SQLite build, saved to the Origin Private File System (OPFS) with t
 // db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
 import {
+  destroySqliteWasmDatabase,
   openSqliteWasmEngine,
   type SqliteWasmEngineOptions,
 } from "@ez-kits/sync-client-storage-sqlite-wasm/worker";
 import { migrate } from "./migrations";
 
-startDBStorageWorker<SqliteWasmEngineOptions>(async (options) => {
-  const engine = await openSqliteWasmEngine(options);
-  await migrate(engine);
-  return engine;
+startDBStorageWorker<SqliteWasmEngineOptions>({
+  open: async (options) => {
+    const engine = await openSqliteWasmEngine(options);
+    await migrate(engine);
+    return engine;
+  },
+  destroy: destroySqliteWasmDatabase,
 });
 ```
 
@@ -123,15 +131,19 @@ Postgres compiled to WebAssembly.
 // db/worker.ts
 import { startDBStorageWorker } from "@ez-kits/sync-client-core";
 import {
+  destroyPGliteDatabase,
   openPGliteEngine,
   type PGliteEngineOptions,
 } from "@ez-kits/sync-client-storage-pglite/worker";
 import { migrate } from "./migrations";
 
-startDBStorageWorker<PGliteEngineOptions>(async (options) => {
-  const engine = await openPGliteEngine(options);
-  await migrate(engine);
-  return engine;
+startDBStorageWorker<PGliteEngineOptions>({
+  open: async (options) => {
+    const engine = await openPGliteEngine(options);
+    await migrate(engine);
+    return engine;
+  },
+  destroy: destroyPGliteDatabase,
 });
 ```
 
