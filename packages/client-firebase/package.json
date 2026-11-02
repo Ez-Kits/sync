@@ -1,6 +1,6 @@
 {
   "name": "@ez-kits/sync-client-firebase",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Sync EzSync data with Cloud Firestore or Firebase Realtime Database",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-firebase#readme",
   "bugs": {

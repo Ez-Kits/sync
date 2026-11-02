@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package",
   "name": "@ez-kits/sync-client-conflict-resolution",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Ready-made conflict resolution strategies for EzSync",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/client-conflict-resolution#readme",
   "bugs": {
