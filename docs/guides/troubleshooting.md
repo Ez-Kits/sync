@@ -49,15 +49,19 @@ The database was deleted with `client.destroy()` or `dbStorage.destroy()`, maybe
 
 ### `Primary field not found`
 
-`defineDrizzleCollection` could not find a primary key column in the table, or `defineTypeOrmCollection` found no `@PrimaryColumn`. Mark one column as the primary key, or pass `primaryField`.
+`defineDrizzleCollection` could not find a primary key column in the table, or `defineTypeOrmCollection` found no `@PrimaryColumn`. Mark one column as the primary key, or pass `primaryField` (a list of fields for a composite key).
 
 ### `Primary field mismatch: metadata has "x", expected "y"`
 
-The `primaryField` given to `defineTypeOrmCollection` is not the entity's primary column.
+The `primaryField` given to `defineTypeOrmCollection` does not name exactly the entity's primary columns (in any order, each once).
 
 ### `Update requires primary field "id"`
 
-`collections.<name>.update(...)` was called without the primary key. Pass it along with the changed fields.
+`collections.<name>.update(...)` was called without the primary key (or one of its fields, for a composite key). TypeScript catches this; it happens from untyped code. Pass the key along with the changed fields.
+
+### `Collection "items" has a composite primary key: pass deserializeDeleteId ...`
+
+A Firebase collection config for a composite key has no `deserializeDeleteId`. Add one that rebuilds the key object from the deleted document's id.
 
 ### `Row not found in "todos" for id ...`
 

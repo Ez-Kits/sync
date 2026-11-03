@@ -2,6 +2,7 @@ import type {
   ChangeBusEvent,
   ChangeBusEventDataMapFromCollectionConfigMap,
   CollectionConfig,
+  CollectionUpdateModel,
   SyncAdapter,
   SyncClientConfig,
 } from "@ez-kits/sync-client-core";
@@ -164,5 +165,73 @@ describe("realtime database", () => {
     expectTypeOf(single).toEqualTypeOf<SyncAdapter<DataMap, "todos", Checkpoint>>();
     // @ts-expect-error a realtime database adapter requires a Database, not a Firestore
     createRealtimeDBSyncAdapter({ db: firestore, collections: [config] });
+  });
+});
+
+interface Item {
+  listId: string;
+  position: number;
+  label: string;
+}
+type ItemKey = { listId: string; position: number };
+type ItemConfig = CollectionConfig<
+  "items",
+  unknown,
+  CollectionUpdateModel<Item, Item, readonly ["listId", "position"]>,
+  Item,
+  Item,
+  readonly ["listId", "position"]
+>;
+declare const itemConfig: ItemConfig;
+
+describe("composite primary keys", () => {
+  const remoteId = (
+    event: ChangeBusEvent<ChangeBusEventDataMapFromCollectionConfigMap<[ItemConfig]>, "items">,
+  ) => {
+    const { listId, position } = event.type === "delete" ? event.id : event.data;
+    return `${listId}~${position}`;
+  };
+  const deserializeDeleteId = () => ({ listId: "l1", position: 1 });
+
+  test("firestore requires deserializeDeleteId and types the key as an object", () => {
+    defineFirestoreCollectionSyncAdapterConfig({
+      collectionConfig: itemConfig,
+      collectionPath: "items",
+      createCheckpoint: () => 0,
+      resolveRemoteId: remoteId,
+      deserializeDeleteId,
+      serializeDelete: (id) => {
+        expectTypeOf(id).toEqualTypeOf<ItemKey>();
+        return {};
+      },
+      serializeUpdate: (data) => {
+        expectTypeOf(data).toEqualTypeOf<{ listId: string; position: number; label?: string }>();
+        return data;
+      },
+    });
+    // @ts-expect-error a composite key cannot be read back from a document id
+    defineFirestoreCollectionSyncAdapterConfig({
+      collectionConfig: itemConfig,
+      collectionPath: "items",
+      createCheckpoint: () => 0,
+      resolveRemoteId: remoteId,
+    });
+  });
+
+  test("realtime database requires deserializeDeleteId", () => {
+    defineRealtimeDBCollectionSyncAdapterConfig({
+      collectionConfig: itemConfig,
+      collectionPath: "items",
+      createCheckpoint: () => 0,
+      resolveRemoteId: remoteId,
+      deserializeDeleteId,
+    });
+    // @ts-expect-error a composite key cannot be read back from a document id
+    defineRealtimeDBCollectionSyncAdapterConfig({
+      collectionConfig: itemConfig,
+      collectionPath: "items",
+      createCheckpoint: () => 0,
+      resolveRemoteId: remoteId,
+    });
   });
 });

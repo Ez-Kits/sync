@@ -38,14 +38,14 @@ export const todosCollection = defineTypeOrmCollection({
 });
 ```
 
-| Option         | Type             | Required | Description                                                                       |
-| -------------- | ---------------- | -------- | --------------------------------------------------------------------------------- |
-| `name`         | `string` literal | yes      | The collection name.                                                              |
-| `entity`       | an entity class  | yes      | A class decorated with `@Entity`.                                                 |
-| `primaryField` | a property name  | yes      | Must be the entity's primary column, or the call throws `Primary field mismatch`. |
-| `syncAdapter`  | `SyncAdapter`    | no       | A sync adapter for this collection only.                                          |
+| Option         | Type                               | Required | Description                                                                                                                                                                                                   |
+| -------------- | ---------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | `string` literal                   | yes      | The collection name.                                                                                                                                                                                          |
+| `entity`       | an entity class                    | yes      | A class decorated with `@Entity`.                                                                                                                                                                             |
+| `primaryField` | a property name, or a list of them | yes      | Must name the entity's primary columns, in any order, or the call throws `Primary field mismatch`. A list makes a [composite key](../guides/collections-and-writes.md#composite-primary-keys), in that order. |
+| `syncAdapter`  | `SyncAdapter`                      | no       | A sync adapter for this collection only.                                                                                                                                                                      |
 
-Models: `insert` takes `DeepPartial<Todo>`, `update` takes `Partial<Todo>` (with the primary key), `get` returns `Todo`.
+Models: `insert` takes `DeepPartial<Todo>`, `update` takes the primary key fields (required) and any other fields of `Todo` (optional), `get` returns `Todo`.
 
 ---
 

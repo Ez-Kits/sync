@@ -52,11 +52,14 @@ const dialects = [
           return engine;
         },
       }),
-    collection: () => defineDrizzleCollection({ name: "todos", table: pgTodos }),
+    collection: () =>
+      defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" }),
     adapter: (dbStorage: DBStorage) =>
       createDrizzlePgDBAdapter({
         dbStorage,
-        collections: [defineDrizzleCollection({ name: "todos", table: pgTodos })],
+        collections: [
+          defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" }),
+        ],
       }),
   },
 ];

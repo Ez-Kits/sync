@@ -349,7 +349,7 @@ test("collection runtime rejects primary key values that are not a string or num
     new ChangeBus(),
   );
   await expect(runtime.insert({ id: { a: 1, b: 2 }, title: "a" } as never)).rejects.toThrow(
-    "Composite primary keys are not supported",
+    'needs a string or number value in its primary field "id", got object',
   );
   await expect(runtime.update({ title: "no id" } as never)).rejects.toThrow(
     'needs a string or number value in its primary field "id", got undefined',

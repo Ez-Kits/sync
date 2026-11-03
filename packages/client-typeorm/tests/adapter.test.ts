@@ -41,9 +41,13 @@ const entities = {
 } as never;
 
 /** An adapter whose driver hands back the mock data source. */
-function adapterFor(db: unknown, createDataSource = vi.fn(() => db as never)) {
+function adapterFor(
+  db: unknown,
+  createDataSource = vi.fn(() => db as never),
+  collections: readonly unknown[] = [collection],
+) {
   return createTypeOrmProxyDBAdapter(
-    { dbStorage: { dialect: "sqlite" } as never, collections: [collection] },
+    { dbStorage: { dialect: "sqlite" } as never, collections: collections as [typeof collection] },
     { dialect: "sqlite", createDataSource, localChangeEntities: entities },
   );
 }
@@ -105,6 +109,55 @@ test("TypeORM collection validates metadata primary key and builds entity schema
   ).toThrow("Primary field not found");
 });
 
+class Item {
+  listId!: string;
+  position!: number;
+  label!: string;
+}
+PrimaryColumn("text")(Item.prototype, "listId");
+PrimaryColumn("integer")(Item.prototype, "position");
+const itemsCollection = defineTypeOrmCollection({
+  name: "items",
+  entity: Item,
+  primaryField: ["position", "listId"],
+});
+
+test("TypeORM collection checks a composite key against the entity's primary columns", () => {
+  expect(itemsCollection.primaryField).toEqual(["position", "listId"]);
+  for (const primaryField of [["listId"], ["listId", "label"], ["listId", "listId"]]) {
+    expect(() =>
+      defineTypeOrmCollection({ name: "items", entity: Item, primaryField } as never),
+    ).toThrow(`Primary field mismatch: metadata has ["listId","position"], expected`);
+  }
+  expect(() =>
+    defineTypeOrmCollection({ name: "items", entity: Item, primaryField: "listId" }),
+  ).toThrow('Primary field mismatch: metadata has ["listId","position"], expected "listId"');
+});
+
+test("TypeORM adapter matches composite keys on every key column", async () => {
+  const row = { listId: "l1", position: 1, label: "a" };
+  const { db, calls } = makeDb(row);
+  const adapter = adapterFor(db, undefined, [itemsCollection]);
+  const key = { listId: "l1", position: 1 };
+  const where = { position: 1, listId: "l1" };
+  await adapter.update("items" as never, { ...key, label: "b" } as never);
+  await adapter.delete("items" as never, key as never);
+  expect(await adapter.get("items" as never, key as never)).toEqual(row);
+  expect(await adapter.getOptional!("items" as never, key as never)).toEqual(row);
+  expect(calls).toEqual([
+    ["update", { ...key, label: "b" }, where],
+    ["delete", where],
+    ["get", { where }],
+    ["optional", { where }],
+  ]);
+  await expect(
+    adapter.update("items" as never, { listId: "l1", label: "c" } as never),
+  ).rejects.toThrow('Update requires primary field "position"');
+  await expect(adapter.get("items" as never, "l1" as never)).rejects.toThrow(
+    'Collection "items" has a composite primary key ["position","listId"]',
+  );
+});
+
 test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and runs transactions", async () => {
   const { db, calls } = makeDb();
   const adapter = adapterFor(db);
@@ -115,7 +168,7 @@ test("TypeORM adapter runs CRUD, returns rows, handles optional absence, and run
   await adapter.update("todos" as never, { id: 1, title: "two" } as never);
   await adapter.delete("todos" as never, 1 as never);
   await expect(adapter.delete("todos" as never, { id: 1 } as never)).rejects.toThrow(
-    "Composite primary keys are not supported",
+    'has a single primary field "id": pass its value, not an object',
   );
   expect(await adapter.get("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });
   expect(await adapter.getOptional!("todos" as never, 1 as never)).toEqual({ id: 1, title: "one" });

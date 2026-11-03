@@ -1,4 +1,9 @@
-import type { SyncAdapter } from "@ez-kits/sync-client-core";
+import type {
+  CollectionUpdateModel,
+  PrimaryFieldSpec,
+  PrimaryKeyValue,
+  SyncAdapter,
+} from "@ez-kits/sync-client-core";
 import {
   getColumns,
   type Column,
@@ -6,41 +11,40 @@ import {
   type InferSelectModel,
   type Table,
 } from "drizzle-orm";
-import type { DrizzleCollectionConfig, InferPrimaryField } from "./types";
-
-type DefaultPrimaryField<T extends Table> = Extract<
-  InferPrimaryField<T["_"]["columns"]>,
-  keyof InferSelectModel<T>
->;
+import type { DefaultPrimaryField, DrizzleCollectionConfig } from "./types";
 
 export type DefineDrizzleCollectionOptions<
   TName extends string,
   T extends Table,
-  PrimaryField extends keyof Model = DefaultPrimaryField<T>,
+  PrimaryField extends PrimaryFieldSpec<Model> = DefaultPrimaryField<T>,
   Model extends InferSelectModel<T> = InferSelectModel<T>,
   TCheckpoint = unknown,
 > = {
   name: TName;
   table: T;
-  primaryField?: PrimaryField;
   syncAdapter?: SyncAdapter<
     Record<
       TName,
       {
         create: InferInsertModel<T>;
-        update: Partial<InferInsertModel<T>>;
-        delete: Model[PrimaryField];
+        update: CollectionUpdateModel<InferInsertModel<T>, Model, PrimaryField>;
+        delete: PrimaryKeyValue<Model, PrimaryField>;
       }
     >,
     TName,
     TCheckpoint
   >;
-};
+} & ([DefaultPrimaryField<T>] extends [never]
+  ? {
+      /** The table's key is a constraint (`primaryKey({ columns })`): name its fields, in order. */
+      primaryField: PrimaryField;
+    }
+  : { primaryField?: PrimaryField });
 
 export function defineDrizzleCollection<
   TName extends string,
   T extends Table,
-  PrimaryField extends keyof Model = DefaultPrimaryField<T>,
+  const PrimaryField extends PrimaryFieldSpec<Model> = DefaultPrimaryField<T>,
   Model extends InferSelectModel<T> = InferSelectModel<T>,
   TCheckpoint = unknown,
 >(
@@ -49,7 +53,7 @@ export function defineDrizzleCollection<
   TName,
   T,
   InferInsertModel<T>,
-  Partial<InferInsertModel<T>>,
+  CollectionUpdateModel<InferInsertModel<T>, Model, PrimaryField>,
   Model,
   PrimaryField,
   TCheckpoint

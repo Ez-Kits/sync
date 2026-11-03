@@ -84,7 +84,9 @@ const dialects = [
     adapter: (dbStorage: DBStorage) =>
       createDrizzlePgDBAdapter({
         dbStorage,
-        collections: [defineDrizzleCollection({ name: "todos", table: pgTodos })],
+        collections: [
+          defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" }),
+        ],
       }),
     seqColumn:
       "SELECT column_name AS name FROM information_schema.columns WHERE table_name = 'ez_sync_events' AND column_name = 'seq'",

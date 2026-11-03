@@ -1,19 +1,30 @@
-import type {
-  AtomicLocalChangeStore,
-  CollectionConfigMap,
-  CollectionNames,
-  ConfigForName,
-  DBAdapterOperations,
-  DBAdapterTransactionContext,
-  DBDialect,
-  DBExecutor,
-  DBStorage,
-  InferCollectionInsertModel,
-  InferCollectionPrimaryFieldType,
-  InferCollectionSelectModel,
-  InferCollectionUpdateModel,
+import {
+  primaryFields,
+  primaryKeyEntries,
+  primaryKeyOf,
+  type AtomicLocalChangeStore,
+  type CollectionConfigMap,
+  type CollectionNames,
+  type ConfigForName,
+  type DBAdapterOperations,
+  type DBAdapterTransactionContext,
+  type DBDialect,
+  type DBExecutor,
+  type DBStorage,
+  type InferCollectionInsertModel,
+  type InferCollectionPrimaryFieldType,
+  type InferCollectionSelectModel,
+  type InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
-import { eq, getColumns, type AnyRelations, type Column, type SQL, type Table } from "drizzle-orm";
+import {
+  and,
+  eq,
+  getColumns,
+  type AnyRelations,
+  type Column,
+  type SQL,
+  type Table,
+} from "drizzle-orm";
 import {
   buildRelationsFromCollections,
   buildSchemaFromCollections,
@@ -93,11 +104,15 @@ function getTableColumn(table: Table, field: PropertyKey): Column {
   return column;
 }
 
-function primaryCondition(table: Table, primaryField: PropertyKey, id: unknown): SQL {
-  if (typeof id === "object" && id !== null) {
-    throw new TypeError("Composite primary keys are not supported: pass the primary field's value");
-  }
-  return eq(getTableColumn(table, primaryField), id);
+function primaryCondition(table: Table, config: CollectionConfigMap[number], id: unknown): SQL {
+  const conditions = primaryKeyEntries(config, id).map(([field, value]) =>
+    eq(getTableColumn(table, field), value),
+  );
+  return and(...conditions)!;
+}
+
+function describeKey(id: unknown): string {
+  return typeof id === "object" && id !== null ? JSON.stringify(id) : String(id);
 }
 
 function createOperations<
@@ -117,40 +132,41 @@ function createOperations<
       data: InferCollectionUpdateModel<ConfigForName<C, N>>,
     ): Promise<void> {
       const table = resolvedSchema[collection] as Table;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const config = getCollectionConfig(collections, collection);
       const row = data as Record<string, unknown>;
-      const id = row[String(primaryField)];
-      if (id === undefined) {
-        throw new Error(`Update requires primary field "${String(primaryField)}"`);
+      const missing = primaryFields(config).find((field) => row[field] === undefined);
+      if (missing !== undefined) {
+        throw new Error(`Update requires primary field "${missing}"`);
       }
+      const id = primaryKeyOf(config, row);
       await queryDb
         .update(table)
         .set(data)
-        .where(primaryCondition(table, primaryField, id));
+        .where(primaryCondition(table, config, id));
     },
     async delete<N extends CollectionNames<C>>(
       collection: N,
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<void> {
       const table = resolvedSchema[collection] as Table;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
-      await queryDb.delete(table).where(primaryCondition(table, primaryField, id));
+      const config = getCollectionConfig(collections, collection);
+      await queryDb.delete(table).where(primaryCondition(table, config, id));
     },
     async get<N extends CollectionNames<C>>(
       collection: N,
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
       const table = resolvedSchema[collection] as Table;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const config = getCollectionConfig(collections, collection);
       const rows = (await queryDb
         .select()
         .from(table)
-        .where(primaryCondition(table, primaryField, id))) as InferCollectionSelectModel<
+        .where(primaryCondition(table, config, id))) as InferCollectionSelectModel<
         ConfigForName<C, N>
       >[];
       const row = rows[0];
       if (!row) {
-        throw new Error(`Row not found in "${String(collection)}" for id ${String(id)}`);
+        throw new Error(`Row not found in "${String(collection)}" for id ${describeKey(id)}`);
       }
       return row;
     },
@@ -159,11 +175,11 @@ function createOperations<
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>> | undefined> {
       const table = resolvedSchema[collection] as Table;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const config = getCollectionConfig(collections, collection);
       const rows = (await queryDb
         .select()
         .from(table)
-        .where(primaryCondition(table, primaryField, id))) as InferCollectionSelectModel<
+        .where(primaryCondition(table, config, id))) as InferCollectionSelectModel<
         ConfigForName<C, N>
       >[];
       return rows[0];

@@ -15,7 +15,7 @@ import type {
   QueryDocumentSnapshot,
   QuerySnapshot,
 } from "firebase/firestore";
-import type { CollectionKey } from "../shared/types.ts";
+import type { CollectionKey, DeleteIdHookRequirement } from "../shared/types.ts";
 
 export interface FirestoreSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
@@ -139,7 +139,17 @@ export type FirestoreCollectionSyncAdapterConfigInput<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
   TCheckpoint
->;
+> &
+  DeleteIdHookRequirement<
+    InferCollectionPrimaryFieldType<Col>,
+    NonNullable<
+      FirestoreSyncAdapterCollectionHandlers<
+        CollectionEventMapFromConfig<Col>,
+        Col["name"],
+        TCheckpoint
+      >["deserializeDeleteId"]
+    >
+  >;
 
 /** Resolved per-collection sync config returned by {@link defineFirestoreCollectionSyncAdapterConfig}. */
 export interface FirestoreSyncAdapterCollectionConfig<

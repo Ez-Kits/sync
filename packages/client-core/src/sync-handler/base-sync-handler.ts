@@ -5,6 +5,7 @@ import type {
 } from "../change-bus";
 import type { CheckpointStorage } from "../checkpoint-storage";
 import type { CollectionConfigMap, CollectionNames, ConfigForName } from "../collection";
+import { primaryKeyOf, recordIdOf } from "../collection/primary-key";
 import type {
   BaseDBAdapter,
   DBAdapterOperations,
@@ -424,10 +425,14 @@ export abstract class BaseSyncHandler<
       await rememberSkipped();
       return { needsPush: false };
     }
+    // A single key is looked up as stored (numeric strings as numbers); a composite one as pulled.
+    const localKey = Array.isArray(this.keyConfig(collection).primaryField)
+      ? this.eventKey(event)
+      : coerceRecordId(recordId);
     const local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined =
       operations.getOptional
-        ? await operations.getOptional(collection, coerceRecordId(recordId) as never)
-        : await operations.get(collection, coerceRecordId(recordId) as never);
+        ? await operations.getOptional(collection, localKey as never)
+        : await operations.get(collection, localKey as never);
     const resolution = await resolver({ remote: event, local });
     if (resolution === "local") {
       await rememberSkipped();
@@ -848,16 +853,21 @@ export abstract class BaseSyncHandler<
   }
 
   private dirtyRecordKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): DirtyRecordKey {
-    const recordId =
-      event.type === "delete"
-        ? event.id
-        : (event.data as Record<string, unknown>)[this.primaryFieldName(event.collection)];
-    return { collection: String(event.collection), recordId: String(recordId) };
+    const recordId = recordIdOf(this.keyConfig(event.collection), this.eventKey(event));
+    return { collection: String(event.collection), recordId };
   }
 
-  private primaryFieldName(collectionName: keyof SyncHandlerDataMap<C>): string {
+  /** The primary key of the record an event changes. */
+  private eventKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): unknown {
+    if (event.type === "delete") return event.id;
+    return primaryKeyOf(this.keyConfig(event.collection), event.data as Record<string, unknown>);
+  }
+
+  private keyConfig(
+    collectionName: keyof SyncHandlerDataMap<C>,
+  ): Pick<C[number], "name" | "primaryField"> {
     const collectionConfig = this.collectionMap.get(collectionName as CollectionNames<C>);
-    return String(collectionConfig?.primaryField ?? "id");
+    return { name: String(collectionName), primaryField: collectionConfig?.primaryField ?? "id" };
   }
 
   private async upsertRow<N extends CollectionNames<C>>(
@@ -866,8 +876,7 @@ export abstract class BaseSyncHandler<
     row: Record<string, unknown>,
     db: DBAdapterOperations<C>,
   ): Promise<void> {
-    const primaryField = collectionConfig.primaryField;
-    const id = row[String(primaryField)];
+    const id = primaryKeyOf(collectionConfig, row);
     if (id !== undefined) {
       if (db.getOptional) {
         const existing = await db.getOptional(collectionName, id as never);

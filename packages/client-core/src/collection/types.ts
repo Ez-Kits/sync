@@ -1,4 +1,29 @@
 import type { SyncAdapter } from "../sync-handler";
+import type { Simplify } from "../utilities-types";
+
+/** A record's primary key: one field, or a non-empty ordered list of fields (composite). */
+export type PrimaryFieldSpec<Model> = keyof Model | readonly [keyof Model, ...(keyof Model)[]];
+
+/** The fields a primary key spec names, as a union. */
+export type PrimaryKeyFields<PrimaryField> = PrimaryField extends readonly (infer K)[]
+  ? K
+  : PrimaryField;
+
+/** A primary key value: the field's value, or an object of every field for a composite key. */
+export type PrimaryKeyValue<Model, PrimaryField> = PrimaryField extends readonly (infer K extends
+  keyof Model)[]
+  ? Simplify<Pick<Model, K>>
+  : Model[PrimaryField & keyof Model];
+
+/** An update payload: every primary key field is required, every other field is optional. */
+export type CollectionUpdateModel<
+  InsertModel,
+  SelectModel,
+  PrimaryField extends PrimaryFieldSpec<SelectModel>,
+> = Simplify<
+  Pick<SelectModel, PrimaryKeyFields<PrimaryField> & keyof SelectModel> &
+    Partial<Omit<InsertModel, PrimaryKeyFields<PrimaryField>>>
+>;
 
 export interface CollectionConfig<
   TCollectionName extends string,
@@ -6,7 +31,7 @@ export interface CollectionConfig<
   _UpdateModel,
   _InsertModel,
   _SelectModel,
-  PrimaryField extends keyof _SelectModel,
+  PrimaryField extends PrimaryFieldSpec<_SelectModel>,
   TCheckpoint = unknown,
 > {
   name: TCollectionName;
@@ -18,7 +43,7 @@ export interface CollectionConfig<
       {
         create: _InsertModel;
         update: _UpdateModel;
-        delete: _SelectModel[PrimaryField];
+        delete: PrimaryKeyValue<_SelectModel, PrimaryField>;
       }
     >,
     TCollectionName,
@@ -88,7 +113,7 @@ export type InferCollectionPrimaryFieldType<
   C extends CollectionConfig<any, any, any, any, any, any>,
 > =
   C extends CollectionConfig<any, any, any, any, infer SelectModel, infer PrimaryField, any>
-    ? SelectModel[PrimaryField]
+    ? PrimaryKeyValue<SelectModel, PrimaryField>
     : never;
 
 /** Checkpoint type on a single collection config. */

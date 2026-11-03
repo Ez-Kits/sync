@@ -5,6 +5,7 @@ import type {
   InferCollectionSelectModel,
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
+import { assertDeleteIdHook } from "../shared/delete-id-hook.ts";
 import type {
   RealtimeDBSyncAdapterCollectionConfig,
   RealtimeDBCollectionSyncAdapterConfigInput,
@@ -36,6 +37,7 @@ export function defineRealtimeDBCollectionSyncAdapterConfig<
   TCheckpoint
 > {
   const { collectionConfig, ...rest } = config;
+  assertDeleteIdHook(collectionConfig, rest.deserializeDeleteId);
   return {
     ...rest,
     collectionName: collectionConfig.name,
