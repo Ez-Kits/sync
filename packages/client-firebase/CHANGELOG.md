@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/Ez-Kits/sync/compare/sync-client-firebase-v0.1.0...sync-client-firebase-v0.2.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client-core:** support composite primary keys and require the key on update ([#12](https://github.com/Ez-Kits/sync/issues/12))
+
+### Features
+
+* **client-core:** support composite primary keys and require the key on update ([#12](https://github.com/Ez-Kits/sync/issues/12)) ([fb7e60e](https://github.com/Ez-Kits/sync/commit/fb7e60edd42ff96ea40c08df17800fd1c3f6f70d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.2.0
+
 ## 0.1.0 (2026-11-02)
 
 
