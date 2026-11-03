@@ -1,23 +1,24 @@
 # Choosing a storage engine
 
-The storage engine is the real database in the browser. EzSync ships three. All of them run in a Web Worker, share one database across tabs, and keep data between visits.
+The storage engine is the real database in the browser. EzSync ships four. All of them run in a Web Worker, share one database across tabs, and keep data between visits.
 
 ## At a glance
 
-|                         | sql.js                               | SQLite WASM                                | PGlite                                |
-| ----------------------- | ------------------------------------ | ------------------------------------------ | ------------------------------------- |
-| Package                 | `@ez-kits/sync-client-storage-sqljs` | `@ez-kits/sync-client-storage-sqlite-wasm` | `@ez-kits/sync-client-storage-pglite` |
-| SQL dialect             | SQLite                               | SQLite                                     | Postgres                              |
-| Saved to                | IndexedDB (whole-file snapshot)      | OPFS (incremental writes)                  | IndexedDB                             |
-| Cost of a write         | Grows with database size             | Small                                      | Small                                 |
-| Needs COOP/COEP headers | No                                   | No                                         | No                                    |
-| Download size           | Small                                | Medium                                     | Large                                 |
-| Good for                | Getting started, small data          | Most production apps on SQLite             | Postgres features and types           |
+|                         | sql.js                               | SQLite WASM                                | wa-sqlite                                    | PGlite                                |
+| ----------------------- | ------------------------------------ | ------------------------------------------ | -------------------------------------------- | ------------------------------------- |
+| Package                 | `@ez-kits/sync-client-storage-sqljs` | `@ez-kits/sync-client-storage-sqlite-wasm` | `@ez-kits/sync-client-storage-wa-sqlite`     | `@ez-kits/sync-client-storage-pglite` |
+| SQL dialect             | SQLite                               | SQLite                                     | SQLite                                       | Postgres                              |
+| Saved to                | IndexedDB (whole-file snapshot)      | OPFS (incremental writes)                  | OPFS or IndexedDB, you choose (incremental)  | IndexedDB                             |
+| Cost of a write         | Grows with database size             | Small                                      | Small                                        | Small                                 |
+| Needs COOP/COEP headers | No                                   | No                                         | No                                           | No                                    |
+| Download size           | Small                                | Medium                                     | Medium                                       | Large                                 |
+| Good for                | Getting started, small data          | Most production apps on SQLite             | SQLite apps that need IndexedDB, or a choice | Postgres features and types           |
 
 **How to choose:**
 
 - **Start with sql.js.** It is the easiest to set up.
 - **Move to SQLite WASM** when your database grows past a few megabytes or you write often. sql.js saves the **whole** database after every commit; SQLite WASM writes only what changed. Your Drizzle/TypeORM code stays the same (both are SQLite).
+- **Pick wa-sqlite** to choose between OPFS and IndexedDB, for example IndexedDB for browsers or contexts without OPFS, or to save the database as a plain OPFS file you can export.
 - **Pick PGlite** if you want Postgres: `JSONB`, arrays, richer types, or the same dialect as your server. It is the largest download.
 
 Every engine follows the same two-file pattern:
@@ -123,6 +124,65 @@ Use it with `createDrizzleSqliteDBAdapter` or `createTypeOrmSqliteDBAdapter`.
 
 - The OPFS pool allows **one** holder per origin. EzSync opens it only in the leader and releases it when the leader steps down, so this works across tabs. Two different apps on the **same origin** should use different `poolName`s.
 
+## wa-sqlite
+
+[wa-sqlite](https://github.com/powersync-ja/wa-sqlite), saved to OPFS (`OPFSCoopSyncVFS`) or IndexedDB (`IDBBatchAtomicVFS`). Both write only the pages that changed, and neither needs special HTTP headers.
+
+```ts
+// db/worker.ts
+import { startDBStorageWorker } from "@ez-kits/sync-client-core";
+import {
+  destroyWaSqliteDatabase,
+  openWaSqliteEngine,
+  type WaSqliteEngineOptions,
+} from "@ez-kits/sync-client-storage-wa-sqlite/worker";
+import { migrate } from "./migrations";
+
+startDBStorageWorker<WaSqliteEngineOptions>({
+  open: async (options) => {
+    const engine = await openWaSqliteEngine(options);
+    await migrate(engine);
+    return engine;
+  },
+  destroy: destroyWaSqliteDatabase,
+});
+```
+
+```ts
+// db/storage.ts
+import { createWaSqliteDBStorage } from "@ez-kits/sync-client-storage-wa-sqlite";
+
+export const dbStorage = createWaSqliteDBStorage({
+  key: "my-app",
+  engineOptions: {
+    filename: "my-app.sqlite3", // the OPFS file, or the IndexedDB database name (required)
+    vfs: "opfs", // "opfs" (default), "indexeddb" or "memory"
+  },
+  worker: () => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
+});
+```
+
+Use it with `createDrizzleSqliteDBAdapter` or `createTypeOrmSqliteDBAdapter`.
+
+**OPFS or IndexedDB?**
+
+- `opfs` is faster, and the database is a plain file in OPFS. It needs synchronous OPFS access handles, which every current browser offers in a dedicated worker, and the storage worker is one.
+- `indexeddb` works wherever IndexedDB does. It uses the slower asynchronous wa-sqlite build.
+- The two do not share data: switching `vfs` starts from an empty database.
+
+**Notes**
+
+- With Vite, exclude the package from dependency pre-bundling so its `.wasm` files are found:
+
+  ```ts
+  // vite.config.ts
+  export default defineConfig({
+    optimizeDeps: { exclude: ["@journeyapps/wa-sqlite"] },
+  });
+  ```
+
+- Two different apps on the **same origin** should use different `filename`s.
+
 ## PGlite
 
 Postgres compiled to WebAssembly.
@@ -167,7 +227,7 @@ Use it with `createDrizzlePgDBAdapter` or `createTypeOrmPgDBAdapter`, and define
 
 ## Storage options shared by every engine
 
-`createSqlJsDBStorage`, `createSqliteWasmDBStorage` and `createPGliteDBStorage` take the same options:
+`createSqlJsDBStorage`, `createSqliteWasmDBStorage`, `createWaSqliteDBStorage` and `createPGliteDBStorage` take the same options:
 
 | Option                 | Default     | Meaning                                                                                      |
 | ---------------------- | ----------- | -------------------------------------------------------------------------------------------- |

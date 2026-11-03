@@ -14,21 +14,21 @@ New here? Read the pages under **Start here** in order. It takes about 20 minute
 
 Task-focused pages. Read them when you need them.
 
-| Guide                                                      | Read it when you want to...                                         |
-| ---------------------------------------------------------- | ------------------------------------------------------------------- |
-| [How EzSync works](guides/how-it-works.md)                 | understand the layers, tabs, the outbox and what is guaranteed      |
-| [Collections and writes](guides/collections-and-writes.md) | define collections and insert, update or delete records             |
-| [Reading data](guides/reading-data.md)                     | read records, run ORM queries and keep the UI up to date            |
-| [Your database schema](guides/database-schema.md)          | create and migrate your own tables                                  |
-| [Choosing a storage engine](guides/storage-engines.md)     | compare sql.js, SQLite WASM and PGlite and set each one up          |
-| [Syncing](guides/syncing.md)                               | start and stop sync, show status, handle offline and many tabs      |
-| [Sync with Cloud Firestore](guides/firestore.md)           | connect to Firestore, with incremental pulls and deletes            |
-| [Sync with Realtime Database](guides/realtime-database.md) | connect to the Firebase Realtime Database                           |
-| [Conflict resolution](guides/conflict-resolution.md)       | decide what happens when local and remote edits meet                |
-| [Rejected writes](guides/rejected-writes.md)               | handle writes the backend refuses (security rules, signed-out user) |
-| [React](guides/react.md)                                   | use the provider and the `useLiveQuery` hook                        |
-| [Node.js and tests](guides/node-and-tests.md)              | run EzSync without workers, in scripts and unit tests               |
-| [Troubleshooting](guides/troubleshooting.md)               | fix a common error or understand a strange behaviour                |
+| Guide                                                      | Read it when you want to...                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| [How EzSync works](guides/how-it-works.md)                 | understand the layers, tabs, the outbox and what is guaranteed        |
+| [Collections and writes](guides/collections-and-writes.md) | define collections and insert, update or delete records               |
+| [Reading data](guides/reading-data.md)                     | read records, run ORM queries and keep the UI up to date              |
+| [Your database schema](guides/database-schema.md)          | create and migrate your own tables                                    |
+| [Choosing a storage engine](guides/storage-engines.md)     | compare sql.js, SQLite WASM, wa-sqlite and PGlite and set each one up |
+| [Syncing](guides/syncing.md)                               | start and stop sync, show status, handle offline and many tabs        |
+| [Sync with Cloud Firestore](guides/firestore.md)           | connect to Firestore, with incremental pulls and deletes              |
+| [Sync with Realtime Database](guides/realtime-database.md) | connect to the Firebase Realtime Database                             |
+| [Conflict resolution](guides/conflict-resolution.md)       | decide what happens when local and remote edits meet                  |
+| [Rejected writes](guides/rejected-writes.md)               | handle writes the backend refuses (security rules, signed-out user)   |
+| [React](guides/react.md)                                   | use the provider and the `useLiveQuery` hook                          |
+| [Node.js and tests](guides/node-and-tests.md)              | run EzSync without workers, in scripts and unit tests                 |
+| [Troubleshooting](guides/troubleshooting.md)               | fix a common error or understand a strange behaviour                  |
 
 ## API reference
 
@@ -42,6 +42,7 @@ One page per package, listing every export with its options.
 | [`@ez-kits/sync-client-react`](api/client-react.md)                             | React provider and hooks                               |
 | [`@ez-kits/sync-client-storage-sqljs`](api/client-storage-sqljs.md)             | SQLite (sql.js) in a worker, saved to IndexedDB        |
 | [`@ez-kits/sync-client-storage-sqlite-wasm`](api/client-storage-sqlite-wasm.md) | Official SQLite WASM in a worker, saved to OPFS        |
+| [`@ez-kits/sync-client-storage-wa-sqlite`](api/client-storage-wa-sqlite.md)     | wa-sqlite in a worker, saved to OPFS or IndexedDB      |
 | [`@ez-kits/sync-client-storage-pglite`](api/client-storage-pglite.md)           | Postgres (PGlite) in a worker, saved to IndexedDB      |
 | [`@ez-kits/sync-client-firebase`](api/client-firebase.md)                       | Sync adapters for Firestore and Realtime Database      |
 | [`@ez-kits/sync-client-conflict-resolution`](api/client-conflict-resolution.md) | Ready-made conflict policies                           |

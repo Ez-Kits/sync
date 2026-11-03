@@ -12,6 +12,7 @@ export default defineConfig({
       "./packages/client-storage-sqljs",
       "./packages/client-storage-pglite",
       "./packages/client-storage-sqlite-wasm",
+      "./packages/client-storage-wa-sqlite",
     ],
     coverage: {
       include: ["packages/*/src/**/*.{ts,tsx}"],

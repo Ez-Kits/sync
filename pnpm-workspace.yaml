@@ -6,6 +6,7 @@ packages:
 
 catalog:
   "@electric-sql/pglite": ^0.3.16
+  "@journeyapps/wa-sqlite": ^2.0.10
   "@sqlite.org/sqlite-wasm": 3.54.1-build1
   "@testing-library/dom": ^10.4.2
   "@testing-library/react": ^16.3.3

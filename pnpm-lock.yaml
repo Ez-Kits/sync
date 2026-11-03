@@ -9,6 +9,9 @@ catalogs:
     '@electric-sql/pglite':
       specifier: ^0.3.16
       version: 0.3.16
+    '@journeyapps/wa-sqlite':
+      specifier: ^2.0.10
+      version: 2.0.10
     '@sqlite.org/sqlite-wasm':
       specifier: 3.54.1-build1
       version: 3.54.1-build1
@@ -338,7 +341,7 @@ importers:
         version: 7.0.2
       vite-plus:
         specifier: 'catalog:'
-        version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5(@vitest/browser@5.0.5)(vitest@5.0.5))(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
+        version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
 
   packages/client-core:
     devDependencies:
@@ -521,6 +524,30 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
+
+  packages/client-storage-wa-sqlite:
+    devDependencies:
+      '@ez-kits/sync-client-core':
+        specifier: workspace:*
+        version: link:../client-core
+      '@journeyapps/wa-sqlite':
+        specifier: 'catalog:'
+        version: 2.0.10
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
+      '@typescript/native-preview':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      fake-indexeddb:
+        specifier: 'catalog:'
+        version: 6.2.6
+      typescript:
+        specifier: ^7
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5(@vitest/browser@5.0.5)(vitest@5.0.5))(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
 
   packages/client-typeorm:
     devDependencies:
@@ -1166,6 +1193,9 @@ packages:
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
+
+  '@journeyapps/wa-sqlite@2.0.10':
+    resolution: {integrity: sha512-6Wo5ZijOc4/6M9u+MDsJdW8zDCdrct/p+7LcG7S7CT5YKu42j6lshMfUvgtGYMaZeuH7rpQHULZupPTQFqbS0w==}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -5856,6 +5886,8 @@ snapshots:
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.3
+
+  '@journeyapps/wa-sqlite@2.0.10': {}
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
