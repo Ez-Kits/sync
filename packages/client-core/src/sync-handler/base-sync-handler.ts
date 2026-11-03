@@ -474,34 +474,18 @@ export abstract class BaseSyncHandler<
     const storedEvents = await this.config.localChangeStore.getPendingEvents(
       String(collectionName),
     );
-
-    return storedEvents.map((stored) => {
-      if (stored.type === "delete") {
-        return {
-          type: "delete",
-          collection: collectionName,
-          id: storedDeleteId(stored),
-          deletedAt: stored.createdAt,
-          eventId: stored.id,
-        } as ChangeBusEvent<SyncHandlerDataMap<C>, N>;
-      }
-
-      return {
-        type: stored.type,
-        collection: collectionName,
-        data: stored.data,
-        eventId: stored.id,
-      } as ChangeBusEvent<SyncHandlerDataMap<C>, N>;
-    });
+    return storedEvents.map(toPushEvent) as ChangeBusEvent<SyncHandlerDataMap<C>, N>[];
   }
 
+  /** The collections' pending events in commit order, across collections, as one transaction wrote them. */
   protected async collectAllPendingPushEvents(
     collectionNames: readonly CollectionNames<C>[],
   ): Promise<ChangeBusEvent<SyncHandlerDataMap<C>>[]> {
-    const batches = await Promise.all(
-      collectionNames.map((collectionName) => this.collectPendingPushEvents(collectionName)),
-    );
-    return batches.flat();
+    const names = new Set(collectionNames.map(String));
+    const storedEvents = await this.config.localChangeStore.getPendingEvents();
+    return storedEvents
+      .filter((stored) => names.has(stored.collection))
+      .map(toPushEvent) as ChangeBusEvent<SyncHandlerDataMap<C>>[];
   }
 
   /** Push the queue's parked events, and the queue's next push, first (see `parkedEvents`). */
@@ -917,6 +901,25 @@ interface PushPass {
 
 function recordKeyString({ collection, recordId }: DirtyRecordKey): string {
   return `${collection}\0${recordId}`;
+}
+
+/** The push event of a pending outbox event. */
+function toPushEvent(stored: StoredChangeBusEvent) {
+  if (stored.type === "delete") {
+    return {
+      type: "delete",
+      collection: stored.collection,
+      id: storedDeleteId(stored),
+      deletedAt: stored.createdAt,
+      eventId: stored.id,
+    };
+  }
+  return {
+    type: stored.type,
+    collection: stored.collection,
+    data: stored.data,
+    eventId: stored.id,
+  };
 }
 
 /** The id a stored delete was written with; older outboxes only kept it as a string. */
