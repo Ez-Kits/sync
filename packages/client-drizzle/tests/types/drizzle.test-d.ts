@@ -6,11 +6,12 @@ import {
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
+  type TCollectionRuntime,
 } from "@ez-kits/sync-client-core";
 import { defineRelations, type InferInsertModel } from "drizzle-orm";
 import type { PgRemoteDatabase } from "drizzle-orm/pg-proxy";
 import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import {
   buildRelationsFromCollections,
@@ -87,9 +88,11 @@ describe("defineDrizzleCollection", () => {
     expectTypeOf<InferCollectionInsertModel<Todo>>().toEqualTypeOf<
       InferInsertModel<typeof todos>
     >();
-    expectTypeOf<InferCollectionUpdateModel<Todo>>().toEqualTypeOf<
-      Partial<InferInsertModel<typeof todos>>
-    >();
+    expectTypeOf<InferCollectionUpdateModel<Todo>>().toEqualTypeOf<{
+      id: number;
+      title?: string;
+      done?: boolean | null;
+    }>();
     expectTypeOf<InferCollectionPrimaryFieldType<Todo>>().toEqualTypeOf<number>();
     expectTypeOf<InferCollectionPrimaryFieldType<typeof userCollection>>().toEqualTypeOf<string>();
   });
@@ -97,6 +100,67 @@ describe("defineDrizzleCollection", () => {
   test("rejects primary fields that are not table columns", () => {
     // @ts-expect-error primary field must be a column of the table
     defineDrizzleCollection({ name: "todos", table: todos, primaryField: "missing" });
+  });
+
+  test("update requires the primary key", () => {
+    type Todos = TCollectionRuntime<typeof todoCollection>;
+    const todosRuntime = {} as Todos;
+    void todosRuntime.update({ id: 1, done: true });
+    // @ts-expect-error update needs the primary key
+    void todosRuntime.update({ done: true });
+    // @ts-expect-error the primary key cannot be undefined
+    void todosRuntime.update({ id: undefined, title: "x" });
+  });
+});
+
+const items = sqliteTable(
+  "items",
+  {
+    listId: text("list_id").notNull(),
+    position: integer("position").notNull(),
+    label: text("label"),
+  },
+  (table) => [primaryKey({ columns: [table.listId, table.position] })],
+);
+const itemCollection = defineDrizzleCollection({
+  name: "items",
+  table: items,
+  primaryField: ["listId", "position"],
+});
+
+describe("defineDrizzleCollection with a composite primary key", () => {
+  type Items = typeof itemCollection;
+  type Key = { listId: string; position: number };
+
+  test("keeps the key fields in order and types the key as an object", () => {
+    expectTypeOf(itemCollection.primaryField).toEqualTypeOf<readonly ["listId", "position"]>();
+    expectTypeOf<InferCollectionPrimaryFieldType<Items>>().toEqualTypeOf<Key>();
+    expectTypeOf<InferCollectionUpdateModel<Items>>().toEqualTypeOf<{
+      listId: string;
+      position: number;
+      label?: string | null;
+    }>();
+  });
+
+  test("runtime methods require the whole key", () => {
+    const itemsRuntime = {} as TCollectionRuntime<Items>;
+    void itemsRuntime.update({ listId: "l1", position: 1, label: "x" });
+    void itemsRuntime.delete({ listId: "l1", position: 1 });
+    // @ts-expect-error update needs every key field
+    void itemsRuntime.update({ listId: "l1", label: "x" });
+    // @ts-expect-error a composite key is an object
+    void itemsRuntime.delete("l1");
+    // @ts-expect-error a partial key is not a key
+    void itemsRuntime.get({ listId: "l1" });
+  });
+
+  test("a table keyed by a constraint must name its primary fields", () => {
+    // @ts-expect-error no column is marked primary, so primaryField is required
+    defineDrizzleCollection({ name: "items", table: items });
+    // @ts-expect-error every field must be a column
+    defineDrizzleCollection({ name: "items", table: items, primaryField: ["listId", "missing"] });
+    // @ts-expect-error a composite key lists at least one field
+    defineDrizzleCollection({ name: "items", table: items, primaryField: [] });
   });
 });
 

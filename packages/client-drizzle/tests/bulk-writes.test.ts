@@ -56,8 +56,8 @@ const dialects = [
         },
       });
       const collections = [
-        defineDrizzleCollection({ name: "todos", table: pgTodos }),
-        defineDrizzleCollection({ name: "notes", table: pgNotes }),
+        defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" }),
+        defineDrizzleCollection({ name: "notes", table: pgNotes, primaryField: "id" }),
       ];
       // Two Postgres collections in one array do not type-check yet (also on main): cast.
       const dbAdapter = createDrizzlePgDBAdapter({ dbStorage, collections: collections as never });

@@ -9,7 +9,7 @@ import type {
   InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { DataSnapshot, Database, Query } from "firebase/database";
-import type { CollectionKey } from "../shared/types.ts";
+import type { CollectionKey, DeleteIdHookRequirement } from "../shared/types.ts";
 
 export interface RealtimeDBSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
@@ -116,7 +116,17 @@ export type RealtimeDBCollectionSyncAdapterConfigInput<
   CollectionEventMapFromConfig<Col>,
   Col["name"],
   TCheckpoint
->;
+> &
+  DeleteIdHookRequirement<
+    InferCollectionPrimaryFieldType<Col>,
+    NonNullable<
+      RealtimeDBSyncAdapterCollectionHandlers<
+        CollectionEventMapFromConfig<Col>,
+        Col["name"],
+        TCheckpoint
+      >["deserializeDeleteId"]
+    >
+  >;
 
 /** Resolved per-collection sync config returned by {@link defineRealtimeDBCollectionSyncAdapterConfig}. */
 export interface RealtimeDBSyncAdapterCollectionConfig<

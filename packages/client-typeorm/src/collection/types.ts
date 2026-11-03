@@ -2,6 +2,8 @@ import type {
   CollectionConfig,
   CollectionConfigMap,
   CollectionNames,
+  CollectionUpdateModel,
+  PrimaryFieldSpec,
 } from "@ez-kits/sync-client-core";
 import type { DeepPartial } from "typeorm";
 
@@ -11,12 +13,12 @@ export type TypeOrmCollectionConfig<
   TName extends string,
   TInstance extends object,
   E = unknown,
-  PK extends keyof TInstance & string = keyof TInstance & string,
+  PK extends PrimaryFieldSpec<TInstance> = keyof TInstance & string,
   TCheckpoint = unknown,
 > = CollectionConfig<
   TName,
   { entity: E },
-  Partial<TInstance>,
+  CollectionUpdateModel<TInstance, TInstance, PK>,
   DeepPartial<TInstance>,
   TInstance,
   PK,

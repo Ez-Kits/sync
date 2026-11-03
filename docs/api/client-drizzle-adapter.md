@@ -24,14 +24,14 @@ import { defineDrizzleCollection } from "@ez-kits/sync-client-drizzle-adapter";
 const todosCollection = defineDrizzleCollection({ name: "todos", table: todos });
 ```
 
-| Option         | Type              | Required | Description                                                                                      |
-| -------------- | ----------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `name`         | `string` literal  | yes      | The collection name (`client.collections.<name>`).                                               |
-| `table`        | a Drizzle `Table` | yes      | `sqliteTable(...)` or `pgTable(...)`.                                                            |
-| `primaryField` | a column key      | no       | Defaults to the table's primary key column. Throws `Primary field not found` when there is none. |
-| `syncAdapter`  | `SyncAdapter`     | no       | A sync adapter for this collection only.                                                         |
+| Option         | Type                            | Required | Description                                                                                                                                                                                                                                    |
+| -------------- | ------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | `string` literal                | yes      | The collection name (`client.collections.<name>`).                                                                                                                                                                                             |
+| `table`        | a Drizzle `Table`               | yes      | `sqliteTable(...)` or `pgTable(...)`.                                                                                                                                                                                                          |
+| `primaryField` | a column key, or a list of them | no       | Defaults to the table's primary key column. Required (a type error otherwise) when no column is typed as primary: a composite key (`primaryKey({ columns })`), or a `pgTable`. Throws `Primary field not found` at runtime when there is none. |
+| `syncAdapter`  | `SyncAdapter`                   | no       | A sync adapter for this collection only.                                                                                                                                                                                                       |
 
-Models are inferred from the table: `insert` takes `InferInsertModel<table>`, `update` takes `Partial<InferInsertModel<table>>` (with the primary key), `get` returns `InferSelectModel<table>`.
+Models are inferred from the table: `insert` takes `InferInsertModel<table>`, `update` takes the primary key fields (required) and any other fields of `InferInsertModel<table>` (optional), `get` returns `InferSelectModel<table>`.
 
 ---
 
@@ -79,7 +79,7 @@ Rules:
 
 - **Read** with `db`; **write** through `client.collections`. Writes made with `db` are not synced.
 - Do not call Drizzle's `db.transaction()`: it sends `BEGIN`, which the storage rejects. Use `dbAdapter.transaction()`.
-- Use a single-column primary key. The outbox identifies records by the primary key turned into a string. Composite keys are not supported: an object id passed to `get`, `getOptional` or `delete` throws a `TypeError`.
+- For a single-column key, pass its value to `get`, `getOptional` and `delete`; an object throws a `TypeError`. For a [composite key](../guides/collections-and-writes.md#composite-primary-keys), pass an object of its fields, matched on every key column.
 
 ### Relations
 

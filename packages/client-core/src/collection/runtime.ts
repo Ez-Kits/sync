@@ -6,6 +6,7 @@ import {
   type LocalMutationWriter,
   type MutationSink,
 } from "./local-mutation";
+import { primaryKeyOf, recordIdOf } from "./primary-key";
 import type {
   CollectionConfig,
   InferCollectionInsertModel,
@@ -45,28 +46,15 @@ abstract class CollectionAccess<
           ({
             ...input,
             eventId: crypto.randomUUID(),
-            recordId: this.recordIdOf(input.id),
+            recordId: recordIdOf(this.config, input.id),
             createdAt,
           }) as LocalMutation,
       ),
     );
   }
 
-  /**
-   * The outbox and dirty records identify a record by its primary key as a string, so only
-   * single-column keys (a string or a number) are supported.
-   */
-  private recordIdOf(id: unknown): string {
-    if (typeof id === "string" || typeof id === "number") return String(id);
-    throw new TypeError(
-      `Collection "${this.config.name}" needs a string or number value in its primary field ` +
-        `"${String(this.config.primaryField)}", got ${id === null ? "null" : typeof id}. ` +
-        "Composite primary keys are not supported.",
-    );
-  }
-
   private withData(type: "create" | "update" | "upsert", data: unknown): LocalMutationInput {
-    const id = (data as Record<string, unknown>)[String(this.config.primaryField)];
+    const id = primaryKeyOf(this.config, data as Record<string, unknown>);
     return { type, collection: this.config.name, id, data };
   }
 

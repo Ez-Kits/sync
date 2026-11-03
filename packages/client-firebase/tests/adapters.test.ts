@@ -234,6 +234,34 @@ test("Firebase adapters declare the collections they sync, so core pushes them o
   ]);
 });
 
+test("composite collections must say how to rebuild a deleted document's key", () => {
+  const items = { name: "items", adapterConfig: {}, primaryField: ["listId", "position"] };
+  for (const define of [
+    defineFirestoreCollectionSyncAdapterConfig,
+    defineRealtimeDBCollectionSyncAdapterConfig,
+  ]) {
+    expect(() =>
+      define({
+        collectionConfig: items,
+        collectionPath: "items",
+        createCheckpoint: () => 1,
+      } as never),
+    ).toThrow(
+      'Collection "items" has a composite primary key: pass deserializeDeleteId to rebuild its ' +
+        "key from a deleted document.",
+    );
+    const deserializeDeleteId = vi.fn();
+    expect(
+      define({
+        collectionConfig: items,
+        collectionPath: "items",
+        createCheckpoint: () => 1,
+        deserializeDeleteId,
+      } as never),
+    ).toMatchObject({ collectionName: "items", deserializeDeleteId });
+  }
+});
+
 test("collection name helper handles nested slash paths and rejects empty paths", () => {
   expect(collectionNameFromPath("/users/1/todos/")).toBe("todos");
   expect(() => collectionNameFromPath("///")).toThrow("Unable to derive collectionName");

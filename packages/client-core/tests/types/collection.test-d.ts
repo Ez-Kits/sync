@@ -1,6 +1,9 @@
 import { describe, expectTypeOf, test } from "vite-plus/test";
 import type {
+  ChangeBusEvent,
+  ChangeBusEventDataMapFromCollectionConfigMap,
   CollectionNames,
+  CollectionUpdateModel,
   ConfigForName,
   InferCheckpointMap,
   InferCollectionCheckpoint,
@@ -8,12 +11,18 @@ import type {
   InferCollectionPrimaryFieldType,
   InferCollectionSelectModel,
   InferCollectionUpdateModel,
+  PrimaryKeyFields,
+  PrimaryKeyValue,
   TCollectionRuntime,
   TCollectionRuntimeRecord,
 } from "../../src";
 import type {
   Checkpoint,
   Collections,
+  ItemConfig,
+  ItemInsert,
+  ItemKey,
+  ItemSelect,
   TodoConfig,
   TodoInsert,
   TodoSelect,
@@ -70,5 +79,62 @@ describe("collection runtime", () => {
     expectTypeOf<Todos["deleteMany"]>().parameter(0).toEqualTypeOf<readonly number[]>();
     expectTypeOf<Todos["get"]>().returns.resolves.toEqualTypeOf<TodoSelect>();
     expectTypeOf<Todos["getMany"]>().returns.resolves.toEqualTypeOf<TodoSelect[]>();
+  });
+});
+
+describe("composite primary keys", () => {
+  type Items = TCollectionRuntime<ItemConfig>;
+  type Key = readonly ["listId", "position"];
+
+  test("key helpers name the fields and build the key value", () => {
+    expectTypeOf<PrimaryKeyFields<"id">>().toEqualTypeOf<"id">();
+    expectTypeOf<PrimaryKeyFields<Key>>().toEqualTypeOf<"listId" | "position">();
+    expectTypeOf<PrimaryKeyValue<TodoSelect, "id">>().toEqualTypeOf<number>();
+    expectTypeOf<PrimaryKeyValue<ItemSelect, Key>>().toEqualTypeOf<ItemKey>();
+    expectTypeOf<InferCollectionPrimaryFieldType<ItemConfig>>().toEqualTypeOf<ItemKey>();
+  });
+
+  test("update requires every key field and leaves the rest optional", () => {
+    expectTypeOf<CollectionUpdateModel<TodoInsert, TodoSelect, "id">>().toEqualTypeOf<{
+      id: number;
+      title?: string;
+      done?: boolean;
+    }>();
+    expectTypeOf<CollectionUpdateModel<ItemInsert, ItemSelect, Key>>().toEqualTypeOf<{
+      listId: string;
+      position: number;
+      label?: string;
+      done?: boolean;
+    }>();
+  });
+
+  test("runtime methods take the key object", () => {
+    expectTypeOf<Items["delete"]>().parameter(0).toEqualTypeOf<ItemKey>();
+    expectTypeOf<Items["get"]>().parameter(0).toEqualTypeOf<ItemKey>();
+    expectTypeOf<Items["deleteMany"]>().parameter(0).toEqualTypeOf<readonly ItemKey[]>();
+    expectTypeOf<Items["get"]>().returns.resolves.toEqualTypeOf<ItemSelect>();
+  });
+
+  test("calls without the whole key do not compile", () => {
+    const items = {} as Items;
+    const todos = {} as TCollectionRuntime<TodoConfig>;
+    void items.update({ listId: "l1", position: 1, done: true });
+    void todos.update({ id: 1, done: true });
+    // @ts-expect-error update needs every key field
+    void items.update({ listId: "l1", done: true });
+    // @ts-expect-error update needs the single key too
+    void todos.update({ done: true });
+    // @ts-expect-error a composite key is an object
+    void items.delete("l1");
+    // @ts-expect-error a partial key is not a key
+    void items.get({ listId: "l1" });
+  });
+
+  test("delete events carry the key object", () => {
+    type Event = Extract<
+      ChangeBusEvent<ChangeBusEventDataMapFromCollectionConfigMap<[ItemConfig]>, "items">,
+      { type: "delete" }
+    >;
+    expectTypeOf<Event["id"]>().toEqualTypeOf<ItemKey>();
   });
 });

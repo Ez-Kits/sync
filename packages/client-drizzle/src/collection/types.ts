@@ -2,6 +2,8 @@ import type {
   CollectionConfig,
   CollectionConfigMap,
   CollectionNames,
+  CollectionUpdateModel,
+  PrimaryFieldSpec,
 } from "@ez-kits/sync-client-core";
 import type {
   Assume,
@@ -21,13 +23,19 @@ export type InferPrimaryField<TColumns extends Record<string, any>> = {
     : never;
 }[keyof TColumns];
 
+/** The primary field the table's columns declare; `never` when its key is a table constraint. */
+export type DefaultPrimaryField<T extends Table> = Extract<
+  InferPrimaryField<T["_"]["columns"]>,
+  keyof InferSelectModel<T>
+>;
+
 export type DrizzleCollectionConfig<
   TName extends string,
   T extends Table,
   InsertModel = InferInsertModel<T>,
-  UpdateModel = Partial<InsertModel>,
+  UpdateModel = CollectionUpdateModel<InsertModel, InferSelectModel<T>, DefaultPrimaryField<T>>,
   SelectModel = InferSelectModel<T>,
-  PrimaryKey extends keyof SelectModel = Extract<
+  PrimaryKey extends PrimaryFieldSpec<SelectModel> = Extract<
     InferPrimaryField<T["_"]["columns"]>,
     keyof SelectModel
   >,

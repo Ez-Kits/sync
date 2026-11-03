@@ -1,11 +1,22 @@
-import type { SyncAdapter } from "@ez-kits/sync-client-core";
+import type {
+  CollectionUpdateModel,
+  PrimaryKeyValue,
+  SyncAdapter,
+} from "@ez-kits/sync-client-core";
 import { getMetadataArgsStorage, type DeepPartial } from "typeorm";
 import type { EntityClass, TypeOrmCollectionConfig } from "./types";
+
+/** One property of the entity, or a non-empty ordered list of them (composite key). */
+export type EntityPrimaryField<E extends EntityClass<object>> =
+  | EntityProperty<E>
+  | readonly [EntityProperty<E>, ...EntityProperty<E>[]];
+
+type EntityProperty<E extends EntityClass<object>> = keyof InstanceType<E> & string;
 
 export type DefineTypeOrmCollectionOptions<
   TName extends string,
   E extends EntityClass<object>,
-  PK extends keyof InstanceType<E> & string,
+  PK extends EntityPrimaryField<E>,
   TCheckpoint,
 > = {
   name: TName;
@@ -16,8 +27,8 @@ export type DefineTypeOrmCollectionOptions<
       TName,
       {
         create: DeepPartial<InstanceType<E>>;
-        update: Partial<InstanceType<E>>;
-        delete: InstanceType<E>[PK];
+        update: CollectionUpdateModel<InstanceType<E>, InstanceType<E>, PK>;
+        delete: PrimaryKeyValue<InstanceType<E>, PK>;
       }
     >,
     TName,
@@ -28,16 +39,24 @@ export type DefineTypeOrmCollectionOptions<
 export function defineTypeOrmCollection<
   TName extends string,
   E extends EntityClass<object>,
-  PK extends keyof InstanceType<E> & string,
+  const PK extends EntityPrimaryField<E>,
   TCheckpoint,
 >(
   options: DefineTypeOrmCollectionOptions<TName, E, PK, TCheckpoint>,
 ): TypeOrmCollectionConfig<TName, InstanceType<E>, E, PK, TCheckpoint> {
   const { name, entity, primaryField, syncAdapter } = options;
-  const metaPk = getPrimaryKeyPropertyName(entity);
-  if (metaPk !== primaryField) {
+  const metaFields = getPrimaryKeyPropertyNames(entity);
+  const fields: readonly string[] =
+    typeof primaryField === "string" ? [primaryField] : primaryField;
+  // Only the set must match: `primaryField` decides the order of a composite key.
+  if (
+    new Set(fields).size !== fields.length ||
+    fields.length !== metaFields.length ||
+    fields.some((field) => !metaFields.includes(field))
+  ) {
     throw new Error(
-      `Primary field mismatch: metadata has "${metaPk}", expected "${String(primaryField)}"`,
+      `Primary field mismatch: metadata has ${formatFields(metaFields)}, expected ` +
+        `${formatFields(fields)}`,
     );
   }
   return {
@@ -50,17 +69,21 @@ export function defineTypeOrmCollection<
   };
 }
 
-function getPrimaryKeyPropertyName(entityClass: EntityClass): string {
+/** The entity's primary properties, from its class and the classes it extends. */
+function getPrimaryKeyPropertyNames(entityClass: EntityClass): string[] {
   const storage = getMetadataArgsStorage();
+  const names = new Set<string>();
   let ctor: Function | null = entityClass;
   while (ctor && ctor !== Object) {
-    const primary = storage.columns.find(
-      (col) => col.target === ctor && col.options.primary === true,
-    );
-    if (primary) {
-      return primary.propertyName;
+    for (const col of storage.columns) {
+      if (col.target === ctor && col.options.primary === true) names.add(col.propertyName);
     }
     ctor = Object.getPrototypeOf(ctor);
   }
-  throw new Error("Primary field not found");
+  if (names.size === 0) throw new Error("Primary field not found");
+  return [...names];
+}
+
+function formatFields(fields: readonly string[]): string {
+  return fields.length === 1 ? `"${fields[0]}"` : JSON.stringify(fields);
 }

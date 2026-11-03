@@ -1,4 +1,10 @@
-import type { AtomicLocalChangeStore, BaseDBAdapter, CollectionConfig, DBStorage } from "../../src";
+import type {
+  AtomicLocalChangeStore,
+  BaseDBAdapter,
+  CollectionConfig,
+  CollectionUpdateModel,
+  DBStorage,
+} from "../../src";
 
 export interface TodoSelect {
   id: number;
@@ -52,6 +58,29 @@ export type UserConfig = CollectionConfig<
   Checkpoint
 >;
 export type Collections = [TodoConfig, UserConfig];
+
+export interface ItemSelect {
+  listId: string;
+  position: number;
+  label: string;
+  done: boolean;
+}
+export interface ItemInsert {
+  listId: string;
+  position: number;
+  label: string;
+  done?: boolean;
+}
+export type ItemKey = { listId: string; position: number };
+export type ItemConfig = CollectionConfig<
+  "items",
+  { table: "items" },
+  CollectionUpdateModel<ItemInsert, ItemSelect, readonly ["listId", "position"]>,
+  ItemInsert,
+  ItemSelect,
+  readonly ["listId", "position"],
+  Checkpoint
+>;
 
 export interface QueryBuilder {
   select: <T>(from: T) => T;

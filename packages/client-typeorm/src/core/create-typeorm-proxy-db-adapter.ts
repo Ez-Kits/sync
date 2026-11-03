@@ -1,15 +1,18 @@
-import type {
-  CollectionConfigMap,
-  CollectionNames,
-  ConfigForName,
-  DBAdapterOperations,
-  DBAdapterTransactionContext,
-  DBDialect,
-  DBStorage,
-  InferCollectionInsertModel,
-  InferCollectionPrimaryFieldType,
-  InferCollectionSelectModel,
-  InferCollectionUpdateModel,
+import {
+  primaryFields,
+  primaryKeyEntries,
+  primaryKeyOf,
+  type CollectionConfigMap,
+  type CollectionNames,
+  type ConfigForName,
+  type DBAdapterOperations,
+  type DBAdapterTransactionContext,
+  type DBDialect,
+  type DBStorage,
+  type InferCollectionInsertModel,
+  type InferCollectionPrimaryFieldType,
+  type InferCollectionSelectModel,
+  type InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { DataSource, EntityManager, EntitySchema, EntityTarget, ObjectLiteral } from "typeorm";
 import { buildSchemaFromCollections, type BuildSchemaFromCollections } from "../collection";
@@ -50,11 +53,8 @@ export interface TypeOrmProxyDriver<TDataSourceOptions> {
   readonly localChangeEntities: TypeOrmLocalChangeEntities;
 }
 
-function primaryWhere(primaryField: PropertyKey, id: unknown): ObjectLiteral {
-  if (typeof id === "object" && id !== null) {
-    throw new TypeError("Composite primary keys are not supported: pass the primary field's value");
-  }
-  return { [String(primaryField)]: id } as ObjectLiteral;
+function primaryWhere(config: CollectionConfigMap[number], id: unknown): ObjectLiteral {
+  return Object.fromEntries(primaryKeyEntries(config, id)) as ObjectLiteral;
 }
 
 function getCollectionConfig<C extends CollectionConfigMap, N extends CollectionNames<C>>(
@@ -96,17 +96,19 @@ function createOperations<
       data: InferCollectionUpdateModel<ConfigForName<C, N>>,
     ): Promise<void> {
       const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
-      const id = (data as ObjectLiteral)[String(primaryField)];
-      if (id === undefined) {
-        throw new Error(`Update requires primary field "${String(primaryField)}"`);
+      const config = getCollectionConfig(collections, collection);
+      const row = data as ObjectLiteral;
+      const missing = primaryFields(config).find((field) => row[field] === undefined);
+      if (missing !== undefined) {
+        throw new Error(`Update requires primary field "${missing}"`);
       }
+      const id = primaryKeyOf(config, row);
       await source
         .getRepository(entity)
         .createQueryBuilder()
         .update(entity)
         .set(data as ObjectLiteral)
-        .where(primaryWhere(primaryField, id))
+        .where(primaryWhere(config, id))
         .updateEntity(false)
         .execute();
     },
@@ -115,17 +117,17 @@ function createOperations<
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<void> {
       const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
-      await source.getRepository(entity).delete(primaryWhere(primaryField, id));
+      const config = getCollectionConfig(collections, collection);
+      await source.getRepository(entity).delete(primaryWhere(config, id));
     },
     async get<N extends CollectionNames<C>>(
       collection: N,
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>>> {
       const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const config = getCollectionConfig(collections, collection);
       const row = await source.getRepository(entity).findOneOrFail({
-        where: primaryWhere(primaryField, id),
+        where: primaryWhere(config, id),
       });
       return row as InferCollectionSelectModel<ConfigForName<C, N>>;
     },
@@ -134,9 +136,9 @@ function createOperations<
       id: InferCollectionPrimaryFieldType<ConfigForName<C, N>>,
     ): Promise<InferCollectionSelectModel<ConfigForName<C, N>> | undefined> {
       const entity = resolvedSchema[collection] as EntityTarget<ObjectLiteral>;
-      const primaryField = getCollectionConfig(collections, collection).primaryField;
+      const config = getCollectionConfig(collections, collection);
       const row = await source.getRepository(entity).findOne({
-        where: primaryWhere(primaryField, id),
+        where: primaryWhere(config, id),
       });
       return row === null ? undefined : (row as InferCollectionSelectModel<ConfigForName<C, N>>);
     },

@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { getColumns } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, SQLiteDialect, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { buildSchemaFromCollections, defineDrizzleCollection } from "../src/collection";
 import { createDrizzleProxyDBAdapter } from "../src/create-drizzle-proxy-db-adapter";
 import { createDrizzleLocalChangeStore } from "../src/create-drizzle-local-change-store";
@@ -426,10 +426,10 @@ test("Drizzle adapter rejects missing rows, update keys, composite keys, and dat
     "Update requires primary field",
   );
   await expect(adapter.get("todos" as never, { id: 1 } as never)).rejects.toThrow(
-    "Composite primary keys are not supported",
+    'has a single primary field "id": pass its value, not an object',
   );
   await expect(adapter.delete("todos" as never, { id: 1 } as never)).rejects.toThrow(
-    "Composite primary keys are not supported",
+    'has a single primary field "id": pass its value, not an object',
   );
   const misnamed = adapterFor(db, [{ ...collection, primaryField: "missing" }]);
   await expect(misnamed.get("todos" as never, 1 as never)).rejects.toThrow(
@@ -446,5 +446,47 @@ test("Drizzle adapter rejects missing rows, update keys, composite keys, and dat
   ).rejects.toThrow("write failed");
   await expect(adapter.get("other" as never, 1 as never)).rejects.toThrow(
     "Unknown collection: other",
+  );
+});
+
+const items = sqliteTable(
+  "items",
+  {
+    listId: text("listId").notNull(),
+    position: integer("position").notNull(),
+    label: text("label"),
+  },
+  (table) => [primaryKey({ columns: [table.listId, table.position] })],
+);
+const itemsCollection = defineDrizzleCollection({
+  name: "items",
+  table: items,
+  primaryField: ["listId", "position"],
+});
+
+test("Drizzle adapter matches composite keys on every key column", async () => {
+  const row = { listId: "l1", position: 1, label: "a" };
+  const { db, calls } = makeDb([row]);
+  const adapter = adapterFor(db, [itemsCollection]);
+  const key = { listId: "l1", position: 1 };
+  const render = (condition: unknown) => new SQLiteDialect().sqlToQuery(condition as never);
+  const byKey = { sql: '(("items"."listId" = ?) and ("items"."position" = ?))', params: ["l1", 1] };
+
+  await adapter.update("items", { ...key, label: "b" });
+  await adapter.delete("items", key);
+  await expect(adapter.get("items", key)).resolves.toEqual(row);
+  await expect(adapter.getOptional!("items", key)).resolves.toEqual(row);
+  expect(calls.map((call) => render(call.at(-1)))).toEqual([byKey, byKey, byKey, byKey]);
+  expect(calls[0]?.[2]).toEqual({ ...key, label: "b" });
+
+  await expect(adapter.update("items", { listId: "l1", label: "c" } as never)).rejects.toThrow(
+    'Update requires primary field "position"',
+  );
+  await expect(adapter.get("items", "l1" as never)).rejects.toThrow(
+    'Collection "items" has a composite primary key ["listId","position"]',
+  );
+  const empty = adapterFor(makeDb([]).db, [itemsCollection]);
+  await expect(empty.get("items", key)).rejects.toThrow(
+    'Row not found in "items" for id {"listId":"l1","position":1}',
   );
 });

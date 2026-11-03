@@ -6,6 +6,7 @@ import {
   type InferCollectionPrimaryFieldType,
   type InferCollectionSelectModel,
   type InferCollectionUpdateModel,
+  type TCollectionRuntime,
 } from "@ez-kits/sync-client-core";
 import type { DeepPartial, EntitySchema, Repository } from "typeorm";
 import { describe, expectTypeOf, test } from "vite-plus/test";
@@ -29,6 +30,11 @@ class User {
   uid!: string;
   email!: string;
 }
+class Item {
+  listId!: string;
+  position!: number;
+  label!: string;
+}
 declare const dbStorage: DBStorage;
 
 const todoCollection = defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "id" });
@@ -36,6 +42,11 @@ const userCollection = defineTypeOrmCollection({
   name: "users",
   entity: User,
   primaryField: "uid",
+});
+const itemCollection = defineTypeOrmCollection({
+  name: "items",
+  entity: Item,
+  primaryField: ["listId", "position"],
 });
 const collections: [typeof todoCollection, typeof userCollection] = [
   todoCollection,
@@ -50,14 +61,51 @@ describe("defineTypeOrmCollection", () => {
     expectTypeOf(todoCollection.adapterConfig.entity).toEqualTypeOf<typeof Todo>();
     expectTypeOf<InferCollectionSelectModel<TodoConfig>>().toEqualTypeOf<Todo>();
     expectTypeOf<InferCollectionInsertModel<TodoConfig>>().toEqualTypeOf<DeepPartial<Todo>>();
-    expectTypeOf<InferCollectionUpdateModel<TodoConfig>>().toEqualTypeOf<Partial<Todo>>();
+    expectTypeOf<InferCollectionUpdateModel<TodoConfig>>().toEqualTypeOf<{
+      id: number;
+      title?: string;
+    }>();
     expectTypeOf<InferCollectionPrimaryFieldType<TodoConfig>>().toEqualTypeOf<number>();
     expectTypeOf<InferCollectionPrimaryFieldType<typeof userCollection>>().toEqualTypeOf<string>();
+  });
+
+  test("update requires the primary key", () => {
+    const todos = {} as TCollectionRuntime<typeof todoCollection>;
+    void todos.update({ id: 1, title: "x" });
+    // @ts-expect-error update needs the primary key
+    void todos.update({ title: "x" });
+    // @ts-expect-error the primary key cannot be undefined
+    void todos.update({ id: undefined, title: "x" });
+  });
+
+  test("a composite key keeps its order and is typed as an object", () => {
+    type Items = typeof itemCollection;
+    type Key = { listId: string; position: number };
+    expectTypeOf(itemCollection.primaryField).toEqualTypeOf<readonly ["listId", "position"]>();
+    expectTypeOf<InferCollectionPrimaryFieldType<Items>>().toEqualTypeOf<Key>();
+    expectTypeOf<InferCollectionUpdateModel<Items>>().toEqualTypeOf<{
+      listId: string;
+      position: number;
+      label?: string;
+    }>();
+    const items = {} as TCollectionRuntime<Items>;
+    void items.update({ listId: "l1", position: 1, label: "x" });
+    void items.delete({ listId: "l1", position: 1 });
+    // @ts-expect-error update needs every key field
+    void items.update({ listId: "l1", label: "x" });
+    // @ts-expect-error a composite key is an object
+    void items.delete("l1");
+    // @ts-expect-error a partial key is not a key
+    void items.get({ position: 1 });
   });
 
   test("rejects primary fields that are not entity properties", () => {
     // @ts-expect-error primary field must be a property of the entity
     defineTypeOrmCollection({ name: "todos", entity: Todo, primaryField: "missing" });
+    // @ts-expect-error every key field must be a property of the entity
+    defineTypeOrmCollection({ name: "items", entity: Item, primaryField: ["listId", "missing"] });
+    // @ts-expect-error a composite key lists at least one field
+    defineTypeOrmCollection({ name: "items", entity: Item, primaryField: [] });
   });
 });
 
