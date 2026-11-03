@@ -200,21 +200,20 @@ export function createRealtimeDBSyncAdapterFromResolved<
           return nextCheckpoint;
         };
 
+        const deleteEvent = (raw: unknown, snapshot: DataSnapshot): ChangeBusEvent<C, N> =>
+          ({
+            type: "delete",
+            collection: collectionName,
+            id: collectionConfig.deserializeDeleteId
+              ? collectionConfig.deserializeDeleteId({ snapshot })
+              : (snapshot.key as C[N]["delete"]),
+            deletedAt: collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
+          }) as unknown as ChangeBusEvent<C, N>;
+
         /** A child as it arrives: a create, or a delete when it is a tombstone. */
         const addedEvent = (snapshot: DataSnapshot): ChangeBusEvent<C, N> => {
           const raw = snapshot.val();
-          if (isDeleted(raw, { snapshot })) {
-            const id = collectionConfig.deserializeDeleteId
-              ? collectionConfig.deserializeDeleteId({ snapshot })
-              : (snapshot.key as C[N]["delete"]);
-            return {
-              type: "delete",
-              collection: collectionName,
-              id,
-              deletedAt:
-                collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
-            } as unknown as ChangeBusEvent<C, N>;
-          }
+          if (isDeleted(raw, { snapshot })) return deleteEvent(raw, snapshot);
           const data = collectionConfig.deserializeCreate
             ? collectionConfig.deserializeCreate(raw, { snapshot })
             : (raw as C[N]["create"]);
@@ -224,16 +223,33 @@ export function createRealtimeDBSyncAdapterFromResolved<
           >;
         };
 
+        // The SDK raises the child events of one server message in a single loop, so events
+        // gathered until the next microtask commit together (a first pull in one go).
+        let pending: ChangeBusEvent<C, N>[] = [];
+        let pendingCheckpoint: TCheckpoint | undefined;
+        const flush = () => {
+          if (pending.length === 0) return;
+          const changes = pending;
+          pending = [];
+          commitChanges({
+            changes,
+            checkpoint: checkpointMapForCollection(
+              collectionName,
+              pendingCheckpoint as TCheckpoint,
+            ),
+          });
+        };
+        const queue = (event: ChangeBusEvent<C, N>, snapshot: DataSnapshot) => {
+          if (pending.length === 0) queueMicrotask(flush);
+          pending.push(event);
+          pendingCheckpoint = nextCp(snapshot);
+        };
+
         const listen = () => {
           if (stopped) return;
           const unsubscribeAdded = onChildAdded(
             listenTarget,
-            (snapshot) => {
-              commitChanges({
-                changes: [addedEvent(snapshot)],
-                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-              });
-            },
+            (snapshot) => queue(addedEvent(snapshot), snapshot),
             (error: Error) => pullOptions.onError?.(error),
           );
 
@@ -242,70 +258,38 @@ export function createRealtimeDBSyncAdapterFromResolved<
             (snapshot) => {
               const raw = snapshot.val();
               if (isDeleted(raw, { snapshot })) {
-                const id = collectionConfig.deserializeDeleteId
-                  ? collectionConfig.deserializeDeleteId({ snapshot })
-                  : (snapshot.key as C[N]["delete"]);
-                commitChanges({
-                  changes: [
-                    {
-                      type: "delete",
-                      collection: collectionName,
-                      id,
-                      deletedAt:
-                        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ??
-                        deletedAtFrom(raw),
-                    } as unknown as ChangeBusEvent<C, N>,
-                  ],
-                  checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-                });
+                queue(deleteEvent(raw, snapshot), snapshot);
                 return;
               }
               const data = collectionConfig.deserializeUpdate
                 ? collectionConfig.deserializeUpdate(raw, { snapshot })
                 : (raw as C[N]["update"]);
-              commitChanges({
-                changes: [
-                  {
-                    type: "update",
-                    collection: collectionName,
-                    data,
-                  } as unknown as ChangeBusEvent<C, N>,
-                ],
-                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-              });
+              queue(
+                { type: "update", collection: collectionName, data } as unknown as ChangeBusEvent<
+                  C,
+                  N
+                >,
+                snapshot,
+              );
             },
             (error: Error) => pullOptions.onError?.(error),
           );
 
           const unsubscribeRemoved = onChildRemoved(
             listenTarget,
-            (snapshot) => {
-              const id = collectionConfig.deserializeDeleteId
-                ? collectionConfig.deserializeDeleteId({ snapshot })
-                : (snapshot.key as C[N]["delete"]);
-              const raw = snapshot.val();
-              const deletedAt =
-                collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw);
-              commitChanges({
-                changes: [
-                  {
-                    type: "delete",
-                    collection: collectionName,
-                    id,
-                    deletedAt,
-                  } as unknown as ChangeBusEvent<C, N>,
-                ],
-                checkpoint: checkpointMapForCollection(collectionName, nextCp(snapshot)),
-              });
-            },
+            (snapshot) => queue(deleteEvent(snapshot.val(), snapshot), snapshot),
             (error: Error) => pullOptions.onError?.(error),
           );
 
           // A value event fires after the child events of the data it holds: the children
-          // existing when the listeners opened were all delivered.
+          // existing when the listeners opened were all delivered. They are committed first,
+          // so core reports caught up behind them.
           const unsubscribeLoaded = onValue(
             listenTarget,
-            () => pullOptions.onCaughtUp?.([collectionName]),
+            () => {
+              flush();
+              pullOptions.onCaughtUp?.([collectionName]);
+            },
             (error: Error) => pullOptions.onError?.(error),
             { onlyOnce: true },
           );

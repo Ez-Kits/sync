@@ -513,7 +513,7 @@ test("Firestore default push mappings write resolved document IDs and soft-delet
   expect(sdk.firestoreSets[2]?.[1]).toMatchObject({ deleted: true, deletedAt: expect.any(Number) });
 });
 
-test("Realtime Database pull maps all child event forms and removes listeners", () => {
+test("Realtime Database pull maps all child event forms, commits each tick in one go, and removes listeners", async () => {
   const adapter = createRealtimeDBSyncAdapter({
     db: {} as never,
     collections: [
@@ -540,14 +540,27 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
   sdk.rtdbCallbacks.changed![0]!(changed);
   sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { deleted: true, deletedAt: 678 }));
   sdk.rtdbCallbacks.removed![0]!(removed);
-  expect(commit.mock.calls.map(([call]) => call.changes[0])).toEqual([
-    { type: "create", collection: "todos", data: { id: "a" } },
-    { type: "delete", collection: "todos", id: "d", deletedAt: 567 },
-    { type: "update", collection: "todos", data: { id: "b" } },
-    { type: "delete", collection: "todos", id: "e", deletedAt: 678 },
-    { type: "delete", collection: "todos", id: "c", deletedAt: expect.any(Number) },
-  ]);
-  expect(commit.mock.calls[4]?.[0].checkpoint).toEqual({ todos: "old!!!!!" });
+  expect(commit).not.toHaveBeenCalled();
+  await Promise.resolve();
+  // One commit for the tick, with the checkpoint of its last child.
+  expect(commit).toHaveBeenCalledOnce();
+  expect(commit.mock.calls[0]?.[0]).toEqual({
+    changes: [
+      { type: "create", collection: "todos", data: { id: "a" } },
+      { type: "delete", collection: "todos", id: "d", deletedAt: 567 },
+      { type: "update", collection: "todos", data: { id: "b" } },
+      { type: "delete", collection: "todos", id: "e", deletedAt: 678 },
+      { type: "delete", collection: "todos", id: "c", deletedAt: expect.any(Number) },
+    ],
+    checkpoint: { todos: "old!!!!!" },
+  });
+  sdk.rtdbCallbacks.added![0]!(docSnapshot("f", { id: "f" }));
+  await Promise.resolve();
+  expect(commit).toHaveBeenCalledTimes(2);
+  expect(commit.mock.calls[1]?.[0]).toEqual({
+    changes: [{ type: "create", collection: "todos", data: { id: "f" } }],
+    checkpoint: { todos: "old!!!!!!" },
+  });
   cleanup();
   for (const kind of ["added", "changed", "removed"]) {
     expect(sdk.rtdbUnsubscribes[kind]).toHaveLength(1);
@@ -557,10 +570,11 @@ test("Realtime Database pull maps all child event forms and removes listeners", 
   for (const callbacks of Object.values(sdk.rtdbCallbacks)) {
     for (const callback of callbacks) callback(docSnapshot("late", { id: "late" }));
   }
-  expect(commit).toHaveBeenCalledTimes(5);
+  await Promise.resolve();
+  expect(commit).toHaveBeenCalledTimes(2);
 });
 
-test("Realtime Database pull uses default listeners and custom mapping hooks", () => {
+test("Realtime Database pull uses default listeners and custom mapping hooks", async () => {
   const resolveDeletedAt = vi.fn((raw: any) => raw?.removedOn);
   const adapter = createRealtimeDBCollectionSyncAdapter({
     db: {} as never,
@@ -580,7 +594,8 @@ test("Realtime Database pull uses default listeners and custom mapping hooks", (
   sdk.rtdbCallbacks.changed![0]!(docSnapshot("b", { id: "b" }));
   sdk.rtdbCallbacks.changed![0]!(docSnapshot("e", { gone: true, removedOn: 456 }));
   sdk.rtdbCallbacks.removed![0]!(docSnapshot("c", {}));
-  expect(commit.mock.calls.map(([call]) => call.changes[0])).toEqual([
+  await Promise.resolve();
+  expect(commit.mock.calls.flatMap(([call]) => call.changes)).toEqual([
     { type: "create", collection: "todos", data: { id: "a", created: true } },
     {
       type: "delete",
@@ -1360,7 +1375,13 @@ test("Realtime Database first pull: preview children commit first, then the list
     docSnapshot("1", { id: "1" }),
     docSnapshot("2", { deleted: true, deletedAt: 5 }),
   ]);
-  void rtdbPreviewAdapter(count).pull({ commitChanges, onPreviewed, onCount } as never);
+  const onCaughtUp = vi.fn(() => log.push("caughtUp"));
+  void rtdbPreviewAdapter(count).pull({
+    commitChanges,
+    onPreviewed,
+    onCount,
+    onCaughtUp,
+  } as never);
   expect(sdk.rtdbCallbacks.added).toBeUndefined();
   await flush();
 
@@ -1377,7 +1398,9 @@ test("Realtime Database first pull: preview children commit first, then the list
   });
   expect(onPreviewed).toHaveBeenCalledWith({ collection: "todos", hasData: true });
   sdk.rtdbCallbacks.added![0]!(docSnapshot("1", { id: "1" }));
-  expect(log).toEqual(["preview", "previewed", "child"]);
+  // The value event right after the children commits them before reporting caught up.
+  sdk.rtdbCallbacks.value![0]!(undefined);
+  expect(log).toEqual(["preview", "previewed", "child", "caughtUp"]);
 });
 
 test("Realtime Database preview and count run only on a first pull; failures still open the listeners", async () => {
