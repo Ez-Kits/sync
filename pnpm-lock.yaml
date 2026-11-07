@@ -220,6 +220,9 @@ importers:
       '@types/sql.js':
         specifier: ^1.4.9
         version: 1.4.11
+      firebase-tools:
+        specifier: 'catalog:'
+        version: 15.34.1(@types/node@25.5.0)
       typescript:
         specifier: ^7
         version: 7.0.2
@@ -284,6 +287,9 @@ importers:
       '@types/sql.js':
         specifier: ^1.4.9
         version: 1.4.11
+      firebase-tools:
+        specifier: 'catalog:'
+        version: 15.34.1(@types/node@25.5.0)
       typescript:
         specifier: ^7
         version: 7.0.2
@@ -547,7 +553,7 @@ importers:
         version: 7.0.2
       vite-plus:
         specifier: 'catalog:'
-        version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5(@vitest/browser@5.0.5)(vitest@5.0.5))(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
+        version: 1.4.0(@opentelemetry/api@1.9.1)(@types/node@25.5.0)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.6.1)(jsdom@30.1.3)(playwright@1.64.1)(typescript@7.0.2)(typescript@7.0.2)(yaml@2.8.3)
 
   packages/client-typeorm:
     devDependencies:
@@ -3288,10 +3294,6 @@ packages:
   has-yarn@2.1.0:
     resolution: {integrity: sha512-UqBRqi4ju7T+TqGNdqAO0PaSVGsDGJUBQvk9eUWNGRY1CFGDzYhLWoM7JQEemnlvVcv/YEmc2wNW8BC24EnUsw==}
     engines: {node: '>=8'}
-
-  hasown@2.0.2:
-    resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
-    engines: {node: '>= 0.4'}
 
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
@@ -7663,7 +7665,7 @@ snapshots:
       get-proto: 1.0.1
       gopd: 1.2.0
       has-symbols: 1.1.0
-      hasown: 2.0.2
+      hasown: 2.0.4
       math-intrinsics: 1.1.0
 
   get-proto@1.0.1:
@@ -7811,10 +7813,6 @@ snapshots:
       has-symbols: 1.1.0
 
   has-yarn@2.1.0: {}
-
-  hasown@2.0.2:
-    dependencies:
-      function-bind: 1.1.2
 
   hasown@2.0.4:
     dependencies:

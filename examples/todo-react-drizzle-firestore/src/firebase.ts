@@ -1,22 +1,15 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore } from "firebase/firestore";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCZOYKH1Cu_-fBvttX4Gm7J9OMFsUkbNuE",
-  authDomain: "test-e6303.firebaseapp.com",
-  projectId: "test-e6303",
-  storageBucket: "test-e6303.firebasestorage.app",
-  messagingSenderId: "345530126125",
-  appId: "1:345530126125:web:208c40256d1c4d95df0da4",
-  measurementId: "G-H7YPM4J5D0",
-};
+// A `demo-` project exists only in the emulator: no Firebase account, and nothing leaves this
+// machine. A real app passes its own Firebase config and calls `getFirestore(app)`.
+const app = initializeApp({ apiKey: "demo-api-key", projectId: "demo-ezsync-todos" });
 
-export function isFirebaseConfigured(): boolean {
-  return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
-}
-
-const app = isFirebaseConfigured() ? initializeApp(firebaseConfig) : null;
-
-export const firestore = app ? getFirestore(app) : null;
+// Through this page's own origin, which `vite.config.ts` proxies to the emulator, so the app
+// also syncs when opened from another device through a tunnel.
+export const firestore = initializeFirestore(app, {
+  host: location.host,
+  ssl: location.protocol === "https:",
+});
 // An app using Firebase Auth would export `getAuth(app)` here too; see `sync.ts` for retrying
 // the writes parked while signed out.

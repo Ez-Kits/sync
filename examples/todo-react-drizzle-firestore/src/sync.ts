@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { createTodoDBStorage } from "./db/index.ts";
 import { todos } from "./db/schema.ts";
-import { firestore, isFirebaseConfigured } from "./firebase.ts";
+import { firestore } from "./firebase.ts";
 
 export interface TodoCheckpoint {
   updatedAt: Timestamp;
@@ -72,8 +72,6 @@ function timestampToMillis(value: unknown): number | undefined {
 
 /** Each account syncs only its own subtree: `users/{account}/todos`. */
 function createTodoFirestoreSyncAdapter(account: string) {
-  if (!firestore || !isFirebaseConfigured()) return undefined;
-
   return createFirestoreSyncAdapter({
     db: firestore,
     collections: [

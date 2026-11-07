@@ -12,9 +12,12 @@ export default defineConfig({
     channel: "chrome",
   },
   webServer: {
-    command: `vp run build && vp preview --port ${port} --strictPort`,
+    // A fresh, empty emulator for each run.
+    command: `firebase emulators:exec --project demo-ezsync-todos --only firestore 'vp run build && vp preview --port ${port} --strictPort'`,
     url: `http://localhost:${port}`,
     reuseExistingServer: true,
+    // Lets `firebase` stop its emulator; a kill would leave it holding the port.
+    gracefulShutdown: { signal: "SIGINT", timeout: 10_000 },
     timeout: 120_000,
   },
 });

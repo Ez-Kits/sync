@@ -69,22 +69,6 @@ body {
   color: var(--muted);
 }
 
-.sync-status {
-  display: inline-block;
-  margin: 1rem 0 0;
-  padding: 0.35rem 0.7rem;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.sync-status.online {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -249,4 +233,97 @@ body {
   background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
   font: inherit;
+}
+
+.sync-info {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 0.9rem;
+}
+
+.sync-info-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sync-info-header button {
+  margin-left: auto;
+}
+
+.sync-info h2,
+.sync-info h3 {
+  margin: 0;
+  font-family: var(--sans);
+}
+
+.sync-info h2 {
+  font-size: 1rem;
+}
+
+.sync-info h3 {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.sync-info dl {
+  margin: 0.4rem 0 0;
+}
+
+.sync-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0;
+}
+
+.sync-field dt {
+  color: var(--muted);
+}
+
+.sync-field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.sync-badge {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.sync-badge.syncing,
+.sync-badge.idle {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sync-badge.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.sync-error {
+  margin: 0.6rem 0 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.sync-info details {
+  margin-top: 1rem;
+}
+
+.sync-history {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

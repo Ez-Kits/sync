@@ -102,3 +102,19 @@ test("each account keeps its own todos and every tab follows a switch", async ({
   );
   expect(roles.filter((role) => OWNER.test(role ?? ""))).toHaveLength(1);
 });
+
+test("a todo reaches another device through the Firestore emulator", async ({ browser }) => {
+  // A second browser context has its own local database, like another device.
+  const [first, second] = await Promise.all([browser.newContext(), browser.newContext()]);
+  const writer = await openTab(first);
+  const reader = await openTab(second);
+  await expect(writer.getByTestId("sync-status")).toHaveText("syncing");
+
+  await addTodo(writer, "synced between devices");
+  await expect(writer.getByTestId("pending-writes")).toHaveText("0");
+  await expect(writer.getByTestId("caught-up-todos")).toHaveText("yes");
+  await expect(reader.getByText("synced between devices")).toBeVisible();
+
+  await first.close();
+  await second.close();
+});
