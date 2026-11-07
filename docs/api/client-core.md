@@ -142,14 +142,14 @@ function createWorkerDBStorage<TEngineOptions>(
 
 Starts a storage worker for this context. All contexts with the same `key` elect one leader worker, which opens the engine; the others forward to it. The `create...Storage` functions of the storage packages call this for you.
 
-| Option                 | Type                                    | Default     | Description                                                      |
-| ---------------------- | --------------------------------------- | ----------- | ---------------------------------------------------------------- |
-| `dialect`              | `"sqlite" \| "postgres"`                | required    | The SQL dialect of the engine.                                   |
-| `worker`               | `() => Worker \| MessageEndpoint`       | required    | Starts the worker. Its module must call `startDBStorageWorker`.  |
-| `key`                  | `string`                                | `"default"` | Contexts with the same key share one database.                   |
-| `engineOptions`        | `TEngineOptions` (structured-cloneable) | `undefined` | Passed to the worker's `open` function.                          |
-| `requestTimeoutMs`     | `number`                                | `10000`     | How long a follower waits before probing the leader again.       |
-| `transactionTimeoutMs` | `number`                                | `10000`     | Idle time after which the leader rolls back an open transaction. |
+| Option                 | Type                                    | Default     | Description                                                                                                                                                  |
+| ---------------------- | --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dialect`              | `"sqlite" \| "postgres"`                | required    | The SQL dialect of the engine.                                                                                                                               |
+| `worker`               | `() => Worker \| MessageEndpoint`       | required    | Starts the worker. Its module must call `startDBStorageWorker`.                                                                                              |
+| `key`                  | `string`                                | `"default"` | Contexts with the same key share one database.                                                                                                               |
+| `engineOptions`        | `TEngineOptions` (structured-cloneable) | `undefined` | Passed to the worker's `open` function.                                                                                                                      |
+| `requestTimeoutMs`     | `number`                                | `10000`     | How long a follower waits before probing the leader again, and how long to wait for a role before reporting `LeaderUnavailableError`. `ready` keeps waiting. |
+| `transactionTimeoutMs` | `number`                                | `10000`     | Idle time after which the leader rolls back an open transaction.                                                                                             |
 
 The storage releases leadership while the page is in the back/forward cache, and rejoins when it is restored.
 

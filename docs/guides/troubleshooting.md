@@ -117,6 +117,14 @@ sql.js saves the **whole** database to IndexedDB after every commit, which costs
 
 `dbStorage.ready` rejects and the sync status becomes `error`. Common causes: the `.wasm` file did not load, a migration in the worker threw, or the browser blocks storage (private mode with storage disabled). Check the worker's console. Do not clear browser storage blindly: it deletes unpushed writes.
 
+### The status stays `error` with `LeaderUnavailableError`, or `dbStorage.ready` never settles
+
+The database has not opened within `requestTimeoutMs` (10 seconds by default). The sync status becomes `error` with `LeaderUnavailableError`, while `dbStorage.ready` keeps waiting: the database may still open, and sync then starts by itself. The usual causes are another tab of your app that is frozen or suspended while holding the leader lock (iOS Safari suspends background tabs; close it), or an engine that takes longer to open, for example a slow migration in the worker (raise `requestTimeoutMs`).
+
+### `UnknownError` from OPFS on Safari
+
+`navigator.storage.getDirectory()` rejects with `UnknownError` where WebKit keeps no persistent storage, such as a non-persistent `WKWebView` data store. Private Browsing is the likely case to check. The sync status becomes `error`. Use wa-sqlite's `vfs: "indexeddb"` there, which works without persistent OPFS, but keeps nothing after the session ends.
+
 ### `DBStorageWorkerError`: the storage worker failed to load
 
 The storage worker script itself failed to load, for example because an import inside it could not be resolved, or the URL passed to `new Worker(...)` is wrong. `dbStorage.ready` rejects with `DBStorageWorkerError`, `dbStorage.onError` listeners get it, every read and write rejects with it, and the sync status becomes `error`. The browser rarely says why: look for the failed worker request in the Network tab, or for the error in your dev server's terminal (Vite prints `Failed to resolve import ...`). Check that:

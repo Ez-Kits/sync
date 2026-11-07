@@ -251,7 +251,10 @@ test("a worker that failed to load cannot delete, and the runtime rejects destro
   const scope = { postMessage: (message: unknown) => posted.push(message), onmessage: null as any };
   startDBStorageWorker(() => memoryEngine(), scope as never);
   scope.onmessage({ data: { t: "destroy", id: 1 } } as MessageEvent);
-  expect(posted).toEqual([expect.objectContaining({ t: "response", id: 1, ok: false })]);
+  expect(posted).toEqual([
+    { t: "started" },
+    expect.objectContaining({ t: "response", id: 1, ok: false }),
+  ]);
 });
 
 test("requests waiting in a page when the database is deleted elsewhere reject as destroyed", async () => {

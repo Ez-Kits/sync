@@ -12,6 +12,7 @@ import {
   clientChannelName,
   clientLockName,
   controlChannelName,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   isClientLockOf,
   leaderChannelName,
   leaderLockName,
@@ -69,8 +70,6 @@ interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: unknown): void;
 }
-
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 function randomId(): string {
   return crypto.randomUUID();

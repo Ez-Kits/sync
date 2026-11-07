@@ -131,6 +131,8 @@ export class SyncClientImpl<
   /** Storage ready and local-change store initialized; nothing touches the database before. */
   private readonly initialized: Promise<void>;
   private isInitialized = false;
+  /** Why the database is not usable yet; `starting` would hide it and never end. */
+  private startupError: unknown;
   private syncHandler: SyncHandler<C, DB, TCheckpoint> | undefined;
   private wantsSync = false;
   private networkCleanup: (() => void) | undefined;
@@ -207,7 +209,7 @@ export class SyncClientImpl<
         // A new leader does not know this context wants sync.
         if (this.wantsSync && this.appliedRole === "follower") this.tabs.requestSync();
       }),
-      this.dbStorage.onError((error) => this.setStatus("error", error)),
+      this.dbStorage.onError((error) => this.reportStorageError(error)),
       // Another context deleted the database: this client cannot be used anymore.
       this.dbStorage.onDestroyed?.(() => void this.disposeDestroyed()) ?? (() => undefined),
       this.tabs.subscribe({
@@ -252,7 +254,7 @@ export class SyncClientImpl<
         this.applyRole(this.dbStorage.role);
         void this.markCheckpointedCollections();
       },
-      (error: unknown) => this.setStatus("error", error),
+      (error: unknown) => this.reportStorageError(error),
     );
   }
 
@@ -339,8 +341,7 @@ export class SyncClientImpl<
     this.attachNetworkListeners();
     if (this.appliedRole === "follower") this.tabs.requestSync();
     if (isBrowserNetworkAvailable()) {
-      this.setStatus("starting");
-      this.reconcileSync();
+      this.start();
     } else {
       this.setStatus("offline");
     }
@@ -610,10 +611,17 @@ export class SyncClientImpl<
     }
   }
 
+  private reportStorageError(error: unknown): void {
+    if (!this.appliedRole) this.startupError = error;
+    this.setStatus("error", error);
+  }
+
   /** Only the leader gets a sync handler. */
   private applyRole(role: DBRole): void {
     if (this.appliedRole === role) return;
     const previousRole = this.role;
+    const hadStartupError = this.startupError !== undefined;
+    this.startupError = undefined;
     this.appliedRole = role;
     this.syncHandler?.stopAll();
     const handler = role === "leader" ? this.createSyncHandler() : undefined;
@@ -640,6 +648,7 @@ export class SyncClientImpl<
     }
     if (this.wantsSync && role === "follower") this.tabs.requestSync();
     if (this.wantsSync && isBrowserNetworkAvailable()) this.reconcileSync();
+    else if (hadStartupError) this.setStatus(this.wantsSync ? "offline" : "stopped");
   }
 
   private createSyncHandler(): SyncHandler<C, DB, TCheckpoint> {
@@ -691,6 +700,15 @@ export class SyncClientImpl<
     this.tabs.broadcastOutbox(parked);
   }
 
+  private start(): void {
+    if (this.startupError !== undefined) {
+      this.setStatus("error", this.startupError);
+      return;
+    }
+    this.setStatus("starting");
+    this.reconcileSync();
+  }
+
   private reconcileSync(): void {
     if (!this.appliedRole) return;
     if (!this.syncHandler) {
@@ -708,10 +726,7 @@ export class SyncClientImpl<
     }
 
     // Listeners exist only while sync is wanted (attached in startSync, removed in stopSync).
-    const onOnline = () => {
-      this.setStatus("starting");
-      this.reconcileSync();
-    };
+    const onOnline = () => this.start();
     // Going offline pauses sync but keeps leadership.
     const onOffline = () => {
       this.syncHandler?.stopAll();

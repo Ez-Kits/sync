@@ -229,13 +229,13 @@ Use it with `createDrizzlePgDBAdapter` or `createTypeOrmPgDBAdapter`, and define
 
 `createSqlJsDBStorage`, `createSqliteWasmDBStorage`, `createWaSqliteDBStorage` and `createPGliteDBStorage` take the same options:
 
-| Option                 | Default     | Meaning                                                                                      |
-| ---------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `worker`               | required    | A function that starts the storage worker: `() => new Worker(url, { type: "module" })`.      |
-| `key`                  | `"default"` | The database name for tab coordination. Tabs with the same key share one database.           |
-| `engineOptions`        | `undefined` | Plain data sent to the worker's `open` function.                                             |
-| `requestTimeoutMs`     | `10000`     | How long a follower waits for the leader before checking it is still alive.                  |
-| `transactionTimeoutMs` | `10000`     | An open transaction idle longer than this is rolled back, so one stuck tab cannot block all. |
+| Option                 | Default     | Meaning                                                                                                                                                             |
+| ---------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `worker`               | required    | A function that starts the storage worker: `() => new Worker(url, { type: "module" })`.                                                                             |
+| `key`                  | `"default"` | The database name for tab coordination. Tabs with the same key share one database.                                                                                  |
+| `engineOptions`        | `undefined` | Plain data sent to the worker's `open` function.                                                                                                                    |
+| `requestTimeoutMs`     | `10000`     | How long a follower waits for the leader before checking it is still alive, and how long the database may take to open before `LeaderUnavailableError` is reported. |
+| `transactionTimeoutMs` | `10000`     | An open transaction idle longer than this is rolled back, so one stuck tab cannot block all.                                                                        |
 
 ## Using an engine without a worker
 
