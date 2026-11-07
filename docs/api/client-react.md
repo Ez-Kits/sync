@@ -80,17 +80,20 @@ const { data, isPending, error } = useLiveQuery({
 });
 ```
 
-| Option        | Type                                             | Description                                                                                   |
-| ------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `collections` | collection names                                 | Re-run when these change. Omit to re-run on any change. Compared by content.                  |
-| `query`       | `(queryBuilder, querySchema) => T \| Promise<T>` | The ORM query. Need not be stable: each run uses the latest function.                         |
-| `deps`        | `readonly unknown[]`                             | The props and state `query` reads. A change (by `Object.is`) restarts the live query at once. |
+| Option        | Type                                             | Description                                                                                                      |
+| ------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `collections` | collection names                                 | Re-run when these change. Omit to re-run on any change. Compared by content.                                     |
+| `query`       | `(queryBuilder, querySchema) => T \| Promise<T>` | The ORM query. Need not be stable: each run uses the latest function.                                            |
+| `deps`        | `readonly unknown[]`                             | The props and state `query` reads. A change (by `Object.is`) restarts the live query at once.                    |
+| `isEqual`     | `(previous: T, next: T) => boolean`              | Whether two results are the same, so the later one does not re-render. Need not be stable. Default: `deepEqual`. |
 
-| Result      | Type                 | Description                                                |
-| ----------- | -------------------- | ---------------------------------------------------------- |
-| `data`      | `T \| undefined`     | The latest result; `undefined` before the first one.       |
-| `isPending` | `boolean`            | `true` until the first result, and while the query reruns. |
-| `error`     | `Error \| undefined` | Set when the query threw; cleared when it runs again.      |
+| Result      | Type                 | Description                                                                                                                  |
+| ----------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `data`      | `T \| undefined`     | The last successful result: kept when a run fails and while new `deps` load; `undefined` before the first one.               |
+| `isPending` | `boolean`            | `true` until the first answer (a result or an error), and again as soon as `deps` change. Background re-runs don't touch it. |
+| `error`     | `Error \| undefined` | Why the last run failed; cleared by the next success or a change of `deps`.                                                  |
+
+A write that leaves the result unchanged does not re-render the component, and once the hook unmounts or `deps` change, the previous live query delivers nothing further. See [Unchanged results](../guides/reading-data.md#unchanged-results) for what the default comparison sees.
 
 ## `usePendingWrites()`
 

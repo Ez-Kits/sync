@@ -1,11 +1,12 @@
 # Reading data
 
-You have three ways to read, from simplest to most powerful.
+You have four ways to read, from simplest to most powerful.
 
 | Way                          | Use it for                                      | Updates by itself? |
 | ---------------------------- | ----------------------------------------------- | ------------------ |
 | `collections.<name>.get`     | one record by primary key                       | no                 |
 | `collections.<name>.getMany` | every record of a collection                    | no                 |
+| `client.query`               | any ORM query, answered once                    | no                 |
 | `client.liveQuery`           | any ORM query (filters, sorting, joins, counts) | **yes**            |
 
 All reads wait until the database is ready, so you can call them right after creating the client.
@@ -15,6 +16,9 @@ All reads wait until the database is ready, so you can call them right after cre
 ```ts
 const todo = await client.collections.todos.get(id); // rejects if the record does not exist
 const all = await client.collections.todos.getMany();
+
+// Any ORM query, once. Rejects when the query fails or the database cannot open.
+const open = await client.query((db, schema) => db.select().from(schema.todos));
 ```
 
 ## Live queries
@@ -26,6 +30,7 @@ const stop = client.liveQuery({
   collections: ["todos"], // re-run only when these change; leave out to re-run on any change
   query: (db, schema) => db.select().from(schema.todos),
   onData: (rows) => render(rows),
+  onError: (error) => showError(error),
 });
 
 // Later, when the view goes away:
@@ -33,9 +38,33 @@ stop();
 ```
 
 - `query` receives the ORM's query builder (`db`) and the schema (`schema`, your tables or entities by collection name). It may return a value or a promise.
-- `onData` is called with each new result.
+- `onData` is called with the first result, then only when a result differs from the last one. See [Unchanged results](#unchanged-results).
+- `onError` is called when a run fails, also when the database cannot open. The next change runs the query again, and its first success reaches `onData` even if the rows are the same as before, so you can tell it recovered. Without `onError`, the failure surfaces as an unhandled rejection.
 - `collections` is optional but recommended: without it, the query re-runs on changes to **any** collection.
-- The return value stops the live query.
+- The return value stops the live query. Once stopped, it delivers nothing further: a run still in flight calls neither `onData` nor `onError`.
+- Only one run happens at a time, so results always arrive in order. Any number of changes during a run lead to one more run after it.
+
+### Unchanged results
+
+A query re-runs on any change to its collections, even when its rows were not touched. A result equal to the last one is not delivered, so nothing downstream re-renders.
+
+By default results are compared by value: arrays, plain objects, class instances (such as TypeORM entities), dates, binary data, maps and sets. Pass `isEqual` to decide yourself, for example when results are large and a version column says enough:
+
+```ts
+client.liveQuery({
+  collections: ["todos"],
+  query: (db, schema) => db.select().from(schema.todos),
+  isEqual: (previous, next) =>
+    previous.length === next.length &&
+    previous.every((todo, index) => todo.updatedAt === next[index]?.updatedAt),
+  onData: render,
+});
+```
+
+Two things to keep in mind with the default comparison:
+
+- **Return a new result from each run.** A `query` that returns the same object each time, mutated in place, always compares equal to itself and is delivered only once. Don't mutate a result you received either: it is what the next run compares with.
+- **What it cannot see.** A class's `#private` fields are not compared. Values whose state is hidden, such as a `RegExp`, an `Error` or a function, are equal only to themselves, so a result holding a new one each run is always delivered.
 
 ### With Drizzle
 

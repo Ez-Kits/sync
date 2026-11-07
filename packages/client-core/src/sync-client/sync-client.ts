@@ -30,6 +30,7 @@ import {
 } from "../db-storage";
 import { SyncHandler, globalSyncCollections } from "../sync-handler";
 import type { SyncStatusEvent } from "../sync-handler";
+import { deepEqual } from "./deep-equal";
 import {
   PendingWritesError,
   PendingWritesTracker,
@@ -48,6 +49,7 @@ import type {
   DestroyOptions,
   DisposeOptions,
   LiveQueryFn,
+  QueryFn,
   SubscribeFn,
   SyncClient,
   SyncClientConfig,
@@ -302,25 +304,73 @@ export class SyncClientImpl<
   };
 
   liveQuery: LiveQueryFn<C, DB> = (options) => {
-    const { collections, query, onData } = options;
+    const { collections, query, onData, onError, isEqual = deepEqual } = options;
+    type TResult = Parameters<typeof onData>[0];
+    let stopped = false;
+    let running = false;
+    let runAgain = false;
+    // Holds no result until there is one to compare with, also after a failed run: the first
+    // success after a failure is delivered, which tells the caller it recovered.
+    let last: { result: TResult } | undefined;
 
-    const triggerQuery = async () => {
-      await this.initialized;
-      const queryResult = await query(this.dbAdapter.queryBuilder, this.dbAdapter.querySchema);
-      onData(queryResult);
+    // A rejection nobody handles: what a failure without `onError` has always been.
+    const report = (error: unknown) => void Promise.reject(error);
+    const deliver = (callback: () => void) => {
+      try {
+        callback();
+      } catch (error) {
+        report(error);
+      }
     };
-    const rerun = () => void triggerQuery();
+    const runQuery = async () => {
+      let result: TResult;
+      let changed: boolean;
+      try {
+        await this.initialized;
+        result = await query(this.dbAdapter.queryBuilder, this.dbAdapter.querySchema);
+        changed = !last || !isEqual(last.result, result);
+      } catch (error) {
+        if (stopped) return;
+        last = undefined;
+        if (onError) deliver(() => onError(error));
+        else report(error);
+        return;
+      }
+      if (stopped || !changed) return;
+      last = { result };
+      deliver(() => onData(result));
+    };
+    // One run at a time, so results arrive in the order of the reads. Changes during a run are
+    // covered by one more run after it, which also spares the reads a burst of writes would cost.
+    const rerun = async () => {
+      if (running) {
+        runAgain = true;
+        return;
+      }
+      running = true;
+      do {
+        runAgain = false;
+        await runQuery();
+      } while (runAgain && !stopped);
+      running = false;
+    };
 
-    rerun();
+    void rerun();
     this.liveQueries.add(rerun);
 
     const unsubscribe = collections
       ? this.changeBus.subscribe(collections, rerun)
       : this.changeBus.subscribe(rerun);
     return () => {
+      stopped = true;
       this.liveQueries.delete(rerun);
       unsubscribe();
     };
+  };
+
+  query: QueryFn<DB> = async (query) => {
+    await this.initialized;
+    return query(this.dbAdapter.queryBuilder, this.dbAdapter.querySchema);
   };
 
   getCheckpoint = async <N extends CollectionNames<C>>(collection: N) => {
