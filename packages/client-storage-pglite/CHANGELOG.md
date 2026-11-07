@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.5](https://github.com/Ez-Kits/sync/compare/sync-client-storage-pglite-v0.0.4...sync-client-storage-pglite-v0.0.5) (2026-11-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.2.1
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.2.1
+
 ## [0.0.4](https://github.com/Ez-Kits/sync/compare/sync-client-storage-pglite-v0.0.3...sync-client-storage-pglite-v0.0.4) (2026-11-03)
 
 
