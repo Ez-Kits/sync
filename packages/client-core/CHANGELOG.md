@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.2.0...sync-client-core-v0.2.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **client-core:** push the global outbox in write order ([#14](https://github.com/Ez-Kits/sync/issues/14)) ([92fef99](https://github.com/Ez-Kits/sync/commit/92fef99e2bb589675ba52e9a8a6fb58acec34a16))
+* **client-core:** stop sync status hanging at starting when the database never opens ([#17](https://github.com/Ez-Kits/sync/issues/17)) ([9d2a127](https://github.com/Ez-Kits/sync/commit/9d2a127ee138f11763615fd94787edda00adcb9e))
+
 ## [0.2.0](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.1.2...sync-client-core-v0.2.0) (2026-11-03)
 
 

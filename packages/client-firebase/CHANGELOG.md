@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1](https://github.com/Ez-Kits/sync/compare/sync-client-firebase-v0.2.0...sync-client-firebase-v0.2.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **client-firebase:** commit realtime database pull events in batches ([#15](https://github.com/Ez-Kits/sync/issues/15)) ([e78f176](https://github.com/Ez-Kits/sync/commit/e78f1765efd0925804879338b06ecd138beb39af))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.2.1
+
 ## [0.2.0](https://github.com/Ez-Kits/sync/compare/sync-client-firebase-v0.1.0...sync-client-firebase-v0.2.0) (2026-11-03)
 
 
