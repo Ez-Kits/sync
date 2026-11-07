@@ -186,12 +186,15 @@ importers:
       '@ez-kits/sync-client-react':
         specifier: workspace:*
         version: link:../../packages/client-react
-      '@ez-kits/sync-client-storage-sqljs':
+      '@ez-kits/sync-client-storage-wa-sqlite':
         specifier: workspace:*
-        version: link:../../packages/client-storage-sqljs
+        version: link:../../packages/client-storage-wa-sqlite
       '@faker-js/faker':
         specifier: ^10.5.0
         version: 10.5.0
+      '@journeyapps/wa-sqlite':
+        specifier: 'catalog:'
+        version: 2.0.10
       drizzle-orm:
         specifier: 'catalog:'
         version: 1.0.0-rc.5(@electric-sql/pglite@0.3.16)(@opentelemetry/api@1.9.1)(@types/mssql@9.1.9(@azure/core-client@1.10.1))(@types/sql.js@1.4.11)(mssql@11.0.1(@azure/core-client@1.10.1))(pg@8.23.1)(sql.js@1.14.1)(zod@4.6.7)
@@ -204,9 +207,6 @@ importers:
       react-dom:
         specifier: 19.2.5
         version: 19.2.5(react@19.2.5)
-      sql.js:
-        specifier: ^1.13.0
-        version: 1.14.1
     devDependencies:
       '@playwright/test':
         specifier: ^1.55.0
@@ -217,9 +217,6 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
-      '@types/sql.js':
-        specifier: ^1.4.9
-        version: 1.4.11
       firebase-tools:
         specifier: 'catalog:'
         version: 15.34.1(@types/node@25.5.0)
@@ -247,15 +244,18 @@ importers:
       '@ez-kits/sync-client-react':
         specifier: workspace:*
         version: link:../../packages/client-react
-      '@ez-kits/sync-client-storage-sqljs':
+      '@ez-kits/sync-client-storage-wa-sqlite':
         specifier: workspace:*
-        version: link:../../packages/client-storage-sqljs
+        version: link:../../packages/client-storage-wa-sqlite
       '@ez-kits/sync-client-typeorm-adapter':
         specifier: workspace:*
         version: link:../../packages/client-typeorm
       '@faker-js/faker':
         specifier: ^10.5.0
         version: 10.5.0
+      '@journeyapps/wa-sqlite':
+        specifier: 'catalog:'
+        version: 2.0.10
       firebase:
         specifier: 'catalog:'
         version: 12.12.1
@@ -268,9 +268,6 @@ importers:
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
-      sql.js:
-        specifier: ^1.13.0
-        version: 1.14.1
       typeorm:
         specifier: 'catalog:'
         version: 0.3.28(mssql@11.0.1(@azure/core-client@1.10.1))(pg@8.23.1)(sql.js@1.14.1)
@@ -284,9 +281,6 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
-      '@types/sql.js':
-        specifier: ^1.4.9
-        version: 1.4.11
       firebase-tools:
         specifier: 'catalog:'
         version: 15.34.1(@types/node@25.5.0)
