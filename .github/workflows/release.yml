@@ -55,31 +55,46 @@ jobs:
           if [ -n "${NPM_TOKEN:-}" ]; then
             npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
           fi
-          out="$RUNNER_TEMP/packs"
-          mkdir -p "$out"
-          for dir in $(jq -r '.[]' <<<"$PATHS_RELEASED"); do
-            name=$(jq -r .name "$dir/package.json")
-            version=$(jq -r .version "$dir/package.json")
+          # Stages one package. Called from `if`, where errexit is off, so every
+          # step returns on failure itself.
+          stage() {
+            local dir=$1 name version out tarball log
+            name=$(jq -r .name "$dir/package.json") || return 1
+            version=$(jq -r .version "$dir/package.json") || return 1
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "::notice::$name@$version is already published, skipping"
-              continue
+              return 0
             fi
+            out=$(mktemp -d "$RUNNER_TEMP/pack.XXXXXX") || return 1
             # pnpm pack and publishing a tarball skip prepublishOnly, so run it first
             # (build, then copy LICENSE, README and docs into the package).
             # pnpm pack rewrites workspace: and catalog: ranges to real versions.
-            (cd "$dir" && vp run prepublishOnly && vp pm pack --pack-destination "$out")
-            tarball=$(ls "$out"/*.tgz)
+            (cd "$dir" && vp run prepublishOnly && vp pm pack --pack-destination "$out") || return 1
+            tarball=$(ls "$out"/*.tgz) || return 1
             # npm view only sees approved versions, so a rerun can hit a version that
             # is already staged. Staged and published versions share one index.
-            if ! log=$(npm stage publish "$tarball" --access public --provenance 2>&1); then
+            if log=$(npm stage publish "$tarball" --access public --provenance 2>&1); then
               echo "$log"
-              if grep -qiE 'already (exists|staged)|previously published|cannot publish over|E409' <<<"$log"; then
-                echo "::notice::$name@$version is already staged, skipping"
-              else
-                exit 1
-              fi
-            else
-              echo "$log"
+              return 0
             fi
-            rm "$tarball"
+            echo "$log"
+            if grep -qiE 'already (exists|staged)|previously published|cannot publish over|E409' <<<"$log"; then
+              echo "::notice::$name@$version is already staged, skipping"
+              return 0
+            fi
+            return 1
+          }
+
+          # Stage every package even if some fail, then fail the job once at the end.
+          failed=()
+          for dir in $(jq -r '.[]' <<<"$PATHS_RELEASED"); do
+            echo "::group::$dir"
+            stage "$dir" || failed+=("$dir")
+            echo "::endgroup::"
           done
+          if [ ${#failed[@]} -gt 0 ]; then
+            for dir in "${failed[@]}"; do
+              echo "::error::Staging failed for $dir"
+            done
+            exit 1
+          fi
