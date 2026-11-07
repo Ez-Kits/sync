@@ -9,7 +9,7 @@ import {
 import { Like } from "typeorm";
 import { Todo } from "./db/schema.ts";
 import { ACCOUNTS, useAccount, type Account } from "./account.ts";
-import { isFirebaseConfigured } from "./firebase.ts";
+import { SyncInfo } from "./SyncInfo.tsx";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
 
 /** Bound the rendered window even when the local database contains many rows. */
@@ -29,11 +29,7 @@ function TodoApp({
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<TodoFilter>("all");
-  const [syncEnabled, setSyncEnabled] = useState(false);
   const [role, setRole] = useState(client.role);
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
 
   const { data, isPending } = useLiveQuery({
     collections: TODO_COLLECTIONS,
@@ -51,20 +47,7 @@ function TodoApp({
   });
 
   useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    return () => {
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isFirebaseConfigured()) return;
     client.startSync();
-    setSyncEnabled(true);
     return () => {
       client.stopSync();
     };
@@ -120,13 +103,6 @@ function TodoApp({
         <h1>Todos</h1>
         <AccountSwitcher account={account} onChange={onAccountChange} />
         <p className="lede">Local-first tasks with sql.js, TypeORM, and Firestore sync.</p>
-        <p className={`sync-status ${syncEnabled && isOnline ? "online" : "offline"}`}>
-          {!syncEnabled
-            ? "Local-only mode — add VITE_FIREBASE_* env vars to enable sync"
-            : isOnline
-              ? "Firestore sync connected"
-              : "Offline — sync paused until you're back online"}
-        </p>
         <p className="lede" data-testid="storage-role">
           {role === "leader"
             ? "This tab holds the local database"
@@ -140,6 +116,7 @@ function TodoApp({
               : null}
           </p>
         )}
+        <SyncInfo />
       </header>
 
       <form className="composer" onSubmit={addTodo}>

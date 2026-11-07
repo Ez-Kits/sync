@@ -1,0 +1,10 @@
+rules_version = '2';
+// For the emulator only. This example has no Firebase Auth, so anyone can use any account;
+// a real app checks `request.auth.uid == userId`, as `sync.ts` explains.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

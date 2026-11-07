@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev",
+    "dev": "firebase emulators:exec --project demo-ezsync-todos --only firestore 'vp dev'",
     "build": "tsc && vp build",
     "check": "vp check",
     "preview": "vp preview",
@@ -30,6 +30,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.9",
+    "firebase-tools": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"

@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ChangeBus } from "../src/change-bus";
+import { LeaderUnavailableError } from "../src/db-storage";
 import { createSyncClient } from "../src/sync-client/create-sync-client";
 import { SyncClientImpl } from "../src/sync-client/sync-client";
 import { PushRejectedError } from "../src/sync-handler";
@@ -9,6 +10,7 @@ import {
   clientConfig,
   collection,
   createEngine,
+  fakeDBStorage,
   makeDb,
   settle,
   storageGroup,
@@ -325,5 +327,74 @@ test("sync clients without BroadcastChannel stay single-context", async () => {
   await settle();
   await syncClient.collections.todos.insert({ id: "1" } as never);
   syncClient.startSync();
+  await syncClient.dispose();
+});
+
+test("startSync after a failed database open keeps the error instead of starting forever", async () => {
+  const failure = new Error("storage blocked");
+  const dbStorage = fakeDBStorage();
+  (dbStorage as { ready: Promise<void> }).ready = Promise.reject(failure);
+  const host = new EventTarget();
+  vi.stubGlobal("addEventListener", host.addEventListener.bind(host));
+  vi.stubGlobal("removeEventListener", host.removeEventListener.bind(host));
+  const syncClient = client(makeDb(undefined, undefined, dbStorage));
+  const statuses: unknown[] = [];
+  await settle();
+  syncClient.subscribeStatus((event) => statuses.push(event.error ?? event.status));
+  syncClient.startSync();
+  host.dispatchEvent(new Event("online"));
+  expect(statuses).toEqual([failure, failure, failure]);
+  await syncClient.dispose();
+});
+
+function waitingStorage() {
+  let open!: () => void;
+  const dbStorage = fakeDBStorage();
+  (dbStorage as { ready: Promise<void> }).ready = new Promise((resolve) => (open = resolve));
+  return { dbStorage, open };
+}
+
+const noLeader = new LeaderUnavailableError();
+
+test("a late leader clears the startup error and starts the wanted sync", async () => {
+  const { dbStorage, open } = waitingStorage();
+  const syncClient = client(makeDb(undefined, undefined, dbStorage));
+  const statuses: unknown[] = [];
+  syncClient.subscribeStatus((event) => statuses.push(event.error ?? event.status));
+  dbStorage.fail(noLeader);
+  syncClient.startSync();
+  expect(statuses).toEqual(["stopped", noLeader, noLeader]);
+  open();
+  await settle();
+  expect(statuses.at(-1)).toBe("syncing");
+  await syncClient.dispose();
+});
+
+test.each([
+  ["stopped when sync is not wanted", false, true, "stopped"],
+  ["offline when the network is gone", true, false, "offline"],
+])("a late leader clears the startup error: %s", async (_name, wanted, onLine, expected) => {
+  const { dbStorage, open } = waitingStorage();
+  const syncClient = client(makeDb(undefined, undefined, dbStorage));
+  dbStorage.fail(noLeader);
+  if (wanted) syncClient.startSync();
+  vi.stubGlobal("navigator", { onLine });
+  const statuses: unknown[] = [];
+  syncClient.subscribeStatus((event) => statuses.push(event.status));
+  open();
+  await settle();
+  expect(statuses).toEqual(["error", expected]);
+  await syncClient.dispose();
+});
+
+test("a storage error after startup does not block a later startSync", async () => {
+  const dbStorage = fakeDBStorage();
+  const syncClient = client(makeDb(undefined, undefined, dbStorage));
+  await settle();
+  const statuses: string[] = [];
+  syncClient.subscribeStatus((event) => statuses.push(event.status));
+  dbStorage.fail(new Error("worker hiccup"));
+  syncClient.startSync();
+  expect(statuses).toEqual(["stopped", "error", "starting", "syncing"]);
   await syncClient.dispose();
 });

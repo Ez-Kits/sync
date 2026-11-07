@@ -5,6 +5,7 @@ import {
   DBStorageClosedError,
   DBStorageWorkerError,
   LeaderChangedError,
+  LeaderUnavailableError,
   startDBStorageWorker,
   TransactionStatementError,
   type DBEngine,
@@ -203,6 +204,7 @@ test("the worker runtime rejects requests before init and ignores unknown messag
   send({ t: "close", id: 2 });
   await settle();
   expect(posted).toEqual([
+    { t: "started" },
     expect.objectContaining({ t: "response", id: 1, ok: false }),
     { t: "response", id: 2, ok: true },
   ]);
@@ -222,6 +224,11 @@ test("the main-thread storage ignores unknown and stale worker messages", async 
   expect(endpoint.postMessage).toHaveBeenCalledWith(
     expect.objectContaining({ t: "init", key: "pg" }),
   );
+  // Nothing but init goes out until the worker is heard from.
+  void storage.exec(q("GET", "all")).catch(() => undefined);
+  expect(endpoint.postMessage).toHaveBeenCalledOnce();
+  endpoint.onmessage({ data: { t: "started" } });
+  expect(endpoint.postMessage.mock.calls.at(-1)![0]).toMatchObject({ t: "request" });
   endpoint.onmessage({ data: { t: "response", id: 99, ok: true } });
   endpoint.onmessage({ data: { t: "unknown" } });
   endpoint.onmessage({ data: undefined });
@@ -385,4 +392,87 @@ test("a worker error after startup is reported without failing the storage", asy
   const request = endpoint.postMessage.mock.calls.at(-1)![0];
   endpoint.onmessage({ data: { t: "response", id: request.id, ok: true, result: { rows: [] } } });
   await expect(result).resolves.toEqual({ rows: [] });
+});
+
+test("a storage with no role in time reports it, and still becomes ready when a role arrives", async () => {
+  vi.useFakeTimers();
+  try {
+    const endpoint = { postMessage: vi.fn(), onmessage: null as any };
+    const storage = createWorkerDBStorage({
+      dialect: "sqlite",
+      worker: () => endpoint as never,
+      requestTimeoutMs: 50,
+    });
+    const onError = vi.fn();
+    storage.onError(onError);
+
+    vi.advanceTimersByTime(49);
+    expect(onError).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onError).toHaveBeenCalledExactlyOnceWith(expect.any(LeaderUnavailableError));
+
+    endpoint.onmessage({ data: { t: "role", role: "leader" } });
+    await expect(storage.ready).resolves.toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a storage that got a role in time reports no timeout", async () => {
+  vi.useFakeTimers();
+  try {
+    const endpoint = { postMessage: vi.fn(), onmessage: null as any };
+    const storage = createWorkerDBStorage({ dialect: "sqlite", worker: () => endpoint as never });
+    const onError = vi.fn();
+    storage.onError(onError);
+    endpoint.onmessage({ data: { t: "role", role: "follower" } });
+    vi.advanceTimersByTime(10_000);
+    expect(onError).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+/** A worker like the browser's: a message that finds no handler is dropped. */
+function droppingWorker(locks: FakeLockManager) {
+  const scope = {
+    navigator: { locks },
+    BroadcastChannel: FakeBroadcastChannel,
+    onmessage: null as ((event: MessageEvent) => void) | null,
+    postMessage: (data: unknown) => endpoint.onmessage?.({ data } as MessageEvent),
+  };
+  const endpoint = {
+    onmessage: null as ((event: MessageEvent) => void) | null,
+    postMessage: (data: unknown) => scope.onmessage?.({ data } as MessageEvent),
+  };
+  return { scope, endpoint };
+}
+
+test("a worker that starts listening late still gets init and the requests sent before", async () => {
+  const { locks } = installTabs();
+  const { scope, endpoint } = droppingWorker(locks);
+  const disk = createDisk();
+  const storage = createWorkerDBStorage({ dialect: "sqlite", worker: () => endpoint });
+  const early = storage.exec(q("GET", "all"));
+
+  // The worker module awaited something before calling startDBStorageWorker.
+  await settle();
+  startDBStorageWorker(() => memoryEngine(disk), scope as never);
+
+  await storage.ready;
+  expect(storage.role).toBe("leader");
+  await expect(early).resolves.toEqual({ rows: [] });
+  await storage.close();
+});
+
+test("a worker already listening before the page attaches still gets init", async () => {
+  const { locks } = installTabs();
+  const { scope, endpoint } = droppingWorker(locks);
+  const disk = createDisk();
+  // Its first message finds no page handler and is dropped.
+  startDBStorageWorker(() => memoryEngine(disk), scope as never);
+  const storage = createWorkerDBStorage({ dialect: "sqlite", worker: () => endpoint });
+  await storage.ready;
+  await expect(storage.exec(q("GET", "all"))).resolves.toEqual({ rows: [] });
+  await storage.close();
 });

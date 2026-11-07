@@ -19,8 +19,8 @@ export class LeaderChangedError extends Error {
 export class LeaderUnavailableError extends Error {
   override readonly name = "LeaderUnavailableError";
   readonly retriable = true;
-  constructor() {
-    super("The database leader did not respond.");
+  constructor(message = "The database leader did not respond.") {
+    super(message);
   }
 }
 

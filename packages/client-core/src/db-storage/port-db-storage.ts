@@ -3,8 +3,15 @@ import {
   DBStorageDestroyedError,
   DBStorageWorkerError,
   deserializeError,
+  LeaderUnavailableError,
 } from "./errors";
-import type { NodeOptions, NodeRequestBody, PortMessage, PortRequest } from "./protocol";
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  type NodeOptions,
+  type NodeRequestBody,
+  type PortMessage,
+  type PortRequest,
+} from "./protocol";
 import type { DBDialect, DBExecutor, DBQuery, DBQueryResult, DBRole, DBStorage } from "./types";
 
 /** A `Worker`, `MessagePort` or worker global scope. */
@@ -26,7 +33,10 @@ export interface WorkerDBStorageOptions<TEngineOptions = unknown> {
   worker: () => Worker | MessageEndpoint;
   /** Structured-cloneable options handed to the worker's engine opener. */
   engineOptions?: TEngineOptions;
-  /** Follower request timeout before the leader is probed again. Defaults to 10 seconds. */
+  /**
+   * Follower request timeout before the leader is probed again, and how long the storage waits
+   * for a role before reporting {@link LeaderUnavailableError}. Defaults to 10 seconds.
+   */
   requestTimeoutMs?: number;
   /** Idle time after which the leader rolls an open transaction back. Defaults to 10 seconds. */
   transactionTimeoutMs?: number;
@@ -68,6 +78,11 @@ class PortDBStorage implements DBStorage {
   private readonly errorListeners = new Set<(error: unknown) => void>();
   private readonly destroyedListeners = new Set<() => void>();
   private settleReady: { resolve(): void; reject(error: unknown): void } | undefined;
+  /**
+   * Held until the worker is heard from. A worker drops what arrives before it listens, and
+   * its module may await something before calling `startDBStorageWorker`.
+   */
+  private unsent: PortRequest[] | undefined = [];
   private nextId = 0;
   /** Set when the worker failed before it became ready; every request then rejects with it. */
   private failure: Error | undefined;
@@ -75,6 +90,7 @@ class PortDBStorage implements DBStorage {
   private destroying: Promise<void> | undefined;
   private destroyed = false;
   private pageCleanup: (() => void) | undefined;
+  private readonly init: PortRequest;
 
   constructor(
     readonly dialect: DBDialect,
@@ -93,7 +109,10 @@ class PortDBStorage implements DBStorage {
     (endpoint as Partial<Worker>).addEventListener?.("error", (event) =>
       this.handleWorkerError(event),
     );
-    this.post({ t: "init", ...node, engineOptions });
+    this.init = { t: "init", ...node, engineOptions };
+    // Sent right away too, for a worker that was listening before this handler was attached.
+    endpoint.postMessage(this.init);
+    setTimeout(() => this.reportNoRole(), node.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     this.watchPageLifecycle(host);
   }
 
@@ -212,11 +231,33 @@ class PortDBStorage implements DBStorage {
     for (const listener of this.errorListeners) listener(error);
   }
 
+  /**
+   * The leader lock is held by a context that does not answer, or the engine has not opened.
+   * Not final: `ready` stays pending, as the lock can still come free.
+   */
+  private reportNoRole(): void {
+    if (!this.settleReady) return;
+    const error = new LeaderUnavailableError(
+      "The database has not opened yet: another tab may hold it, or opening it is stuck.",
+    );
+    for (const listener of this.errorListeners) listener(error);
+  }
+
   private post(message: PortRequest): void {
-    this.endpoint.postMessage(message);
+    if (this.unsent) this.unsent.push(message);
+    else this.endpoint.postMessage(message);
+  }
+
+  /** The worker listens now: send what it may have missed. It ignores a second `init`. */
+  private flushUnsent(): void {
+    const unsent = this.unsent;
+    if (!unsent) return;
+    this.unsent = undefined;
+    for (const message of [this.init, ...unsent]) this.endpoint.postMessage(message);
   }
 
   private handleMessage(message: PortMessage): void {
+    this.flushUnsent();
     switch (message?.t) {
       case "role":
         this.role = message.role;

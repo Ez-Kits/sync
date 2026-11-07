@@ -46,6 +46,8 @@ export type PortRequest =
 
 /** Storage worker → main thread. */
 export type PortMessage =
+  /** The worker is listening. Sent when it starts, and in answer to its first `init`. */
+  | { t: "started" }
   | { t: "role"; role: DBRole }
   | { t: "invalidate" }
   /** Another context deleted the database; this worker's node is closed. */
@@ -55,6 +57,8 @@ export type PortMessage =
   | { t: "response"; id: number; ok: false; error: SerializedError };
 
 export const controlChannelName = (key: string) => `ez-sync:db:${key}`;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
 export const leaderLockName = (key: string) => `ez-sync:db:${key}:leader`;
 export const leaderChannelName = (key: string, epoch: string) =>
   `ez-sync:db:${key}:leader:${epoch}`;

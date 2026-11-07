@@ -37,6 +37,7 @@ export function startDBStorageWorker<TEngineOptions = unknown>(
     switch (message?.t) {
       case "init": {
         if (node) return;
+        post({ t: "started" });
         const { engineOptions, t: _t, ...options } = message;
         node = new DBStorageNode({
           ...options,
@@ -73,6 +74,7 @@ export function startDBStorageWorker<TEngineOptions = unknown>(
         return;
     }
   };
+  post({ t: "started" });
 }
 
 function notInitialized(): Error {
