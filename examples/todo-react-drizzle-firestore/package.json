@@ -17,19 +17,18 @@
     "@ez-kits/sync-client-drizzle-adapter": "workspace:*",
     "@ez-kits/sync-client-firebase": "workspace:*",
     "@ez-kits/sync-client-react": "workspace:*",
-    "@ez-kits/sync-client-storage-sqljs": "workspace:*",
+    "@ez-kits/sync-client-storage-wa-sqlite": "workspace:*",
     "@faker-js/faker": "^10.5.0",
+    "@journeyapps/wa-sqlite": "catalog:",
     "drizzle-orm": "catalog:",
     "firebase": "catalog:",
     "react": "catalog:",
-    "react-dom": "19.2.5",
-    "sql.js": "^1.13.0"
+    "react-dom": "19.2.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@types/react": "catalog:",
     "@types/react-dom": "^19.2.3",
-    "@types/sql.js": "^1.4.9",
     "firebase-tools": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
