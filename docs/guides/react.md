@@ -61,8 +61,7 @@ function OpenTodos({ search }: { search: string }) {
     deps: [search],
   });
 
-  if (error) return <p>Could not load: {error.message}</p>;
-  if (!data) return <p>Loading…</p>;
+  if (!data) return error ? <p>Could not load: {error.message}</p> : <p>Loading…</p>;
   return (
     <ul>
       {data.map((todo) => (
@@ -74,9 +73,10 @@ function OpenTodos({ search }: { search: string }) {
 ```
 
 - `query` gets the ORM query builder and the schema, exactly like [`client.liveQuery`](reading-data.md#live-queries).
-- `data` is `undefined` until the first result arrives.
-- `isPending` is `true` until the first result arrives, and while the query reruns.
-- `error` is set when the query throws.
+- `data` is `undefined` until the first result arrives. After that it is the last successful result: it stays when a run fails, and while the query loads for new `deps`.
+- `isPending` is `true` until the first answer (a result or an error), and again as soon as `deps` change. Background re-runs after a write don't touch it.
+- `error` is set when a run fails, next to the last good `data`, and cleared by the next success or a change of `deps`. As above, check `data` before replacing the screen with an error, so a passing failure doesn't blank it.
+- A write that leaves the result unchanged does not re-render the component. The comparison is by value; pass `isEqual` to replace it. See [Unchanged results](reading-data.md#unchanged-results).
 
 > **List what `query` reads in `deps`.** `query` need not be stable: each run uses the latest function, and a new function alone does not restart the live query. When a value in `deps` changes (compared with `Object.is`, like `useEffect` dependencies), the live query restarts and reruns at once. A value missing from `deps` is only picked up on the next change of the watched collections. `collections` may be a new array each render; it is compared by content.
 

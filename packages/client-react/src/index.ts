@@ -7,7 +7,7 @@ import type {
   PendingWrites,
   SyncClient,
 } from "@ez-kits/sync-client-core";
-import { createSyncClient } from "@ez-kits/sync-client-core";
+import { createSyncClient, deepEqual } from "@ez-kits/sync-client-core";
 import {
   createContext,
   createElement,
@@ -124,55 +124,43 @@ function createHooks<
     // The latest `query` runs on every rerun; only `collections` and `deps` re-subscribe.
     const queryRef = useRef(options.query);
     queryRef.current = options.query;
-    const dataRef = useRef<TResult | undefined>(undefined);
-    const [isPending, setIsPending] = useState(true);
-    const [error, setError] = useState<Error | undefined>(undefined);
+    const isEqualRef = useRef(options.isEqual);
+    isEqualRef.current = options.isEqual;
+    // One snapshot, so a result and its state always commit together. `settledBy` is the
+    // subscription that last answered, which tells a new one (new `deps`) has no answer yet.
+    const snapshotRef = useRef<LiveQuerySnapshot<TResult>>({ data: undefined, error: undefined });
     const collectionKey = options.collections?.join("\0");
     const collections = useMemo(() => options.collections, [collectionKey]);
     const depsVersion = useDepsVersion(options.deps);
 
-    const result = useSyncExternalStore(
-      useCallback(
-        (cb) => {
-          let active = true;
-          const unsubscribe = client.liveQuery({
-            collections,
-            query: async (qb, schema) => {
-              if (active) {
-                setIsPending(true);
-                setError(undefined);
-              }
-              try {
-                return await queryRef.current(qb, schema);
-              } catch (reason) {
-                if (active) setError(reason instanceof Error ? reason : new Error(String(reason)));
-                return undefined as TResult;
-              }
-            },
-            onData: (data) => {
-              // A run that ends after re-subscribing would overwrite the new query's data.
-              if (!active) return;
-              dataRef.current = data;
-              setIsPending(false);
-              cb();
-            },
-          });
-          return () => {
-            active = false;
-            unsubscribe();
-          };
-        },
-        [client, collections, depsVersion],
-      ),
-      () => {
-        return dataRef.current;
-      },
+    const subscribe = useCallback(
+      (cb: () => void) =>
+        client.liveQuery({
+          collections,
+          query: (qb, schema) => queryRef.current(qb, schema),
+          isEqual: (previous, next) => (isEqualRef.current ?? deepEqual)(previous, next),
+          onData: (data) => {
+            snapshotRef.current = { data, error: undefined, settledBy: subscribe };
+            cb();
+          },
+          onError: (reason) => {
+            snapshotRef.current = {
+              data: snapshotRef.current.data,
+              error: reason instanceof Error ? reason : new Error(String(reason)),
+              settledBy: subscribe,
+            };
+            cb();
+          },
+        }),
+      [client, collections, depsVersion],
     );
+    const snapshot = useSyncExternalStore(subscribe, () => snapshotRef.current);
+    const settled = snapshot.settledBy === subscribe;
 
     return {
-      data: result,
-      isPending,
-      error,
+      data: snapshot.data,
+      isPending: !settled,
+      error: settled ? snapshot.error : undefined,
     };
   }
 
@@ -214,6 +202,12 @@ function createHooks<
   }
 
   return { useSyncClient, useLiveQuery, usePendingWrites, usePullState };
+}
+
+interface LiveQuerySnapshot<TResult> {
+  data: TResult | undefined;
+  error: Error | undefined;
+  settledBy?: unknown;
 }
 
 /** The pull state of several collections at once (see `UsePullStateResult`). */

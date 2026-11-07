@@ -114,13 +114,13 @@ test("a bulk write is all or nothing, and an empty one does nothing", async () =
 
 test("live queries rerun once per bulk write", async () => {
   const { client: c } = client();
-  const onData = vi.fn();
-  c.liveQuery({ collections: ["todos"], query: async () => 1, onData });
+  const query = vi.fn(async () => 1);
+  c.liveQuery({ collections: ["todos"], query, onData: vi.fn() });
   await tick();
-  onData.mockClear();
+  query.mockClear();
   await c.collections.todos.insertMany(Array.from({ length: 50 }, (_, i) => ({ id: `${i}` })));
   await tick();
-  expect(onData).toHaveBeenCalledOnce();
+  expect(query).toHaveBeenCalledOnce();
   await c.dispose();
 });
 

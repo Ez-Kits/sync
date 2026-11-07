@@ -61,7 +61,8 @@ test("factory creates a client, subscribe overloads filter streams, and live que
   syncClient.subscribe("todos" as never, single as never);
   syncClient.subscribe(["todos"] as never, several as never, { stream: "local" });
   const data = vi.fn();
-  const query = vi.fn(async () => ["todos"]);
+  let runs = 0;
+  const query = vi.fn(async () => [(runs += 1)]);
   syncClient.liveQuery({ query, onData: data } as never);
   await tick();
   await syncClient.collections.todos.insert({ id: "1" } as never);
@@ -237,16 +238,16 @@ test("only the leader syncs; follower writes reach its push and pulls reach foll
   expect(followerAdapter.push).not.toHaveBeenCalled();
   expect(await fixture.store.getPendingEvents()).toEqual([]);
 
-  const followerData = vi.fn();
-  follower.liveQuery({ collections: ["todos"], query: async () => "rows", onData: followerData });
+  const followerQuery = vi.fn(async () => "rows");
+  follower.liveQuery({ collections: ["todos"], query: followerQuery, onData: vi.fn() });
   await tick();
-  followerData.mockClear();
+  followerQuery.mockClear();
   leaderAdapter.commitPull({
     changes: [{ type: "create", collection: "todos", data: { id: "remote" } }],
     checkpoint: {},
   });
   await settle();
-  expect(followerData).toHaveBeenCalled();
+  expect(followerQuery).toHaveBeenCalled();
   expect(fixture.rows.has("remote")).toBe(true);
   expect(FakeBroadcastChannel.messages("changes").map((m) => m.source)).toEqual(["local", "pull"]);
 
@@ -265,10 +266,10 @@ test("a promoted follower resumes sync, pushes the outbox and re-reads live quer
   await follower.collections.todos.insert({ id: "before" } as never);
   const roles: string[] = [];
   follower.subscribeRole((role) => roles.push(role));
-  const data = vi.fn();
-  third.liveQuery({ query: async () => "rows", onData: data });
+  const query = vi.fn(async () => "rows");
+  third.liveQuery({ query, onData: vi.fn() });
   await tick();
-  data.mockClear();
+  query.mockClear();
   FakeBroadcastChannel.posted = [];
 
   await leader.dispose();
@@ -277,7 +278,7 @@ test("a promoted follower resumes sync, pushes the outbox and re-reads live quer
   expect(followerAdapter.pull).toHaveBeenCalled();
   // The outbox survived the handoff and the new leader pushed it.
   expect(followerAdapter.push).toHaveBeenCalledOnce();
-  expect(data).toHaveBeenCalled();
+  expect(query).toHaveBeenCalled();
   // The remaining follower reminds the new leader that it wants sync.
   expect(FakeBroadcastChannel.messages("sync-request")).toHaveLength(1);
 
@@ -293,8 +294,8 @@ test("a promoted follower resumes sync, pushes the outbox and re-reads live quer
 test("a gap in another tab's change sequence re-reads live queries", async () => {
   const fixture = tabs();
   const syncClient = client(fixture.adapter());
-  const data = vi.fn();
-  syncClient.liveQuery({ query: async () => "rows", onData: data });
+  const query = vi.fn(async () => "rows");
+  syncClient.liveQuery({ query, onData: vi.fn() });
   await tick();
   const other = new FakeBroadcastChannel(syncChannelName("default"));
   const changes = (seq: number) => ({
@@ -307,11 +308,11 @@ test("a gap in another tab's change sequence re-reads live queries", async () =>
   other.postMessage(changes(1));
   other.postMessage(changes(2));
   await tick();
-  data.mockClear();
+  query.mockClear();
   other.postMessage(changes(5));
   await tick();
   // Once for the gap, once for the delivered event.
-  expect(data).toHaveBeenCalledTimes(2);
+  expect(query).toHaveBeenCalledTimes(2);
   other.postMessage({ t: "unknown" });
   await tick();
   // Nothing to announce: nothing is posted.

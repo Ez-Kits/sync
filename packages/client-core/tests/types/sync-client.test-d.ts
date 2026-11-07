@@ -71,6 +71,12 @@ test("liveQuery passes the adapter query builder and infers results", () => {
       return 3;
     },
     onData: (data) => expectTypeOf(data).toEqualTypeOf<number>(),
+    onError: (error) => expectTypeOf(error).toEqualTypeOf<unknown>(),
+    isEqual: (previous, next) => {
+      expectTypeOf(previous).toEqualTypeOf<number>();
+      expectTypeOf(next).toEqualTypeOf<number>();
+      return previous === next;
+    },
   });
   client.liveQuery({
     // @ts-expect-error live queries only watch known collections
@@ -78,6 +84,15 @@ test("liveQuery passes the adapter query builder and infers results", () => {
     query: () => 1,
     onData: () => {},
   });
+});
+
+test("query passes the adapter query builder and infers its result", () => {
+  const result = client.query(async (qb, schema) => {
+    expectTypeOf(qb).toEqualTypeOf<QueryBuilder>();
+    expectTypeOf(schema).toEqualTypeOf<QuerySchema>();
+    return 3;
+  });
+  expectTypeOf(result).toEqualTypeOf<Promise<number>>();
 });
 
 test("clients take a DB adapter and expose the storage role", () => {
