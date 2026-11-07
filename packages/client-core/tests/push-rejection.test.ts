@@ -526,3 +526,26 @@ for (const scope of ["global", "collection"] as const) {
     f.stop();
   });
 }
+
+test("global: one push sends a transaction's events in write order, not collection order", async () => {
+  const ownAdapter = { pull: vi.fn(() => () => {}), push: vi.fn() };
+  const f = fixture("global", {
+    collections: [
+      { name: "todos", adapterConfig: {}, primaryField: "id" },
+      { name: "lists", adapterConfig: {}, primaryField: "id" },
+      { name: "notes", adapterConfig: {}, primaryField: "id", syncAdapter: ownAdapter },
+    ],
+  });
+  await f.store.appendEvents([
+    { ...write("e1", "1", "parent", "create"), collection: "lists" },
+    { ...write("e2", "2", "child", "create"), collection: "todos" },
+    { ...write("e3", "3", "own", "create"), collection: "notes" },
+  ]);
+  f.start();
+  await vi.waitFor(() => expect(f.pushed).toHaveLength(1));
+  expect(f.pushed[0].map(({ eventId, collection }: any) => [eventId, collection])).toEqual([
+    ["e1", "lists"],
+    ["e2", "todos"],
+  ]);
+  f.stop();
+});
