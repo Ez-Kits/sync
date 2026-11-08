@@ -333,7 +333,15 @@ export class SyncClientImpl<
     checkpoint: TCheckpoint | undefined,
   ) => {
     await this.initialized;
-    await this.checkpoints.saveCheckpoint(collection, checkpoint);
+    if (checkpoint !== undefined) {
+      await this.checkpoints.saveCheckpoint(collection, checkpoint);
+      return;
+    }
+    // A full re-pull: with its revisions kept, every pulled record would count as already seen.
+    await this.dbAdapter.transaction(async (_tx, { native }) => {
+      await this.checkpoints.saveCheckpoint(collection, undefined, native);
+      await this.dbAdapter.localChangeStore.removeRevisions(String(collection), native);
+    });
   };
 
   startSync = () => {

@@ -21,6 +21,7 @@ test("initialize opens the data source and creates the predefined outbox tables 
     "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
+    "ez_sync_revisions",
     "ez_sync_skipped_remote_events",
     "sqlite_sequence",
   ]);

@@ -89,7 +89,7 @@ Check, in order:
 2. For Firestore with `buildPullQueryConstraints`: every write must set the field you order by (for example `updatedAt`), deletes included, and the composite index must exist.
 3. The pulled data contains the collection's primary key field. If not, add it in `deserializeCreate` / `deserializeUpdate`.
 4. The record does not have unpushed local writes. If it does, it is a conflict, and by default local wins. See [Conflict resolution](conflict-resolution.md).
-5. To force a full re-pull of a collection: `await client.saveCheckpoint("todos", undefined)`, then `stopSync()` and `startSync()`.
+5. To force a full re-pull of a collection: `await client.saveCheckpoint("todos", undefined)`, then `stopSync()` and `startSync()`. A record with unpushed local writes keeps its local state until they are pushed.
 
 ### Only one tab syncs
 

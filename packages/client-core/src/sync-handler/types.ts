@@ -14,7 +14,10 @@ export interface SyncStatusEvent {
  * App supplied policy for reconciling an incoming remote event with a record that has
  * pending (unpushed) local writes. Records without them always take the remote event.
  * - `"local"`: skip the remote event and keep pushing the local writes. Without a resolver,
- *   this is what every conflict gets.
+ *   this is what every conflict gets. On a collection with revisions the remote event is
+ *   applied and the pending writes are replayed over it (a create replaces the row, an update
+ *   merges into it and a delete removes it; an update over a remote delete stays deleted), so
+ *   fields only the other device changed are kept.
  * - `"remote"`: apply the remote event and discard the record's pending local writes.
  * - `{ data }`: store `data` locally and push it in place of the pending local writes. After
  *   a remote delete, `data` recreates the record.
@@ -64,6 +67,14 @@ export interface SyncAdapter<
    * sets its own `checkpointSerializer`; without either, `JSON.stringify` / `JSON.parse`.
    */
   readonly checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
+  /**
+   * The collections whose records carry a write counter, `rev`, kept and enforced by the
+   * backend. Core numbers each pushed event of these (`event.rev`, the record's last seen
+   * revision + 1, + 2, ...), and uses the `rev` of pulled events to drop stale echoes and detect
+   * conflicts exactly. A refused write of another device's revision is a `PushConflictError`.
+   * A pulled event without `rev` is handled as on any other collection.
+   */
+  readonly revisionedCollections?: readonly N[];
   /** Open a pull stream. A returned cleanup function must stop every listener. */
   pull(options: PullOptions<C, N, TCheckpoint>): void | (() => void) | Promise<void | (() => void)>;
   /**
@@ -74,7 +85,8 @@ export interface SyncAdapter<
    * pushes the events again in smaller pieces, in order, and parks the ones refused when
    * pushed alone: they stay in the outbox, held with the later events of their record, are
    * retried with a backoff and on every sync start, and are reported through `onPushRejected`.
-   * Nothing leaves the outbox unless acknowledged, or discarded by the application.
+   * Nothing leaves the outbox unless acknowledged, or discarded by the application. A
+   * `PushConflictError` is not a refusal: core resolves the conflict and pushes again.
    */
   push(options: PushOptions<C, N>): void | Promise<void>;
 }

@@ -269,21 +269,22 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 
 ## Errors
 
-| Class                              | When                                                                                                                     | `retriable` |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------- |
-| `CoordinationUnavailableError`     | Web Locks or BroadcastChannel are missing; `ready` rejects with it.                                                      |             |
-| `LeaderChangedError`               | The leader went away while a write or transaction was in flight. It may or may not have applied.                         | `true`      |
-| `LeaderUnavailableError`           | No live leader answered.                                                                                                 | `true`      |
-| `TransactionClosedError`           | The transaction was rolled back after idling too long, or is otherwise closed.                                           |             |
-| `TransactionStatementError`        | A `BEGIN` / `COMMIT` / ... statement was sent.                                                                           |             |
-| `DBStorageClosedError`             | The storage was closed.                                                                                                  |             |
-| `DBStorageDestroyedError`          | The database was deleted, by this or another tab.                                                                        |             |
-| `DBStorageDestroyUnsupportedError` | `destroy()` was called, but the storage worker has no `destroy` function.                                                |             |
-| `PendingWritesError`               | `destroy()` refused to delete unpushed writes. `pending`: the `PendingWrites` it read.                                   |             |
-| `DBStorageWorkerError`             | The storage worker failed to load; `ready` and every request reject with it.                                             |             |
-| `PushRejectedError`                | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                                            |             |
-| `WaitForPulledError`               | `waitForPulled()` gave up. `reason`: `"timeout"`, `"stopped"` or `"disposed"`; `state`: the last `PullState`.            |             |
-| `WaitForPushedError`               | `waitForPushed()` gave up. `reason`: `"timeout"`, `"offline"` or `"disposed"`; `pending`: the last `PendingWrites` read. |             |
+| Class                              | When                                                                                                                        | `retriable` |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `CoordinationUnavailableError`     | Web Locks or BroadcastChannel are missing; `ready` rejects with it.                                                         |             |
+| `LeaderChangedError`               | The leader went away while a write or transaction was in flight. It may or may not have applied.                            | `true`      |
+| `LeaderUnavailableError`           | No live leader answered.                                                                                                    | `true`      |
+| `TransactionClosedError`           | The transaction was rolled back after idling too long, or is otherwise closed.                                              |             |
+| `TransactionStatementError`        | A `BEGIN` / `COMMIT` / ... statement was sent.                                                                              |             |
+| `DBStorageClosedError`             | The storage was closed.                                                                                                     |             |
+| `DBStorageDestroyedError`          | The database was deleted, by this or another tab.                                                                           |             |
+| `DBStorageDestroyUnsupportedError` | `destroy()` was called, but the storage worker has no `destroy` function.                                                   |             |
+| `PendingWritesError`               | `destroy()` refused to delete unpushed writes. `pending`: the `PendingWrites` it read.                                      |             |
+| `DBStorageWorkerError`             | The storage worker failed to load; `ready` and every request reject with it.                                                |             |
+| `PushRejectedError`                | Thrown by a sync adapter for a write refused for good. Has `permanent: true`.                                               |             |
+| `PushConflictError`                | Thrown by a sync adapter when another device wrote the records first. `events`: their server state, with `rev`. Not parked. |             |
+| `WaitForPulledError`               | `waitForPulled()` gave up. `reason`: `"timeout"`, `"stopped"` or `"disposed"`; `state`: the last `PullState`.               |             |
+| `WaitForPushedError`               | `waitForPushed()` gave up. `reason`: `"timeout"`, `"offline"` or `"disposed"`; `pending`: the last `PendingWrites` read.    |             |
 
 | Helper                                                   | Description                                                |
 | -------------------------------------------------------- | ---------------------------------------------------------- |
@@ -291,7 +292,7 @@ See [Custom DB storage](../extending/custom-db-storage.md) for the full engine c
 | `isPermanentPushError(error)`                            | `error.permanent === true`                                 |
 | `serializeError(error)` / `deserializeError(serialized)` | Move an error between contexts, keeping the classes above. |
 
-`new PushRejectedError(message?, options?)` takes the standard `ErrorOptions` (`{ cause }`).
+`new PushRejectedError(message?, options?)` takes the standard `ErrorOptions` (`{ cause }`), and `new PushConflictError(events, message?, options?)` the same.
 
 ---
 
@@ -374,7 +375,7 @@ The outbox and the sync state stored next to the rows. Every method takes an opt
 
 ```ts
 interface ILocalChangeStore<TTx = unknown> {
-  initialize(): Promise<void>; // create / upgrade the store's tables; idempotent, safe to run concurrently
+  initialize(): Promise<void>; // create the store's tables; idempotent, safe to run concurrently
   appendEvents(events: StoredChangeBusEvent[], tx?): Promise<void>; // also records each id as applied
   hasAppliedEvent(eventId: string, tx?): Promise<boolean>;
   getPendingEvents(scope?: LocalChangeScope, tx?): Promise<StoredChangeBusEvent[]>; // in commit order
@@ -388,6 +389,9 @@ interface ILocalChangeStore<TTx = unknown> {
   getSkippedRemoteEvents(scope?: LocalChangeScope, tx?): Promise<SkippedRemoteEvent[]>;
   upsertSkippedRemoteEvent(entry: SkippedRemoteEvent, tx?): Promise<void>;
   removeSkippedRemoteEvents(keys: DirtyRecordKey[], tx?): Promise<void>;
+  getRevision(key: DirtyRecordKey, tx?): Promise<number | undefined>; // last seen revision; outlives a local delete
+  upsertRevision(entry: RecordRevision, tx?): Promise<void>;
+  removeRevisions(collection: string, tx?): Promise<void>; // except records with pending events; a full re-pull applies the rest again
 }
 
 interface AtomicLocalChangeStore<TTx = unknown> extends ILocalChangeStore<TTx> {
@@ -443,6 +447,7 @@ interface PushOptions<C, N> {
 - Batches of more than `PULL_COMMIT_CHUNK_SIZE` (200) changes commit in chunks, each in its own transaction, yielding to the event loop between them; only the last saves the checkpoint.
 - `onCaughtUp`, `onPreviewed` and `onCount` take effect once the batches delivered before them have committed. An adapter that can't tell when it is caught up calls `onCaughtUp` after its first batch; one that never calls it never reports `caughtUp`.
 - `push` resolves only once the backend durably accepted the events, and calls (and awaits) `commitChanges` for the accepted ones. Throw a `PushRejectedError` for a refusal that resending would meet again; throw anything else to retry.
+- `revisionedCollections?: readonly N[]` on the adapter opts collections in to [revisions](../guides/conflict-resolution.md#exact-conflicts-with-revisions). Core sets `rev` on each pushed event of these; the adapter writes it, passes it back in `commitChanges`, and sets `rev` on pulled events. A push refused because another device wrote first throws a `PushConflictError`. A pulled event without `rev` is handled as on any other collection.
 
 | Type                                                   | Description                                                                     |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------- |

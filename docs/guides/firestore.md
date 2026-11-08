@@ -230,6 +230,10 @@ A user who is signed out typically gets `permission-denied`: their writes are pa
 
 Pulls that fail (for example a listener refused by rules, or a missing index) are retried with backoff and reported through the sync status.
 
+## Exact conflicts
+
+Set `revisionField` to detect conflicts exactly, without device clocks. Your security rules must enforce it: without them, devices can silently keep different data. See [revisions](conflict-resolution.md#exact-conflicts-with-revisions).
+
 ## One collection only
 
 If you prefer to attach the adapter to a single collection's definition, use `createFirestoreCollectionSyncAdapter`. It takes the same options plus `db` and an optional `collectionName` (defaults to the last segment of `collectionPath`). See the [API reference](../api/client-firebase.md#createfirestorecollectionsyncadapterconfig).

@@ -23,34 +23,9 @@ const rowsOf = async (storage: DBStorage, sql: string) =>
 const sqliteTodos = sqliteTable("todos", { id: text("id").primaryKey(), title: text("title") });
 const pgTodos = pgTable("todos", { id: pgText("id").primaryKey(), title: pgText("title") });
 
-/** The outbox tables as version 1 created them: keyed by `id`, no `seq`, no meta table. */
-const SQLITE_V1 = `
-CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);
-CREATE TABLE ez_sync_events (
-  id TEXT PRIMARY KEY NOT NULL, type TEXT NOT NULL, collection TEXT NOT NULL, data TEXT,
-  recordId TEXT NOT NULL, createdAt INTEGER NOT NULL
-);
-CREATE TABLE ez_sync_dirty_records (
-  collection TEXT NOT NULL, recordId TEXT NOT NULL, state TEXT NOT NULL, updatedAt INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX ez_sync_dirty_record_key ON ez_sync_dirty_records (collection, recordId);
-`;
-const PG_V1 = `
-CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);
-CREATE TABLE ez_sync_events (
-  id TEXT PRIMARY KEY NOT NULL, type TEXT NOT NULL, collection TEXT NOT NULL, data JSONB,
-  "recordId" TEXT NOT NULL, "createdAt" BIGINT NOT NULL
-);
-CREATE TABLE ez_sync_dirty_records (
-  collection TEXT NOT NULL, "recordId" TEXT NOT NULL, state TEXT NOT NULL, "updatedAt" BIGINT NOT NULL
-);
-CREATE UNIQUE INDEX ez_sync_dirty_record_key ON ez_sync_dirty_records (collection, "recordId");
-`;
-
 const dialects = [
   {
     name: "sql.js",
-    v1: SQLITE_V1,
     storage: (schema: string, transactionTimeoutMs?: number) =>
       createLocalDBStorage({
         dialect: "sqlite",
@@ -66,11 +41,9 @@ const dialects = [
         dbStorage,
         collections: [defineDrizzleCollection({ name: "todos", table: sqliteTodos })],
       }),
-    seqColumn: "SELECT name FROM pragma_table_info('ez_sync_events') WHERE name = 'seq'",
   },
   {
     name: "PGlite",
-    v1: PG_V1,
     storage: (schema: string, transactionTimeoutMs?: number) =>
       createLocalDBStorage({
         dialect: "postgres",
@@ -88,8 +61,6 @@ const dialects = [
           defineDrizzleCollection({ name: "todos", table: pgTodos, primaryField: "id" }),
         ],
       }),
-    seqColumn:
-      "SELECT column_name AS name FROM information_schema.columns WHERE table_name = 'ez_sync_events' AND column_name = 'seq'",
   },
 ];
 
@@ -124,73 +95,43 @@ for (const dialect of dialects) {
     await dbStorage.close();
   }, 30_000);
 
-  test(`${dialect.name}: initialize migrates version 1 tables once, keeping pending order`, async () => {
-    const dbStorage = dialect.storage(dialect.v1);
-    // Inserted out of order; version 1 read them by `createdAt, id`.
-    for (const [id, createdAt] of [
-      ["late", 3],
-      ["second", 2],
-      ["first-b", 1],
-      ["first-a", 1],
-    ] as const) {
-      await dbStorage.exec({
-        sql:
-          dialect.name === "PGlite"
-            ? `INSERT INTO ez_sync_events (id, type, collection, data, "recordId", "createdAt") VALUES ($1, 'update', 'todos', '{"id":"a"}', 'a', $2)`
-            : "INSERT INTO ez_sync_events (id, type, collection, data, recordId, createdAt) VALUES (?, 'update', 'todos', '{\"id\":\"a\"}', 'a', ?)",
-        params: [id, createdAt],
-        method: "run",
-      });
-    }
+  test(`${dialect.name}: initialize creates the tables once, and later calls change nothing`, async () => {
+    const dbStorage = dialect.storage("CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);");
     const { localChangeStore } = dialect.adapter(dbStorage);
     // Several contexts initialize together; the transactions serialize on the leader.
     await Promise.all([localChangeStore.initialize(), localChangeStore.initialize()]);
-    expect(await rowsOf(dbStorage, dialect.seqColumn)).toEqual([{ name: "seq" }]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 4 },
+      { key: "schema_version", value: 5 },
     ]);
-    const pending = await localChangeStore.getPendingEvents();
-    expect(pending.map(({ id }) => id)).toEqual(["first-a", "first-b", "second", "late"]);
-    expect(pending[0]).toEqual({ ...event("first-a", 1), data: { id: "a" } });
+    await localChangeStore.appendEvents([event("pending", 1)]);
 
-    // New events follow the copied ones.
-    await localChangeStore.appendEvents([event("new", 0)]);
-    const snapshot = await rowsOf(dbStorage, "SELECT * FROM ez_sync_events ORDER BY seq");
-    expect(snapshot.map((row: any) => [Number(row.seq), row.id])).toEqual([
-      [1, "first-a"],
-      [2, "first-b"],
-      [3, "second"],
-      [4, "late"],
-      [5, "new"],
-    ]);
-
-    // A second initialize changes nothing.
-    const execSpy = vi.spyOn(dbStorage, "transaction");
+    const transaction = vi.spyOn(dbStorage, "transaction");
     await localChangeStore.initialize();
-    expect(execSpy).toHaveBeenCalledOnce();
-    expect(await rowsOf(dbStorage, "SELECT * FROM ez_sync_events ORDER BY seq")).toEqual(snapshot);
-    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 4 },
-    ]);
+    expect(transaction).toHaveBeenCalledOnce();
+    expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
     await dbStorage.close();
   }, 30_000);
 
-  test(`${dialect.name}: initialize upgrades version 2 tables with the applied-event table`, async () => {
+  test(`${dialect.name}: a version 4 database gets the revisions table and keeps its data`, async () => {
     const dbStorage = dialect.storage("CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);");
     const { localChangeStore } = dialect.adapter(dbStorage);
     await localChangeStore.initialize();
-    // Back to version 2: no applied-event table, one pending event.
     await localChangeStore.appendEvents([event("pending", 1)]);
-    await dbStorage.exec(run("DROP TABLE ez_sync_applied_events"));
-    await dbStorage.exec(run("UPDATE ez_sync_meta SET value = 2 WHERE key = 'schema_version'"));
+    await dbStorage.exec({ sql: "DROP TABLE ez_sync_revisions", params: [], method: "run" });
+    await dbStorage.exec({
+      sql: "UPDATE ez_sync_meta SET value = 4 WHERE key = 'schema_version'",
+      params: [],
+      method: "run",
+    });
 
-    await dialect.adapter(dbStorage).localChangeStore.initialize();
-    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 4 },
-    ]);
+    await localChangeStore.initialize();
+    const key = { collection: "todos", recordId: "a" };
+    await localChangeStore.upsertRevision({ ...key, rev: 2 });
+    expect(await localChangeStore.getRevision(key)).toBe(2);
     expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
-    await localChangeStore.appendEvents([event("after", 2)]);
-    expect(await localChangeStore.hasAppliedEvent("after")).toBe(true);
+    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
+      { key: "schema_version", value: 5 },
+    ]);
     await dbStorage.close();
   }, 30_000);
 

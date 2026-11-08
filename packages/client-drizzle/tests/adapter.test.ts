@@ -21,6 +21,11 @@ const skippedRemoteEvents = sqliteTable("skipped_remote_events", {
   recordId: text("record_id").notNull(),
   event: text("event", { mode: "json" }).notNull(),
 });
+const revisions = sqliteTable("revisions", {
+  collection: text("collection").notNull(),
+  recordId: text("record_id").notNull(),
+  rev: integer("rev").notNull(),
+});
 /** The storage of the last `adapterFor` call. */
 let dbStorage: any;
 
@@ -171,7 +176,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   }));
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
   const pruned: unknown[] = [];
@@ -264,7 +269,7 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   const tx = databaseFor("tx");
   const store = createDrizzleLocalChangeStore({
     db,
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
 
@@ -347,7 +352,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
         values: () => ({ onDuplicateKeyUpdate }),
       }),
     },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
   const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
@@ -358,7 +363,7 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
 
   const unsupportedStore = createDrizzleLocalChangeStore({
     db: { insert: () => ({ values: () => ({}) }) },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
+    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
   await expect(unsupportedStore.upsertDirtyRecord(record)).rejects.toThrow(
@@ -388,6 +393,7 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
       appliedEvents,
       checkpoints,
       skippedRemoteEvents,
+      revisions,
     },
     initialize,
   });
@@ -410,6 +416,7 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
       appliedEvents,
       checkpoints,
       skippedRemoteEvents,
+      revisions,
     },
     initialize,
   });

@@ -24,6 +24,7 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
   const appliedEventIds = new Set<string>();
   const checkpoints = new Map<string, string>();
   const skippedRemoteEvents = new Map<string, SkippedRemoteEvent>();
+  const revisions = new Map<string, number>();
 
   return {
     initialize: vi.fn(async () => {}),
@@ -78,6 +79,20 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
     async removeSkippedRemoteEvents(keys) {
       for (const key of keys) {
         skippedRemoteEvents.delete(dirtyKey(key.collection, key.recordId));
+      }
+    },
+    async getRevision(key) {
+      return revisions.get(dirtyKey(key.collection, key.recordId));
+    },
+    async upsertRevision({ collection, recordId, rev }) {
+      revisions.set(dirtyKey(collection, recordId), rev);
+    },
+    async removeRevisions(collection) {
+      const pending = new Set(
+        Array.from(events.values(), (event) => dirtyKey(event.collection, event.recordId)),
+      );
+      for (const key of revisions.keys()) {
+        if (key.startsWith(dirtyKey(collection, "")) && !pending.has(key)) revisions.delete(key);
       }
     },
   };

@@ -28,8 +28,8 @@ import type { DrizzleDBAdapter } from "../types";
 // Columns are named explicitly so a `casing` option cannot rename them.
 
 /**
- * Outbox, dirty-record, applied-event, checkpoint and skipped-event tables of SQLite storages,
- * created by the adapter itself. `seq` is assigned on insert, so pending events follow commit
+ * Outbox, dirty-record, applied-event, checkpoint, skipped-event and revision tables of SQLite
+ * storages, created by the adapter itself. `seq` is assigned on insert, so pending events follow commit
  * order.
  */
 export const sqliteLocalChangeTables = {
@@ -80,9 +80,22 @@ export const sqliteLocalChangeTables = {
     },
     (table) => [primaryKey({ columns: [table.collection, table.recordId] })],
   ),
+  revisions: sqliteTable(
+    "ez_sync_revisions",
+    {
+      collection: text("collection").notNull(),
+      recordId: text("recordId").notNull(),
+      rev: integer("rev").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.collection, table.recordId] })],
+  ),
 };
 
-const SQLITE_EVENTS_TABLE_DDL = `
+/** Creates {@link sqliteLocalChangeTables}; run by the store's `initialize`. */
+const SQLITE_LOCAL_CHANGE_SCHEMA: LocalChangeSchemaScripts = {
+  createMeta:
+    "CREATE TABLE IF NOT EXISTS ez_sync_meta (key TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL)",
+  create: `
 CREATE TABLE IF NOT EXISTS ez_sync_events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
@@ -91,14 +104,7 @@ CREATE TABLE IF NOT EXISTS ez_sync_events (
   data TEXT,
   recordId TEXT NOT NULL,
   createdAt INTEGER NOT NULL
-);`;
-
-/** Creates and upgrades {@link sqliteLocalChangeTables}; run by the store's `initialize`. */
-const SQLITE_LOCAL_CHANGE_SCHEMA: LocalChangeSchemaScripts = {
-  createMeta:
-    "CREATE TABLE IF NOT EXISTS ez_sync_meta (key TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL)",
-  hasEvents: "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ez_sync_events'",
-  create: `${SQLITE_EVENTS_TABLE_DDL}
+);
 CREATE INDEX IF NOT EXISTS ez_sync_events_collection_seq ON ez_sync_events (collection, seq);
 CREATE INDEX IF NOT EXISTS ez_sync_events_record ON ez_sync_events (collection, recordId);
 CREATE TABLE IF NOT EXISTS ez_sync_dirty_records (
@@ -125,15 +131,12 @@ CREATE TABLE IF NOT EXISTS ez_sync_skipped_remote_events (
   event TEXT NOT NULL,
   PRIMARY KEY (collection, recordId)
 );
-`,
-  upgradeFromV1: `
-CREATE TEMP TABLE ez_sync_events_v1 AS SELECT * FROM ez_sync_events;
-DROP TABLE ez_sync_events;
-${SQLITE_EVENTS_TABLE_DDL}
-INSERT INTO ez_sync_events (seq, id, type, collection, data, recordId, createdAt)
-  SELECT row_number() OVER (ORDER BY createdAt, id), id, type, collection, data, recordId, createdAt
-  FROM temp.ez_sync_events_v1;
-DROP TABLE temp.ez_sync_events_v1;
+CREATE TABLE IF NOT EXISTS ez_sync_revisions (
+  collection TEXT NOT NULL,
+  recordId TEXT NOT NULL,
+  rev INTEGER NOT NULL,
+  PRIMARY KEY (collection, recordId)
+);
 `,
 };
 

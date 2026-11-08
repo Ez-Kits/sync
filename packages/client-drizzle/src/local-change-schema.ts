@@ -1,44 +1,35 @@
 import type { DBExecutor, DBStorage } from "@ez-kits/sync-client-core";
 
 /**
- * Version of the outbox tables the store reads and writes; 2 added the `seq` column, 3 the
- * `ez_sync_applied_events` table, 4 the `ez_sync_checkpoints` and
- * `ez_sync_skipped_remote_events` tables.
+ * Version of the outbox tables the store reads and writes. Released versions stopped at 4;
+ * 5 added the `ez_sync_revisions` table.
  */
-export const LOCAL_CHANGE_SCHEMA_VERSION = 4;
+export const LOCAL_CHANGE_SCHEMA_VERSION = 5;
 
 /** One dialect's scripts for {@link initializeLocalChangeSchema}; none takes parameters. */
 export interface LocalChangeSchemaScripts {
   /** Create `ez_sync_meta (key, value)` when missing. */
   readonly createMeta: string;
-  /** Return a row when `ez_sync_events` exists. */
-  readonly hasEvents: string;
   /**
-   * Create the current tables and indexes when missing. Every statement is `IF NOT EXISTS`,
-   * so it also adds the tables a later version introduced (version 2 to 3, and 3 to 4).
+   * Create the current tables and indexes when missing. Every statement is `IF NOT EXISTS`, so
+   * it also adds the tables a later version introduced.
    */
   readonly create: string;
-  /** Rebuild a version 1 `ez_sync_events` (no `seq`), in `createdAt, id` order. */
-  readonly upgradeFromV1: string;
 }
 
 const run = (sql: string) => ({ sql, params: [], method: "run" as const });
 
-async function readVersion(tx: DBExecutor, scripts: LocalChangeSchemaScripts): Promise<number> {
+async function readVersion(tx: DBExecutor): Promise<number> {
   const { rows } = await tx.exec({
     sql: "SELECT value FROM ez_sync_meta WHERE key = 'schema_version'",
     params: [],
     method: "all",
   });
-  const stored = (rows[0] as unknown[] | undefined)?.[0];
-  if (stored !== undefined) return Number(stored);
-  // Version 1 kept no meta table; its events table is the only trace of it.
-  const events = await tx.exec({ sql: scripts.hasEvents, params: [], method: "all" });
-  return events.rows.length > 0 ? 1 : 0;
+  return Number((rows[0] as unknown[] | undefined)?.[0] ?? 0);
 }
 
 /**
- * Create or upgrade the outbox tables in one storage transaction. Transactions run one at a
+ * Create the outbox tables in one storage transaction. Transactions run one at a
  * time on the leader, so contexts initializing together see each other's result and the
  * later ones change nothing.
  */
@@ -48,9 +39,7 @@ export function initializeLocalChangeSchema(
 ): Promise<void> {
   return dbStorage.transaction(async (tx) => {
     await tx.exec(run(scripts.createMeta));
-    const version = await readVersion(tx, scripts);
-    if (version >= LOCAL_CHANGE_SCHEMA_VERSION) return;
-    if (version === 1) await tx.exec(run(scripts.upgradeFromV1));
+    if ((await readVersion(tx)) >= LOCAL_CHANGE_SCHEMA_VERSION) return;
     await tx.exec(run(scripts.create));
     await tx.exec(
       run(

@@ -53,6 +53,13 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
     snapshot: DataSnapshot;
     previousCheckpoint?: TCheckpoint;
   }) => TCheckpoint;
+  /**
+   * The child field that holds the record's revision, e.g. `"rev"`: a write counter the
+   * security rules must enforce, which detects conflicts without device clocks (see the
+   * conflict resolution guide). Written on every create, update and tombstone; read into
+   * `event.rev` on pull and left out of the row data. Default: no revisions.
+   */
+  revisionField?: string;
   resolveRemoteId: (event: ChangeBusEvent<C, N>) => string;
   deserializeCreate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["create"];
   deserializeUpdate?: (data: unknown, context: { snapshot: DataSnapshot }) => C[N]["update"];

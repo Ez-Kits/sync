@@ -88,6 +88,31 @@ test("the client stores checkpoints as JSON in its adapter's store by default", 
   await client.dispose();
 });
 
+test("saving no checkpoint also forgets the collection's revisions, in one transaction", async () => {
+  const { db, store, native } = transactionalDb();
+  const client = createSyncClient(clientConfig(db));
+  const clean = { collection: "todos", recordId: "1" };
+  const pending = { collection: "todos", recordId: "2" };
+  await store.upsertRevision({ ...clean, rev: 3 });
+  await store.upsertRevision({ ...pending, rev: 4 });
+  await store.appendEvents([{ id: "e1", type: "update", ...pending, data: {}, createdAt: 1 }]);
+  const save = vi.spyOn(store, "saveCheckpoint");
+  const remove = vi.spyOn(store, "removeRevisions");
+
+  // A new checkpoint keeps them.
+  await client.saveCheckpoint("todos", "c1");
+  expect(remove).not.toHaveBeenCalled();
+  expect(await store.getRevision(clean)).toBe(3);
+
+  await client.saveCheckpoint("todos", undefined);
+  expect(save).toHaveBeenLastCalledWith("todos", undefined, native);
+  expect(remove).toHaveBeenCalledExactlyOnceWith("todos", native);
+  expect(await store.getCheckpoint("todos")).toBeUndefined();
+  expect(await store.getRevision(clean)).toBeUndefined();
+  expect(await store.getRevision(pending)).toBe(4);
+  await client.dispose();
+});
+
 test("the client round-trips checkpoints JSON cannot hold through the configured serializer", async () => {
   const db = makeDb();
   const client = createSyncClient(clientConfig(db, { checkpointSerializer: stampCheckpoint }));

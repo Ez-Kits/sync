@@ -2,7 +2,7 @@
 
 This file records the architecture decisions behind EzSync: what was decided, why, and what it costs. It explains why the API has the shape it has, not how to use it. Add a new entry when a decision changes, and mark the old one as superseded instead of rewriting it.
 
-Each entry has a status (`Accepted`, `Superseded by ADR-n`), the date of the commit that introduced it, the context, the decision and its consequences.
+Each entry has a status (`Accepted`, `Accepted, amended by ADR-n`, `Superseded by ADR-n`), the date of the commit that introduced it, the context, the decision and its consequences.
 
 ## Overview
 
@@ -15,7 +15,7 @@ sync client (@ez-kits/sync-client-core)
    ├──────────────► SyncAdapter (provider: @ez-kits/sync-client-firebase, ...)
    ▼
 DB adapter (ORM bridge: Drizzle, TypeORM)
-   │  collection CRUD · local-change store (outbox, dirty records, checkpoints, skipped remote events)
+   │  collection CRUD · local-change store (outbox, dirty records, checkpoints, skipped remote events, revisions)
    ▼
 DBStorage (contract: exec, transaction, dialect, role)
    │  leader election and forwarding across tabs
@@ -44,6 +44,7 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 | 17  | TypeORM adapter transactions run on their own data source on SQLite           |
 | 18  | Reads distinguish an absent record from a failed query                        |
 | 19  | Browser engines: sql.js snapshots, SQLite WASM on OPFS SAH pool, PGlite       |
+| 20  | Optional per-record revisions detect conflicts without device clocks          |
 
 ---
 
@@ -100,12 +101,12 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 
 ## ADR-4: The local-change store owns its schema
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-20
 - **Date:** 2026-10-29 (50443fe; extended by b322bb8)
 
 **Context.** The outbox tables are library internals that change between versions. Asking applications to create and migrate them invites drift and broken upgrades.
 
-**Decision.** Every store implements `initialize()`, which creates missing tables, upgrades tables an older version created, and records the schema version in `ez_sync_meta`. It must be idempotent and safe to run from several tabs at once. The sync client calls it once the storage is ready, in every context, and blocks every read, write, live query and sync on it. Tables: `ez_sync_events`, `ez_sync_dirty_records`, `ez_sync_applied_events` (schema v3), `ez_sync_checkpoints` and `ez_sync_skipped_remote_events` (schema v4).
+**Decision.** Every store implements `initialize()`, which creates missing tables and records the schema version in `ez_sync_meta`. It must be idempotent and safe to run from several tabs at once. The sync client calls it once the storage is ready, in every context, and blocks every read, write, live query and sync on it. Tables: `ez_sync_events`, `ez_sync_dirty_records`, `ez_sync_applied_events`, `ez_sync_checkpoints`, `ez_sync_skipped_remote_events` and `ez_sync_revisions`.
 
 **Consequences.**
 
@@ -115,7 +116,7 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 
 ## ADR-5: Outbox order comes from a database-assigned sequence
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-20
 - **Date:** 2026-10-29 (50443fe)
 
 **Context.** Ordering pending events by `createdAt` breaks across tabs (clock skew) and within one millisecond.
@@ -211,7 +212,7 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 
 ## ADR-12: Conflicts are resolved in the pull transaction and reconciled with the outbox
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-20
 - **Date:** 2026-10-29 (2bde176, 19fa9fe)
 
 **Context.** A remote change can arrive for a record with pending local writes. Choosing a side in the row alone leaves the outbox inconsistent: a `"remote"` choice would still push the stale local writes over it.
@@ -269,7 +270,7 @@ Records without pending writes always take remote changes. A skipped remote even
 
 ## ADR-16: Firebase adapter classifies errors and acknowledges as it progresses
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-20
 - **Date:** 2026-10-29 (4d374ce, 19fa9fe)
 
 **Context.** Firebase limits batch sizes, reports refusals and transient failures through error codes, and needs deletes addressed to the same document as creates.
@@ -322,3 +323,32 @@ Records without pending writes always take remote changes. A skipped remote even
 The application's worker module opens the engine and may run its own table migrations there.
 
 **Consequences.** sql.js rewrites the whole snapshot on each commit, which costs more as the database grows; SQLite WASM writes incrementally to OPFS. Choosing an engine is a per-application trade-off between bundle size, write cost and dialect.
+
+## ADR-20: Optional per-record revisions detect conflicts without device clocks
+
+- **Status:** Accepted
+- **Date:** 2026-11-08 (branch `feature/record-revisions`)
+
+**Context.** Without a version on each record, any remote change to a record with pending writes counts as a conflict (ADR-12), including the server's echo of the device's own write. A stale echo can also overwrite a newer local write. Comparing `updatedAt` or `deletedAt` depends on device clocks, and an offline device can overwrite a write it never saw.
+
+**Decision.** A collection can opt in to `rev`, a write counter per record that the backend's rules enforce (the first write is 1, each later one is the previous + 1). An adapter opts in through `SyncAdapter.revisionedCollections`; both Firebase adapters fill it from the per-collection `revisionField`. The field lives only on the server and is stripped from pulled rows. A pulled event carries it as `event.rev`.
+
+- **Store.** `ez_sync_revisions` keeps the last seen `rev` per `(collection, recordId)`, read and written through `getRevision` and `upsertRevision`. A local delete keeps the row. `saveCheckpoint(collection, undefined)` removes the collection's rows in the same transaction, so a full re-pull applies its records again, except for records with pending events, whose pushes are numbered from the row.
+- **Push.** Core numbers each record's pending events in outbox order, from stored + 1, on each attempt. The acknowledgement raises the stored `rev` in its transaction and never lowers it.
+- **Pull.** A `rev` at or below the stored one is dropped. With no pending writes the event is applied and its `rev` stored. Within the pending writes' numbers it may be the device's own echo, so it is kept, and applied after the acknowledgement only if it is above the stored `rev` by then. Above that range it is a conflict for `resolveConflict`.
+- **`"local"`.** The decision no longer skips the remote event: the remote row is applied, the pending writes are replayed over it (create replaces, update merges, delete deletes) and they stay pending. An update over a remote delete stays deleted; returning `{ data }` recreates the record.
+- **Refused pushes.** When rules refuse a write, the adapter reads the refused records once. Any at an unexpected `rev` (a missing record counts as 0) throw `PushConflictError` with the server state as pulled-style events. Core does not park these: it runs them through the conflict path, stores the `rev` and pushes again. A `rev` equal to the stored one was already decided by a pull and skips the resolver. Any other refusal stays a rejected write (ADR-10).
+- **Firebase writes.** Rules check every write of a Firestore batch or RTDB multipath update against the data before it, so a record with revisions is written once per batch or update. The RTDB adapter does not coalesce those records' events (ADR-16).
+- **Unconfirmed local state.** Firestore skips documents with `hasPendingWrites`. RTDB has no such flag and raises child events before the server answers, so its adapter ignores a record's child events while its own write to that record is in flight.
+- **Schema.** The local-change schema moves to version 5, and its idempotent create script adds `ez_sync_revisions` to databases at versions 2 to 4. The version 1 upgrade (the `seq` rebuild in ADR-5) is removed, because Ez Gym, the application this was built for, has no real users yet.
+
+A transaction-based push and a stored copy of the server's row were rejected. The counter costs no extra reads in the normal case and one small local row per record.
+
+**Consequences.**
+
+- Collections that do not opt in behave as in ADR-12. Pulled events without a `rev`, such as a record removed without a tombstone, also take that path.
+- Enforcement is the application's job: without the rules, nothing refuses a stale write. RTDB rules must use `.validate`, which a `.write` granted higher up cannot override and which does not run on removals, so revisions need tombstones.
+- A device drops the echo of its own write, so server-only fields such as `serverTimestamp()` reach it only when another device changes the record.
+- If a push was accepted but its acknowledgement was lost, the retry is refused and the device's own write comes back as a conflict. Every decision still converges.
+- RTDB's `get` can answer from the listener's cache. If that cache is behind, or the read fails, a real conflict looks like a rejected write until the parked retry (ADR-10) reads it again.
+- `ILocalChangeStore` gained three required methods, so custom stores must implement them. A local database still at version 1 must be deleted once; ADR-4's upgrade rule applies to every other version.

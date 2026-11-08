@@ -23,6 +23,10 @@ const sdk = vi.hoisted(() => ({
   validationError: undefined as unknown,
   /** Document id whose writes the security rules refuse: its whole batch fails. */
   deniedDocument: undefined as string | undefined,
+  /** What `getDocFromServer` finds, by document path; a missing path does not exist. */
+  serverDocuments: {} as Record<string, Record<string, unknown>>,
+  /** Rejects every `getDocFromServer`. */
+  serverDocumentError: undefined as unknown,
   /** Queries sent to `getDocsFromServer` / `getCountFromServer`, by function. */
   serverQueries: [] as Array<[string, unknown]>,
   /** What the next `getDocsFromServer` resolves (or rejects) with. */
@@ -31,6 +35,10 @@ const sdk = vi.hoisted(() => ({
   /** Children the next Realtime Database `get` resolves with (or its rejection). */
   rtdbGetResult: Promise.resolve([] as unknown[]) as Promise<unknown[]>,
   rtdbGets: [] as unknown[],
+  /** What a Realtime Database `get` of a record finds, by path; a missing path is empty. */
+  rtdbRecords: {} as Record<string, unknown>,
+  /** Called while `update` is writing, when the SDK raises the write's child events. */
+  rtdbOnWrite: undefined as (() => void) | undefined,
 }));
 
 /** An SDK error as Firebase throws it: a `FirebaseError` with its `code`. */
@@ -57,6 +65,16 @@ vi.mock("firebase/firestore", async (importOriginal) => ({
   collection: (_db: unknown, path: string) => ({ path }),
   query: (ref: unknown, ...constraints: unknown[]) => ({ ref, constraints }),
   doc: (_db: unknown, path: string, id: string) => ({ path: `${path}/${id}`, id }),
+  getDocFromServer: async ({ path, id }: { path: string; id: string }) => {
+    if (sdk.serverDocumentError) throw sdk.serverDocumentError;
+    const data = sdk.serverDocuments[path];
+    return {
+      id,
+      exists: () => data !== undefined,
+      data: () => data,
+      get: (f: string) => data?.[f],
+    };
+  },
   getDocsFromServer: (source: unknown) => {
     sdk.serverQueries.push(["docs", source]);
     return sdk.previewResult;
@@ -123,11 +141,17 @@ vi.mock("firebase/database", () => {
     onChildChanged: listen("changed"),
     onChildRemoved: listen("removed"),
     onValue: listen("value"),
-    get: (target: unknown) => {
+    get: (target: { path?: string }) => {
       sdk.rtdbGets.push(target);
-      return sdk.rtdbGetResult.then((children) => ({
-        forEach: (visit: (child: unknown) => void) => children.forEach(visit),
-      }));
+      return sdk.rtdbGetResult.then((children) => {
+        const value = sdk.rtdbRecords[target.path ?? ""] ?? null;
+        return {
+          key: target.path?.split("/").at(-1),
+          val: () => value,
+          exists: () => value !== null,
+          forEach: (visit: (child: unknown) => void) => children.forEach(visit),
+        };
+      });
     },
     update: (target: unknown, updates: Record<string, unknown>) => {
       // Like the SDK, invalid keys or values throw before a promise is returned.
@@ -138,6 +162,7 @@ vi.mock("firebase/database", () => {
 
   async function writeUpdate(target: unknown, updates: Record<string, unknown>) {
     sdk.updates.push([target, updates]);
+    sdk.rtdbOnWrite?.();
     // Like the SDK, reject a multipath update whose paths overlap.
     const paths = Object.keys(updates);
     for (const path of paths) {
@@ -154,7 +179,12 @@ vi.mock("firebase/database", () => {
   }
 });
 
-import { ChangeBus, GlobalSyncHandler, PushRejectedError } from "@ez-kits/sync-client-core";
+import {
+  ChangeBus,
+  GlobalSyncHandler,
+  PushConflictError,
+  PushRejectedError,
+} from "@ez-kits/sync-client-core";
 import { createFirestoreCollectionSyncAdapter, createFirestoreSyncAdapter } from "../src/firestore";
 import { defineFirestoreCollectionSyncAdapterConfig } from "../src/firestore/define-collection-sync-adapter-config";
 import {
@@ -186,6 +216,8 @@ beforeEach(() => {
   sdk.rtdbTree = {};
   sdk.failCommit = false;
   sdk.failBatchAt = -1;
+  sdk.serverDocuments = {};
+  sdk.serverDocumentError = undefined;
   sdk.writeError = undefined;
   sdk.validationError = undefined;
   sdk.deniedDocument = undefined;
@@ -193,6 +225,8 @@ beforeEach(() => {
   sdk.previewResult = Promise.resolve({ docs: [] });
   sdk.countResult = Promise.resolve(0);
   sdk.rtdbGetResult = Promise.resolve([]);
+  sdk.rtdbRecords = {};
+  sdk.rtdbOnWrite = undefined;
   sdk.rtdbGets.length = 0;
 });
 
@@ -1175,6 +1209,9 @@ test("one write refused by Firestore rules is parked without blocking its batch 
     saveCheckpoint: async () => {},
     // No remote event is skipped: nothing is pulled.
     getSkippedRemoteEvents: async () => [],
+    getRevision: async () => undefined,
+    upsertRevision: async () => {},
+    removeRevisions: async () => {},
     upsertSkippedRemoteEvent: async () => {},
     removeSkippedRemoteEvents: async () => {},
   };
@@ -1439,4 +1476,394 @@ test("Realtime Database pull stopped during the preview never opens its listener
   expect(commitChanges).not.toHaveBeenCalled();
   expect(onCount).not.toHaveBeenCalled();
   expect(sdk.rtdbCallbacks.added).toBeUndefined();
+});
+
+function revisionedAdapter(overrides: Record<string, unknown> = {}) {
+  return createFirestoreCollectionSyncAdapter({
+    db: {} as never,
+    collectionName: "todos",
+    collectionPath: "todos",
+    revisionField: "rev",
+    createCheckpoint: () => "cp",
+    resolveRemoteId: (event: any) => String(event.type === "delete" ? event.id : event.data.id),
+    ...overrides,
+  } as never);
+}
+
+test("Firestore lists only the collections with a revision field as revisioned", () => {
+  const base = { createCheckpoint: () => "cp", resolveRemoteId: () => "id" };
+  const adapter = createFirestoreSyncAdapter({
+    db: {} as never,
+    collections: [
+      { ...base, collectionName: "todos", collectionPath: "todos", revisionField: "rev" },
+      { ...base, collectionName: "notes", collectionPath: "notes" },
+    ],
+  } as never);
+  expect(adapter.revisionedCollections).toEqual(["todos"]);
+});
+
+test("Firestore reads the revision of pulled documents and leaves it out of the row", () => {
+  const adapter = revisionedAdapter();
+  const commit = vi.fn();
+  void adapter.pull({ commitChanges: commit } as never);
+  const pending = {
+    id: "p",
+    data: () => ({ id: "p", rev: 9 }),
+    metadata: { hasPendingWrites: true },
+  };
+  const confirmed = (id: string, data: object) => ({
+    id,
+    data: () => data,
+    metadata: { hasPendingWrites: false },
+  });
+  sdk.firestoreCallbacks[0]!({
+    docChanges: () => [
+      { type: "added", doc: confirmed("a", { id: "a", title: "new", rev: 1 }) },
+      { type: "modified", doc: confirmed("b", { id: "b", title: "edit", rev: 2 }) },
+      { type: "modified", doc: confirmed("c", { id: "c", deleted: true, deletedAt: 5, rev: 3 }) },
+      { type: "modified", doc: confirmed("d", { id: "d", title: "not a number", rev: "4" }) },
+      { type: "removed", doc: confirmed("e", { id: "e", rev: 5 }) },
+      { type: "modified", doc: pending },
+    ],
+  });
+  expect(commit.mock.calls[0]?.[0].changes).toEqual([
+    { type: "create", collection: "todos", data: { id: "a", title: "new" }, rev: 1 },
+    { type: "update", collection: "todos", data: { id: "b", title: "edit" }, rev: 2 },
+    { type: "delete", collection: "todos", id: "c", deletedAt: 5, rev: 3 },
+    { type: "update", collection: "todos", data: { id: "d", title: "not a number" } },
+    { type: "delete", collection: "todos", id: "e", deletedAt: expect.any(Number) },
+  ]);
+});
+
+test("Firestore commits nothing for a snapshot of unconfirmed writes only", () => {
+  const adapter = revisionedAdapter();
+  const commit = vi.fn();
+  void adapter.pull({ commitChanges: commit } as never);
+  sdk.firestoreCallbacks[0]!({
+    docChanges: () => [
+      {
+        type: "modified",
+        doc: { id: "p", data: () => ({ rev: 9 }), metadata: { hasPendingWrites: true } },
+      },
+    ],
+  });
+  expect(commit).not.toHaveBeenCalled();
+});
+
+test("Firestore writes the revision and gives each write to a document its own batch", async () => {
+  const commitChanges = vi.fn(async () => {});
+  const events = [
+    { type: "create", collection: "todos", data: { id: "a", title: "new" }, rev: 1 },
+    { type: "update", collection: "todos", data: { id: "a", title: "edit" }, rev: 2 },
+    { type: "update", collection: "todos", data: { id: "b", title: "other" }, rev: 7 },
+    { type: "delete", collection: "todos", id: "a", deletedAt: 5, rev: 3 },
+  ];
+  await revisionedAdapter().push({ events, commitChanges } as never);
+  expect(sdk.firestoreSets.map(([ref, data]) => [(ref as { id: string }).id, data])).toEqual([
+    ["a", { id: "a", title: "new", rev: 1 }],
+    ["a", { id: "a", title: "edit", rev: 2 }],
+    ["b", { id: "b", title: "other", rev: 7 }],
+    ["a", { deleted: true, deletedAt: 5, rev: 3 }],
+  ]);
+  expect(commitChanges.mock.calls.map(([call]: any) => call.events)).toEqual([
+    [events[0]],
+    [events[1], events[2]],
+    [events[3]],
+  ]);
+});
+
+test("Firestore turns a refused batch into a PushConflictError with the server state", async () => {
+  sdk.deniedDocument = "a";
+  sdk.serverDocuments = {
+    "todos/a": { id: "a", title: "theirs", rev: 4 },
+    "todos/b": { id: "b", title: "same base", rev: 6 },
+  };
+  const commitChanges = vi.fn(async () => {});
+  const error = await Promise.resolve(
+    revisionedAdapter().push({
+      events: [
+        { type: "update", collection: "todos", data: { id: "a", title: "mine" }, rev: 2 },
+        { type: "update", collection: "todos", data: { id: "b", title: "fine" }, rev: 7 },
+      ],
+      commitChanges,
+    } as never),
+  ).catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(PushConflictError);
+  expect((error as PushConflictError).events).toEqual([
+    { type: "update", collection: "todos", data: { id: "a", title: "theirs" }, rev: 4 },
+  ]);
+  expect(commitChanges).not.toHaveBeenCalled();
+});
+
+test("Firestore reports a document deleted from the server as revision 0", async () => {
+  sdk.deniedDocument = "a";
+  const error = await Promise.resolve(
+    revisionedAdapter().push({
+      events: [{ type: "update", collection: "todos", data: { id: "a" }, rev: 4 }],
+      commitChanges: vi.fn(),
+    } as never),
+  ).catch((caught: unknown) => caught);
+  expect((error as PushConflictError).events).toEqual([
+    { type: "delete", collection: "todos", id: "a", deletedAt: expect.any(Number), rev: 0 },
+  ]);
+});
+
+test("Firestore rethrows the refusal when every refused document is at its expected revision", async () => {
+  sdk.deniedDocument = "a";
+  // A document without a revision counts as 0, like a missing one.
+  sdk.serverDocuments = { "todos/b": { id: "b" } };
+  await expect(
+    revisionedAdapter().push({
+      events: [
+        { type: "create", collection: "todos", data: { id: "a" }, rev: 1 },
+        { type: "update", collection: "todos", data: { id: "b" }, rev: 1 },
+      ],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBeInstanceOf(PushRejectedError);
+});
+
+test("Firestore reads no document after a refusal without revisions or of another kind", async () => {
+  sdk.deniedDocument = "a";
+  sdk.serverDocumentError = new Error("must not read");
+  const event = { type: "update", collection: "todos", data: { id: "a" } };
+  await expect(
+    revisionedAdapter({ revisionField: undefined }).push({
+      events: [event],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBeInstanceOf(PushRejectedError);
+
+  sdk.deniedDocument = undefined;
+  sdk.writeError = firebaseError("unavailable");
+  await expect(
+    revisionedAdapter().push({
+      events: [{ ...event, rev: 1 }],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBe(sdk.writeError);
+});
+
+test("Firestore reports a failed conflict read by its own code", async () => {
+  sdk.deniedDocument = "a";
+  const event = { type: "update", collection: "todos", data: { id: "a" }, rev: 2 };
+  const push = () => revisionedAdapter().push({ events: [event], commitChanges: vi.fn() } as never);
+
+  sdk.serverDocumentError = firebaseError("unavailable");
+  await expect(push()).rejects.toBe(sdk.serverDocumentError);
+  sdk.serverDocumentError = firebaseError("permission-denied");
+  await expect(push()).rejects.toBeInstanceOf(PushRejectedError);
+});
+
+function revisionedRealtime(overrides: Record<string, unknown> = {}) {
+  return realtimeTodos({ revisionField: "rev", ...overrides });
+}
+
+const realtimeChild = (key: string, value: unknown) => ({ key, val: () => value });
+
+test("Realtime Database lists only the collections with a revision field as revisioned", () => {
+  const base = { createCheckpoint: () => "cp", resolveRemoteId: () => "id" };
+  const adapter = createRealtimeDBSyncAdapter({
+    db: {} as never,
+    collections: [
+      { ...base, collectionName: "todos", collectionPath: "todos", revisionField: "rev" },
+      { ...base, collectionName: "notes", collectionPath: "notes" },
+    ],
+  } as never);
+  expect(adapter.revisionedCollections).toEqual(["todos"]);
+});
+
+test("Realtime Database reads the revision of pulled children and leaves it out of the row", async () => {
+  const commit = vi.fn();
+  void revisionedRealtime().pull({ commitChanges: commit } as never);
+  sdk.rtdbCallbacks.added![0]!(realtimeChild("a", { id: "a", title: "new", rev: 1 }));
+  sdk.rtdbCallbacks.changed![0]!(realtimeChild("b", { id: "b", title: "edit", rev: 2 }));
+  sdk.rtdbCallbacks.changed![0]!(realtimeChild("c", { deleted: true, deletedAt: 5, rev: 3 }));
+  sdk.rtdbCallbacks.changed![0]!(realtimeChild("d", { id: "d", rev: "4" }));
+  sdk.rtdbCallbacks.removed![0]!(realtimeChild("e", { id: "e", rev: 5 }));
+  sdk.rtdbCallbacks.added![0]!(realtimeChild("f", "a primitive"));
+  await Promise.resolve();
+  expect(commit.mock.calls[0]?.[0].changes).toEqual([
+    { type: "create", collection: "todos", data: { id: "a", title: "new" }, rev: 1 },
+    { type: "update", collection: "todos", data: { id: "b", title: "edit" }, rev: 2 },
+    { type: "delete", collection: "todos", id: "c", deletedAt: 5, rev: 3 },
+    { type: "update", collection: "todos", data: { id: "d" } },
+    { type: "delete", collection: "todos", id: "e", deletedAt: expect.any(Number) },
+    { type: "create", collection: "todos", data: "a primitive" },
+  ]);
+});
+
+test("Realtime Database ignores child events of a revisioned record while it is being written", async () => {
+  const adapter = revisionedRealtime();
+  const commit = vi.fn();
+  void adapter.pull({ commitChanges: commit } as never);
+  sdk.rtdbOnWrite = () => {
+    sdk.rtdbCallbacks.changed![0]!(realtimeChild("a", { id: "a", title: "mine", rev: 2 }));
+    sdk.rtdbCallbacks.changed![0]!(realtimeChild("b", { id: "b", title: "theirs", rev: 8 }));
+  };
+  await adapter.push({
+    events: [{ type: "update", collection: "todos", data: { id: "a", title: "mine" }, rev: 2 }],
+    commitChanges: vi.fn(async () => {}),
+  } as never);
+  sdk.rtdbOnWrite = undefined;
+  sdk.rtdbCallbacks.changed![0]!(realtimeChild("a", { id: "a", title: "next", rev: 3 }));
+  await Promise.resolve();
+  expect(commit.mock.calls.flatMap(([call]) => call.changes)).toEqual([
+    { type: "update", collection: "todos", data: { id: "b", title: "theirs" }, rev: 8 },
+    { type: "update", collection: "todos", data: { id: "a", title: "next" }, rev: 3 },
+  ]);
+});
+
+test("Realtime Database ignores only child events no newer than the revision being written", async () => {
+  const adapter = revisionedRealtime();
+  const commit = vi.fn();
+  void adapter.pull({ commitChanges: commit } as never);
+  sdk.rtdbOnWrite = () => {
+    const changed = sdk.rtdbCallbacks.changed![0]!;
+    // The state before the write, as a refused write restores it, with and without a revision.
+    changed(realtimeChild("a", { id: "a", title: "before", rev: 1 }));
+    changed(realtimeChild("a", { id: "a", title: "before" }));
+    changed(realtimeChild("a", { id: "a", title: "theirs", rev: 3 }));
+  };
+  await adapter.push({
+    events: [{ type: "update", collection: "todos", data: { id: "a", title: "mine" }, rev: 2 }],
+    commitChanges: vi.fn(async () => {}),
+  } as never);
+  sdk.rtdbOnWrite = undefined;
+  await Promise.resolve();
+  expect(commit.mock.calls.flatMap(([call]) => call.changes)).toEqual([
+    { type: "update", collection: "todos", data: { id: "a", title: "theirs" }, rev: 3 },
+  ]);
+});
+
+test("Realtime Database still pulls child events being written without revisions", async () => {
+  const adapter = realtimeTodos();
+  const commit = vi.fn();
+  void adapter.pull({ commitChanges: commit } as never);
+  sdk.rtdbOnWrite = () => {
+    sdk.rtdbCallbacks.changed![0]!(realtimeChild("a", { id: "a", title: "mine" }));
+  };
+  await adapter.push({
+    events: [{ type: "update", collection: "todos", data: { id: "a", title: "mine" } }],
+    commitChanges: vi.fn(async () => {}),
+  } as never);
+  sdk.rtdbOnWrite = undefined;
+  await Promise.resolve();
+  expect(commit).toHaveBeenCalledTimes(1);
+});
+
+test("Realtime Database writes the revision and gives each write to a record its own update", async () => {
+  const commitChanges = vi.fn(async () => {});
+  const events = [
+    { type: "create", collection: "todos", data: { id: "a", title: "new" }, rev: 1 },
+    { type: "update", collection: "todos", data: { id: "a", title: "edit" }, rev: 2 },
+    { type: "update", collection: "todos", data: { id: "b", title: "other" }, rev: 7 },
+    { type: "delete", collection: "todos", id: "a", deletedAt: 5, rev: 3 },
+  ];
+  await revisionedRealtime().push({ events, commitChanges } as never);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([
+    { "todos/a": { id: "a", title: "new", rev: 1 } },
+    {
+      "todos/a/id": "a",
+      "todos/a/title": "edit",
+      "todos/a/rev": 2,
+      "todos/b/id": "b",
+      "todos/b/title": "other",
+      "todos/b/rev": 7,
+    },
+    { "todos/a/deleted": true, "todos/a/deletedAt": 5, "todos/a/rev": 3 },
+  ]);
+  expect(commitChanges.mock.calls.map(([call]: any) => call.events)).toEqual([
+    [events[0]],
+    [events[1], events[2]],
+    [events[3]],
+  ]);
+});
+
+test("Realtime Database writes a value that cannot hold a field without a revision", async () => {
+  await revisionedRealtime({ serializeUpdate: () => "text" }).push({
+    events: [{ type: "update", collection: "todos", data: { id: "a" }, rev: 2 }],
+    commitChanges: vi.fn(async () => {}),
+  } as never);
+  expect(sdk.updates.map(([, updates]) => updates)).toEqual([{ "todos/a": "text" }]);
+});
+
+test("Realtime Database turns a refused update into a PushConflictError with the server state", async () => {
+  sdk.writeError = firebaseError("PERMISSION_DENIED");
+  sdk.rtdbRecords = {
+    "todos/a": { id: "a", title: "theirs", rev: 4 },
+    "todos/b": { id: "b", title: "same base", rev: 6 },
+  };
+  const commitChanges = vi.fn(async () => {});
+  const error = await Promise.resolve(
+    revisionedRealtime().push({
+      events: [
+        { type: "update", collection: "todos", data: { id: "a", title: "mine" }, rev: 2 },
+        { type: "update", collection: "todos", data: { id: "b", title: "fine" }, rev: 7 },
+      ],
+      commitChanges,
+    } as never),
+  ).catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(PushConflictError);
+  expect((error as PushConflictError).events).toEqual([
+    { type: "update", collection: "todos", data: { id: "a", title: "theirs" }, rev: 4 },
+  ]);
+  expect(commitChanges).not.toHaveBeenCalled();
+});
+
+test("Realtime Database reports a record removed from the server as revision 0", async () => {
+  sdk.writeError = firebaseError("PERMISSION_DENIED");
+  const error = await Promise.resolve(
+    revisionedRealtime().push({
+      events: [{ type: "update", collection: "todos", data: { id: "a" }, rev: 4 }],
+      commitChanges: vi.fn(),
+    } as never),
+  ).catch((caught: unknown) => caught);
+  expect((error as PushConflictError).events).toEqual([
+    { type: "delete", collection: "todos", id: "a", deletedAt: expect.any(Number), rev: 0 },
+  ]);
+});
+
+test("Realtime Database rethrows the refusal when every refused record is at its expected revision", async () => {
+  sdk.writeError = firebaseError("PERMISSION_DENIED");
+  // A record without a revision counts as 0, like a missing one.
+  sdk.rtdbRecords = { "todos/b": { id: "b" } };
+  await expect(
+    revisionedRealtime().push({
+      events: [
+        { type: "create", collection: "todos", data: { id: "a" }, rev: 1 },
+        { type: "update", collection: "todos", data: { id: "b" }, rev: 1 },
+      ],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBeInstanceOf(PushRejectedError);
+});
+
+test("Realtime Database keeps the refusal when the refused records cannot be read", async () => {
+  sdk.writeError = firebaseError("PERMISSION_DENIED");
+  sdk.rtdbGetResult = Promise.reject(new Error("Permission denied"));
+  await expect(
+    revisionedRealtime().push({
+      events: [{ type: "update", collection: "todos", data: { id: "a" }, rev: 2 }],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBeInstanceOf(PushRejectedError);
+});
+
+test("Realtime Database reads no record after a refusal without revisions or of another kind", async () => {
+  const event = { type: "update", collection: "todos", data: { id: "a" } };
+  sdk.writeError = firebaseError("PERMISSION_DENIED");
+  await expect(
+    realtimeTodos().push({ events: [event], commitChanges: vi.fn() } as never),
+  ).rejects.toBeInstanceOf(PushRejectedError);
+  expect(sdk.rtdbGets).toEqual([]);
+
+  sdk.writeError = firebaseError("DISCONNECTED");
+  await expect(
+    revisionedRealtime().push({
+      events: [{ ...event, rev: 1 }],
+      commitChanges: vi.fn(),
+    } as never),
+  ).rejects.toBe(sdk.writeError);
+  expect(sdk.rtdbGets).toEqual([]);
 });
