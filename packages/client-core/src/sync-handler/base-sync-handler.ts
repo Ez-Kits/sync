@@ -12,8 +12,16 @@ import type {
   DBAdapterTransactionContext,
 } from "../db-adapter";
 import { LeaderChangedError } from "../db-storage/errors";
-import type { RecordKey, ILocalChangeStore, StoredChangeBusEvent } from "../local-change-store";
+import type { RecordKey, ILocalChangeStore } from "../local-change-store";
 import { isPermanentPushError, PushConflictError } from "./errors";
+import { ParkedPushes } from "./parked-pushes";
+import { retryPull, type PullStream, type PullSubscribe } from "./pull-retry";
+import { recordKeyString, toPushEvent } from "./record-events";
+import {
+  reconcileRemoteEvent,
+  type ReconciledRemoteEvent,
+  type RemoteEventReconciliation,
+} from "./remote-event-reconciliation";
 import type { ConflictResolution, PullStateEvent, PushRejection, SyncAdapter } from "./types";
 
 /**
@@ -21,6 +29,8 @@ import type { ConflictResolution, PullStateEvent, PushRejection, SyncAdapter } f
  * them, so local writes and the page are not held up for the whole batch.
  */
 export const PULL_COMMIT_CHUNK_SIZE = 200;
+
+export type { PullStream } from "./pull-retry";
 
 const yieldToEventLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -65,29 +75,22 @@ export abstract class BaseSyncHandler<
 > {
   protected readonly collectionMap: Map<CollectionNames<C>, C[number]>;
   private pushQueues = new Map<string, Promise<void>>();
-  /**
-   * Pending events the provider refused on their own, by event id. A parked event stays in the
-   * outbox and is left out of pushes, with every later event of its record, so the record's
-   * order holds while other records keep syncing. Parked events are retried after a backoff
-   * and whenever sync starts; they leave the outbox only when acknowledged or discarded.
-   *
-   * Kept in memory: a reload or a new leader pushes them again, which is safe, since nothing
-   * was written for them.
-   */
-  private parkedEvents = new Map<string, ParkedPush<SyncHandlerDataMap<C>>>();
-  /** Parked event ids `onPushRejected` was called for, so a retry is not reported again. */
-  private reportedRejections = new Set<string>();
-  /** Queues whose next push starts with their parked events. */
-  private parkedRetryDue = new Set<string>();
-  private parkedRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private parkedRetryDelays = new Map<string, number>();
-  /** Per queue, the event id of the last retry's probe (see `retryParked`). */
-  private parkedProbes = new Map<string, string>();
+  private parked = new ParkedPushes<SyncHandlerDataMap<C>>((queueKey) =>
+    this.requestPush(queueKey),
+  );
+  private reconciliation: RemoteEventReconciliation<C>;
 
   constructor(protected readonly config: BaseSyncHandlerConfig<C, DB, TCheckpoint>) {
     this.collectionMap = new Map(
       config.collections.map((collection) => [collection.name, collection]),
     );
+    this.reconciliation = {
+      store: config.localChangeStore,
+      resolveConflict: config.resolveConflict,
+      recordKeyOf: (event) => this.eventRecordKey(event),
+      primaryKeyOf: (event) => this.eventKey(event),
+      hasCompositeKey: (collection) => Array.isArray(this.keyConfig(collection).primaryField),
+    };
   }
 
   /**
@@ -96,9 +99,9 @@ export abstract class BaseSyncHandler<
    */
   protected abstract requestPush(queueKey: string): void;
 
-  /** Ids of the events parked here (see `parkedEvents`). */
+  /** Ids of the events parked here (see {@link ParkedPushes}). */
   parkedEventIds(): string[] {
-    return [...this.parkedEvents.keys()];
+    return this.parked.ids();
   }
 
   /**
@@ -134,86 +137,9 @@ export abstract class BaseSyncHandler<
     return next;
   }
 
-  /**
-   * Keep a pull listener alive across provider errors while retaining checkpoint safety.
-   *
-   * Every subscription is one stream. `onError` fails it: the listener is torn down and a new
-   * stream resubscribes from the persisted checkpoint after a backoff. `isActive` turns false
-   * once the stream failed or the pull stopped; nothing it delivers afterwards may be
-   * committed, since providers only send what came after their own last batch.
-   */
-  protected retryPull(
-    subscribe: (
-      onError: (error: unknown) => void,
-      isActive: () => boolean,
-    ) => void | (() => void) | Promise<void | (() => void)>,
-  ): () => void {
-    let active = true;
-    let connecting = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let currentStream: object | undefined;
-    let currentCleanup: (() => void) | undefined;
-    let retryDelayMs = 250;
-
-    const scheduleReconnect = () => {
-      if (!active || retryTimer !== undefined) return;
-      retryTimer = setTimeout(() => {
-        retryTimer = undefined;
-        void connect();
-      }, retryDelayMs);
-      retryDelayMs = Math.min(retryDelayMs * 2, 8_000);
-    };
-
-    const failStream = (stream: object, error: unknown) => {
-      if (!active) return;
-      this.config.onSyncError?.(error);
-      // A stream that already failed has been replaced; its errors only get reported.
-      if (currentStream !== stream) return;
-      currentStream = undefined;
-      const cleanup = currentCleanup;
-      currentCleanup = undefined;
-      cleanup?.();
-      scheduleReconnect();
-    };
-
-    const connect = async () => {
-      if (!active || connecting) return;
-      connecting = true;
-      const cleanup = currentCleanup;
-      currentCleanup = undefined;
-      cleanup?.();
-      const stream = {};
-      currentStream = stream;
-      try {
-        const unsubscribe = await subscribe(
-          (error) => failStream(stream, error),
-          () => active && currentStream === stream,
-        );
-        if (active && currentStream === stream) {
-          if (typeof unsubscribe === "function") currentCleanup = unsubscribe;
-          retryDelayMs = 250;
-          this.config.onSyncSuccess?.();
-        } else {
-          unsubscribe?.();
-          // It failed while connecting, when a retry that fired was skipped.
-          scheduleReconnect();
-        }
-      } catch (error) {
-        failStream(stream, error);
-        scheduleReconnect();
-      } finally {
-        connecting = false;
-      }
-    };
-
-    void connect();
-    return () => {
-      active = false;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-      retryTimer = undefined;
-      currentCleanup?.();
-      currentCleanup = undefined;
-    };
+  /** Keep a pull listener alive across provider errors (see {@link retryPull}). */
+  protected retryPull(subscribe: PullSubscribe): () => void {
+    return retryPull(this.config, subscribe);
   }
 
   /**
@@ -359,147 +285,14 @@ export abstract class BaseSyncHandler<
     return needsPush;
   }
 
-  /**
-   * Reconcile a pulled event with the record's pending local writes. Runs inside the pull
-   * transaction, so every read and write goes through `context`. A record without pending
-   * writes takes the remote event as is; otherwise the conflict resolver decides, and without
-   * one the local state is kept:
-   * - `"local"`: skip the remote event; the pending writes are pushed later. The skipped event
-   *   is stored for their acknowledgement (see below).
-   * - `"remote"`: apply it and drop the pending writes, so they never overwrite it.
-   * - `{ data }`: apply the merged data and replace the pending writes with one event that
-   *   pushes it: a create when the remote deleted the record, an update otherwise.
-   *
-   * A push in flight may already hold the replaced writes. Its acknowledgement deletes only the
-   * ids it sent, so a merged event stays pending and is pushed after it. What the provider accepted cannot be taken back, though: it
-   * lands remotely after the decision and, like any remote write, comes back through pull,
-   * where both sides converge on it.
-   *
-   * Skipped remote events: per record, the store keeps the latest pulled event skipped because
-   * the record had pending writes. Those writes may already be on the remote, and the event may
-   * be their echo, with server-assigned fields or a concurrent write the server applied after
-   * them. Pull will not send it again past the saved checkpoint, so the acknowledgement that
-   * leaves the record with no pending writes applies it (`removeFromOutbox`). Pull delivers in
-   * server order: when the latest skipped event predates the push, the push's own echo follows
-   * and is applied normally over it. Any later remote event of the record replaces it, or
-   * removes it once applied or merged. It is written in the pull transaction, so it rolls back
-   * with the batch and survives a reload or a leader change with the outbox.
-   *
-   * `skippedKeys` holds the records (`recordKeyString`) with a stored skipped event; when
-   * given, no removal is sent for a record without one, and it is kept up to date.
-   *
-   * An event with a `rev` is compared with the record's stored revision first:
-   * - at or below it: a stale echo, dropped (the pull still saves its checkpoint);
-   * - no pending writes: applied, and its `rev` stored;
-   * - within the pending writes' numbers: maybe this device's own echo, kept as the skipped
-   *   event; the acknowledgement applies it only if its `rev` is above the new stored one;
-   * - above them: another device's write, a conflict decided as above, then its `rev` is stored.
-   *   `"local"` (or no resolver) applies it and replays the pending writes over it.
-   *
-   * `pushConflict`: the event is the server state a refused push returned, so it is another
-   * device's write whatever its `rev`; one equal to the stored revision was decided already.
-   */
-  protected async resolveRemoteEvent(
+  /** Reconcile a pulled or refused event with the record's pending writes (see {@link reconcileRemoteEvent}). */
+  protected resolveRemoteEvent(
     event: ChangeBusEvent<SyncHandlerDataMap<C>>,
     context: DBAdapterTransactionContext<C>,
     skippedKeys?: Set<string>,
     pushConflict = false,
-  ): Promise<{ event?: ChangeBusEvent<SyncHandlerDataMap<C>>; needsPush: boolean }> {
-    const collection = event.collection as CollectionNames<C>;
-    const key = this.eventRecordKey(event);
-    const { recordId } = key;
-    const skippedKey = recordKeyString(key);
-    const store = this.config.localChangeStore;
-    const { native, operations } = context;
-    const rememberSkipped = async () => {
-      await store.upsertSkippedRemoteEvent({ ...key, event }, native);
-      skippedKeys?.add(skippedKey);
-    };
-    const forgetSkipped = async () => {
-      if (skippedKeys && !skippedKeys.delete(skippedKey)) return;
-      await store.removeSkippedRemoteEvents([key], native);
-    };
-    const { rev } = event;
-    const storedRev = rev === undefined ? 0 : ((await store.getRevision(key, native)) ?? 0);
-    if (rev !== undefined && (pushConflict ? rev === storedRev : rev <= storedRev)) {
-      return { needsPush: false };
-    }
-    const storeRev = async () => {
-      if (rev !== undefined) await store.upsertRevision({ ...key, rev }, native);
-    };
-    const pending = await store.getPendingEvents(key, native);
-    if (pending.length === 0) {
-      await forgetSkipped();
-      await storeRev();
-      return { event, needsPush: false };
-    }
-    if (rev !== undefined && !pushConflict && rev <= storedRev + pending.length) {
-      await rememberSkipped();
-      return { needsPush: false };
-    }
-
-    const keepLocal = async () => {
-      if (rev === undefined) {
-        await rememberSkipped();
-        return { needsPush: false };
-      }
-      await forgetSkipped();
-      await storeRev();
-      return { event: this.replayPending(event, pending), needsPush: false };
-    };
-    const resolver = this.config.resolveConflict;
-    if (!resolver) return keepLocal();
-    // A single key is looked up as stored (numeric strings as numbers); a composite one as pulled.
-    const localKey = Array.isArray(this.keyConfig(collection).primaryField)
-      ? this.eventKey(event)
-      : coerceRecordId(recordId);
-    const local: SyncHandlerDataMap<C>[CollectionNames<C>]["record"] | undefined =
-      operations.getOptional
-        ? await operations.getOptional(collection, localKey as never)
-        : await operations.get(collection, localKey as never);
-    const resolution = await resolver({ remote: event, local });
-    if (resolution === "local") return keepLocal();
-    // Applied, or merged into the pushed data: the remote state is no longer missing locally.
-    await forgetSkipped();
-    await storeRev();
-
-    await store.deleteEvents(
-      pending.map(({ id }) => id),
-      native,
-    );
-    if (resolution === "remote") return { event, needsPush: false };
-
-    const type = event.type === "delete" ? "create" : "update";
-    await store.appendEvents(
-      [{ id: crypto.randomUUID(), type, ...key, data: resolution.data, createdAt: Date.now() }],
-      native,
-    );
-    const merged =
-      event.type === "delete"
-        ? { type, collection: event.collection, data: resolution.data }
-        : { ...event, data: resolution.data };
-    return { event: merged as ChangeBusEvent<SyncHandlerDataMap<C>>, needsPush: true };
-  }
-
-  /**
-   * The local state of a record after a `"local"` decision: the remote event with the pending
-   * writes replayed over it. An update has nothing to merge into after a remote delete, so the
-   * record stays deleted unless a pending create brings it back.
-   */
-  private replayPending(
-    event: ChangeBusEvent<SyncHandlerDataMap<C>>,
-    pending: StoredChangeBusEvent[],
-  ): ChangeBusEvent<SyncHandlerDataMap<C>> {
-    let row = event.type === "delete" ? undefined : (event.data as object);
-    for (const { type, data } of pending) {
-      if (type === "delete") row = undefined;
-      else if (type === "create") row = data as object;
-      else if (row) row = { ...row, ...(data as object) };
-    }
-    const { collection, rev } = event;
-    if (row) return { type: "update", collection, data: row, rev } as typeof event;
-    if (event.type === "delete") return event;
-    return { type: "delete", collection, id: this.eventKey(event), rev } as typeof event;
+  ): Promise<ReconciledRemoteEvent<C>> {
+    return reconcileRemoteEvent(this.reconciliation, event, context, skippedKeys, pushConflict);
   }
 
   /**
@@ -526,9 +319,9 @@ export abstract class BaseSyncHandler<
       .map(toPushEvent) as ChangeBusEvent<SyncHandlerDataMap<C>>[];
   }
 
-  /** Push the queue's parked events, and the queue's next push, first (see `parkedEvents`). */
+  /** Push the queue's parked events, and the queue's next push, first (see {@link ParkedPushes}). */
   protected retryParkedOnNextPush(queueKey: string): void {
-    this.parkedRetryDue.add(queueKey);
+    this.parked.retryOnNextPush(queueKey);
   }
 
   /**
@@ -544,33 +337,26 @@ export abstract class BaseSyncHandler<
   ): Promise<boolean> {
     // A parked event can leave the outbox without this handler, e.g. by a conflict decision.
     const pendingIds = new Set(events.map(({ eventId }) => eventId));
-    const parkedBefore = this.parkedEvents.size;
-    for (const [eventId, parked] of this.parkedEvents) {
-      if (parked.queueKey === queueKey && !pendingIds.has(eventId)) this.forgetParked(eventId);
-    }
-    if (this.parkedEvents.size !== parkedBefore) this.config.onOutboxChanged?.();
+    if (this.parked.forgetAbsent(queueKey, pendingIds)) this.config.onOutboxChanged?.();
 
     const pass: PushPass = { queueKey, rejections: [] };
     let toPush = events;
-    if (this.parkedRetryDue.has(queueKey)) {
-      const parked = events.filter(({ eventId }) => this.parkedEvents.has(eventId as string));
+    if (this.parked.isRetryDue(queueKey)) {
+      const parked = events.filter(({ eventId }) => this.parked.has(eventId as string));
       if (parked.length > 0 && (await this.retryParked(queueKey, syncAdapter, parked, pass))) {
         toPush = await this.pendingAmong(events);
       }
-      this.parkedRetryDue.delete(queueKey);
+      this.parked.clearRetryDue(queueKey);
     }
     toPush = toPush.filter(
-      (event) => !this.parkedEvents.has(event.eventId as string) && !this.isHeld(event),
+      (event) => !this.parked.has(event.eventId as string) && !this.isHeld(event),
     );
     if (toPush.length > 0) await this.pushAndAcknowledge(syncAdapter, toPush, pass);
 
     if (pass.rejections.length > 0) this.config.onSyncError?.(pass.rejections.at(-1));
-    const parked = [...this.parkedEvents.values()].some((entry) => entry.queueKey === queueKey);
-    if (parked) this.scheduleParkedRetry(queueKey, signal);
-    else {
-      this.parkedRetryDelays.delete(queueKey);
-      this.parkedProbes.delete(queueKey);
-    }
+    const parked = this.parked.hasQueue(queueKey);
+    if (parked) this.parked.scheduleRetry(queueKey, signal);
+    else this.parked.resetRetries(queueKey);
     return !parked;
   }
 
@@ -594,12 +380,12 @@ export abstract class BaseSyncHandler<
     parked: ChangeBusEvent<SyncHandlerDataMap<C>, N>[],
     pass: PushPass,
   ): Promise<boolean> {
-    const previous = parked.findIndex(({ eventId }) => eventId === this.parkedProbes.get(queueKey));
+    const previous = parked.findIndex(({ eventId }) => eventId === this.parked.lastProbe(queueKey));
     const probe = parked[(previous + 1) % parked.length]!;
     await this.pushAndAcknowledge(syncAdapter, [probe], pass);
-    this.parkedProbes.set(queueKey, probe.eventId as string);
+    this.parked.setLastProbe(queueKey, probe.eventId as string);
     // An acknowledged event is no longer parked.
-    if (this.parkedEvents.has(probe.eventId as string)) return false;
+    if (this.parked.has(probe.eventId as string)) return false;
     const others = parked.filter((event) => event !== probe);
     if (others.length > 0) await this.pushAndAcknowledge(syncAdapter, others, pass);
     return true;
@@ -609,7 +395,7 @@ export abstract class BaseSyncHandler<
    * Push `events` and acknowledge what the provider accepted. A failure rejects, to be retried,
    * unless it is permanent (`isPermanentPushError`): then the events still pending are pushed
    * again in halves, in outbox order, until each refused event was pushed alone, and those are
-   * parked (`parkedEvents`). Later events of a parked record are not pushed past it. Resolves
+   * parked ({@link ParkedPushes}). Later events of a parked record are not pushed past it. Resolves
    * false after a conflict: the rest of a split waits for the push the decision requested, as
    * pushing it now could send a discarded write, or a record's later write before its earlier.
    */
@@ -665,9 +451,7 @@ export abstract class BaseSyncHandler<
     const resolvedKeys = new Set(
       conflict.events.map((event) => recordKeyString(this.eventRecordKey(event))),
     );
-    for (const [eventId, parked] of this.parkedEvents) {
-      if (resolvedKeys.has(parked.recordKey)) this.forgetParked(eventId);
-    }
+    this.parked.forgetRecords(resolvedKeys);
     this.config.onOutboxChanged?.();
     if (applied.length > 0) {
       this.config.changeBus.publishRemoteBatch(applied);
@@ -678,11 +462,7 @@ export abstract class BaseSyncHandler<
 
   /** Whether another event of the record is parked, so this one must wait behind it. */
   private isHeld(event: ChangeBusEvent<SyncHandlerDataMap<C>>): boolean {
-    const recordKey = recordKeyString(this.eventRecordKey(event));
-    for (const [eventId, parked] of this.parkedEvents) {
-      if (parked.recordKey === recordKey && eventId !== event.eventId) return true;
-    }
-    return false;
+    return this.parked.isHeld(recordKeyString(this.eventRecordKey(event)), event.eventId);
   }
 
   /**
@@ -692,15 +472,15 @@ export abstract class BaseSyncHandler<
   private park(event: ChangeBusEvent<SyncHandlerDataMap<C>>, error: unknown, pass: PushPass) {
     if (!this.mayCommit()) return;
     const eventId = event.eventId as string;
-    this.parkedEvents.set(eventId, {
+    this.parked.add(eventId, {
       event,
       queueKey: pass.queueKey,
       recordKey: recordKeyString(this.eventRecordKey(event)),
     });
     pass.rejections.push(error);
-    if (this.reportedRejections.has(eventId)) return;
+    if (this.parked.wasReported(eventId)) return;
     this.config.onOutboxChanged?.();
-    this.reportedRejections.add(eventId);
+    this.parked.markReported(eventId);
     this.config.onPushRejected?.({
       event,
       error,
@@ -713,7 +493,7 @@ export abstract class BaseSyncHandler<
    * back. Does nothing when it is no longer parked here (discarded, pushed, or removed).
    */
   private async discardParked(eventId: string): Promise<void> {
-    const parked = this.parkedEvents.get(eventId);
+    const parked = this.parked.get(eventId);
     if (!parked) return;
     if (!(await this.removeFromOutbox([parked.event]))) {
       throw new LeaderChangedError(
@@ -721,30 +501,6 @@ export abstract class BaseSyncHandler<
       );
     }
     this.requestPush(parked.queueKey);
-  }
-
-  private forgetParked(eventId: string): void {
-    this.parkedEvents.delete(eventId);
-    this.reportedRejections.delete(eventId);
-  }
-
-  /** Retry a queue's parked events after a backoff from 5 s, doubling up to 60 s. */
-  private scheduleParkedRetry(queueKey: string, signal: AbortSignal): void {
-    if (this.parkedRetryTimers.has(queueKey) || signal.aborted) return;
-    const delayMs = this.parkedRetryDelays.get(queueKey) ?? 5_000;
-    this.parkedRetryDelays.set(queueKey, Math.min(delayMs * 2, 60_000));
-    const cancel = () => {
-      clearTimeout(timer);
-      this.parkedRetryTimers.delete(queueKey);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", cancel);
-      this.parkedRetryTimers.delete(queueKey);
-      this.retryParkedOnNextPush(queueKey);
-      this.requestPush(queueKey);
-    }, delayMs);
-    this.parkedRetryTimers.set(queueKey, timer);
-    signal.addEventListener("abort", cancel, { once: true });
   }
 
   /**
@@ -896,7 +652,7 @@ export abstract class BaseSyncHandler<
       if (settledKeys.length > 0) await store.removeSkippedRemoteEvents(settledKeys, native);
     });
 
-    for (const eventId of eventIds) this.forgetParked(eventId);
+    for (const eventId of eventIds) this.parked.forget(eventId);
     this.config.onOutboxChanged?.();
     if (applied.length > 0) {
       this.config.changeBus.publishRemoteBatch(applied);
@@ -992,63 +748,10 @@ export abstract class BaseSyncHandler<
   }
 }
 
-interface ParkedPush<D extends ChangeBusEventDataMapFromCollectionConfigMap<any>> {
-  event: ChangeBusEvent<D>;
-  queueKey: string;
-  recordKey: string;
-}
-
-/** A pull stream, as `retryPull` hands it out. */
-export interface PullStream {
-  isActive: () => boolean;
-  onError: (error: unknown) => void;
-}
-
 /** One `pushPending` run: its queue and the permanent errors it parked events with. */
 interface PushPass {
   queueKey: string;
   rejections: unknown[];
-}
-
-function recordKeyString({ collection, recordId }: RecordKey): string {
-  return `${collection}\0${recordId}`;
-}
-
-/** The push event of a pending outbox event. */
-function toPushEvent(stored: StoredChangeBusEvent) {
-  if (stored.type === "delete") {
-    return {
-      type: "delete",
-      collection: stored.collection,
-      id: storedDeleteId(stored),
-      deletedAt: stored.createdAt,
-      eventId: stored.id,
-    };
-  }
-  return {
-    type: stored.type,
-    collection: stored.collection,
-    data: stored.data,
-    eventId: stored.id,
-  };
-}
-
-/** The id a stored delete was written with; older outboxes only kept it as a string. */
-function storedDeleteId(stored: StoredChangeBusEvent): unknown {
-  const { data } = stored;
-  if (typeof data === "object" && data !== null && "id" in data) return data.id;
-  return coerceRecordId(stored.recordId);
-}
-
-/**
- * Coerce a stringified record id back to number when it looks numeric.
- * Primary keys are stored as strings in IndexedDB for indexing.
- */
-function coerceRecordId(recordId: string): string | number {
-  if (recordId !== "" && !Number.isNaN(Number(recordId)) && String(Number(recordId)) === recordId) {
-    return Number(recordId);
-  }
-  return recordId;
 }
 
 function waitOrAbort(delayMs: number, signal?: AbortSignal): Promise<boolean> {
