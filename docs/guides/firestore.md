@@ -177,13 +177,13 @@ A local delete does not remove the Firestore document. By default it writes a **
 { "deleted": true, "deletedAt": 1767225600000 }
 ```
 
-Other devices then see the document change, notice `deleted: true`, and delete their local row. A real document removal would be invisible to a device that was offline when it happened.
+A collection with [revisions](conflict-resolution.md#exact-conflicts-with-revisions) leaves `deletedAt` out, because it does not rely on device clocks. Other devices then see the document change, notice `deleted: true`, and delete their local row. A real document removal would be invisible to a device that was offline when it happened.
 
 You can change both sides:
 
 - `serializeDelete(id, { deletedAt })`: the data written for a delete.
 - `isDeleted(data, { snapshot })`: whether a pulled document is a tombstone (default: `data.deleted === true`).
-- `resolveDeletedAt(data, { snapshot })`: the delete time in milliseconds (default: `data.deletedAt`, as a number or a `Timestamp`).
+- `resolveDeletedAt(data, { snapshot })`: the delete time in milliseconds (default: `data.deletedAt`, as a number or a `Timestamp`, else the current time, or nothing with `revisionField`).
 - `deserializeDeleteId({ snapshot })`: the local primary key of a deleted document (default: the document id).
 
 Remember to **filter tombstones out** if other parts of your system read Firestore directly. Clean them up from a server job once every device has had time to sync.
@@ -242,4 +242,4 @@ If you prefer to attach the adapter to a single collection's definition, use `cr
 
 - **Pushes may repeat.** If the network fails after Firestore saved a batch, the batch is sent again. A `set` of the same data is harmless, so this is safe.
 - **Offline persistence of the Firebase SDK is not needed.** EzSync already keeps everything locally. Plain `getFirestore()` is enough.
-- The listener always asks for metadata changes, to tell a snapshot from the server from a cached one. `includeMetadataChanges` is deprecated and has no effect.
+- The listener always asks for metadata changes, to tell a snapshot from the server from a cached one.

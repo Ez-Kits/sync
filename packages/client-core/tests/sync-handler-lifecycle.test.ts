@@ -308,12 +308,16 @@ test("collection pull skips conflicts selected as local", async () => {
   handler.start("todos" as never);
   await tick();
   await tick();
-  await f.localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "2",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await f.localChangeStore.appendEvents([
+    {
+      id: "pending-10",
+      type: "update",
+      collection: "todos",
+      recordId: "2",
+      data: {},
+      createdAt: 1,
+    },
+  ]);
   pullOptions.commitChanges({
     changes: [{ type: "update", collection: "todos", data: { id: 2 } }],
     checkpoint: {},
@@ -501,12 +505,16 @@ test("global pull skips locally selected conflicts and reports commit failures",
   handler.start();
   await tick();
   await tick();
-  await f.localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "7",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await f.localChangeStore.appendEvents([
+    {
+      id: "pending-11",
+      type: "update",
+      collection: "todos",
+      recordId: "7",
+      data: {},
+      createdAt: 1,
+    },
+  ]);
   pullOptions.commitChanges({
     changes: [{ type: "update", collection: "todos", data: { id: 7 } }],
     checkpoint: {},
@@ -893,27 +901,12 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
   const store = f.localChangeStore;
   const spy = {
     getPendingEvents: vi.spyOn(store, "getPendingEvents"),
-    getDirtyRecords: vi.spyOn(store, "getDirtyRecords"),
     deleteEvents: vi.spyOn(store, "deleteEvents"),
-    removeDirtyRecords: vi.spyOn(store, "removeDirtyRecords"),
   };
   await store.appendEvents([storedEvent("e1"), storedEvent("e2", "2")]);
-  await store.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
   const handler = new GlobalSyncHandler(f.config as never);
   handler.start();
   await vi.waitFor(() => expect(spy.deleteEvents).toHaveBeenCalledWith(["e1", "e2"], native));
-  expect(spy.removeDirtyRecords).toHaveBeenCalledWith(
-    [
-      { collection: "todos", recordId: "1" },
-      { collection: "todos", recordId: "2" },
-    ],
-    native,
-  );
   // Remaining pending events are looked up per record, in the transaction.
   expect(spy.getPendingEvents).toHaveBeenCalledWith({ collection: "todos", recordId: "1" }, native);
 
@@ -924,7 +917,6 @@ test("acknowledgements and conflict reads run in the sync transaction", async ()
     checkpoint: {},
   });
   await vi.waitFor(() => expect(resolveConflict).toHaveBeenCalled());
-  expect(spy.getDirtyRecords).toHaveBeenCalledWith({ collection: "todos", recordId: "1" }, native);
   expect(spy.getPendingEvents).toHaveBeenLastCalledWith(
     { collection: "todos", recordId: "1" },
     native,

@@ -65,7 +65,7 @@ export interface BaseDBAdapter<
   querySchema: TQuerySchema;
   /** The storage every statement of this adapter runs on. */
   readonly dbStorage: DBStorage;
-  /** Outbox and dirty records, kept in the same storage so local mutations commit atomically. */
+  /** Outbox, kept in the same storage so local mutations commit atomically. */
   readonly localChangeStore: AtomicLocalChangeStore;
   /**
    * Release what the adapter holds on top of `dbStorage` (e.g. an ORM's data source). The
@@ -81,10 +81,9 @@ export interface BaseDBAdapter<
   transaction<T>(
     fn: (tx: DBAdapterOperations<C>, context: DBAdapterTransactionContext<C>) => Promise<T>,
   ): Promise<T>;
-  /** Atomically commit the row mutation with outbox and dirty-record writes. */
+  /** Atomically commit the row mutation with its outbox writes. */
   commitLocalMutation(options: {
     mutate: (context: LocalMutationTransactionContext<C>) => Promise<void>;
     persistOutboxEvent: (context: LocalMutationTransactionContext<C>) => Promise<void>;
-    persistDirtyRecord: (context: LocalMutationTransactionContext<C>) => Promise<void>;
   }): Promise<void>;
 }

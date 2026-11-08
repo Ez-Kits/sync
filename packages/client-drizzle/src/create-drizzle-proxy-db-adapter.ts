@@ -241,11 +241,10 @@ export function createDrizzleProxyDBAdapter<
     ): Promise<T> {
       return inTransaction((context) => fn(context.operations, context));
     },
-    commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
+    commitLocalMutation({ mutate, persistOutboxEvent }) {
       return inTransaction(async (context) => {
         await mutate(context);
         await persistOutboxEvent(context);
-        await persistDirtyRecord(context);
       });
     },
   };

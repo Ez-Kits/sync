@@ -1,13 +1,12 @@
 import { vi } from "vite-plus/test";
 import type {
-  DirtyRecord,
   ILocalChangeStore,
   LocalChangeScope,
   SkippedRemoteEvent,
   StoredChangeBusEvent,
 } from "../../src/local-change-store";
 
-function dirtyKey(collection: string, recordId: string): string {
+function recordKey(collection: string, recordId: string): string {
   return `${collection}\0${recordId}`;
 }
 
@@ -20,7 +19,6 @@ function inScope(item: { collection: string; recordId: string }, scope?: LocalCh
 export function createTestLocalChangeStore(): ILocalChangeStore {
   // Like the database's `seq`: events are read back in append order.
   const events = new Map<string, StoredChangeBusEvent>();
-  const dirtyRecords = new Map<string, DirtyRecord>();
   const appliedEventIds = new Set<string>();
   const checkpoints = new Map<string, string>();
   const skippedRemoteEvents = new Map<string, SkippedRemoteEvent>();
@@ -48,17 +46,6 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
         events.delete(id);
       }
     },
-    async upsertDirtyRecord(record) {
-      dirtyRecords.set(dirtyKey(record.collection, record.recordId), record);
-    },
-    async removeDirtyRecords(keys) {
-      for (const key of keys) {
-        dirtyRecords.delete(dirtyKey(key.collection, key.recordId));
-      }
-    },
-    async getDirtyRecords(scope) {
-      return Array.from(dirtyRecords.values()).filter((record) => inScope(record, scope));
-    },
     async getCheckpoint(collection) {
       return checkpoints.get(collection);
     },
@@ -72,27 +59,27 @@ export function createTestLocalChangeStore(): ILocalChangeStore {
     async upsertSkippedRemoteEvent(entry) {
       // Stored as JSON, like the database stores do.
       skippedRemoteEvents.set(
-        dirtyKey(entry.collection, entry.recordId),
+        recordKey(entry.collection, entry.recordId),
         JSON.parse(JSON.stringify(entry)) as SkippedRemoteEvent,
       );
     },
     async removeSkippedRemoteEvents(keys) {
       for (const key of keys) {
-        skippedRemoteEvents.delete(dirtyKey(key.collection, key.recordId));
+        skippedRemoteEvents.delete(recordKey(key.collection, key.recordId));
       }
     },
     async getRevision(key) {
-      return revisions.get(dirtyKey(key.collection, key.recordId));
+      return revisions.get(recordKey(key.collection, key.recordId));
     },
     async upsertRevision({ collection, recordId, rev }) {
-      revisions.set(dirtyKey(collection, recordId), rev);
+      revisions.set(recordKey(collection, recordId), rev);
     },
     async removeRevisions(collection) {
       const pending = new Set(
-        Array.from(events.values(), (event) => dirtyKey(event.collection, event.recordId)),
+        Array.from(events.values(), (event) => recordKey(event.collection, event.recordId)),
       );
       for (const key of revisions.keys()) {
-        if (key.startsWith(dirtyKey(collection, "")) && !pending.has(key)) revisions.delete(key);
+        if (key.startsWith(recordKey(collection, "")) && !pending.has(key)) revisions.delete(key);
       }
     },
   };

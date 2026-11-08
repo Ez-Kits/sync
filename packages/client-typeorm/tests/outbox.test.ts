@@ -99,7 +99,7 @@ for (const dialect of dialects) {
     ]);
     await otherTab.db.destroy();
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 5 },
+      { key: "schema_version", value: 6 },
     ]);
     await localChangeStore.appendEvents([event("pending", 1)]);
 
@@ -111,12 +111,17 @@ for (const dialect of dialects) {
     await dbStorage.close();
   }, 30_000);
 
-  test(`${dialect.name}: a version 4 database gets the revisions table and keeps its data`, async () => {
+  test(`${dialect.name}: a version 4 database gets the revisions table, loses the dirty-record table and keeps its data`, async () => {
     const dbStorage = dialect.storage("");
     const { db, localChangeStore } = dialect.adapter(dbStorage);
     await localChangeStore.initialize();
     await localChangeStore.appendEvents([event("pending", 1)]);
     await dbStorage.exec({ sql: "DROP TABLE ez_sync_revisions", params: [], method: "run" });
+    await dbStorage.exec({
+      sql: "CREATE TABLE ez_sync_dirty_records (collection TEXT)",
+      params: [],
+      method: "run",
+    });
     await dbStorage.exec({
       sql: "UPDATE ez_sync_meta SET value = 4 WHERE key = 'schema_version'",
       params: [],
@@ -125,11 +130,14 @@ for (const dialect of dialects) {
 
     await localChangeStore.initialize();
     const key = { collection: "todos", recordId: "a" };
+    await expect(
+      dbStorage.exec({ sql: "SELECT 1 FROM ez_sync_dirty_records", params: [], method: "all" }),
+    ).rejects.toThrow();
     await localChangeStore.upsertRevision({ ...key, rev: 2 });
     expect(await localChangeStore.getRevision(key)).toBe(2);
     expect(ids(await localChangeStore.getPendingEvents())).toEqual(["pending"]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 5 },
+      { key: "schema_version", value: 6 },
     ]);
     await db.destroy();
     await dbStorage.close();

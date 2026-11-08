@@ -132,17 +132,11 @@ export function fixture(scope: Scope, overrides: Record<string, unknown> = {}) {
       this.stop();
       handler = createHandler();
     },
-    /** A committed local write: the row, its outbox event and its dirty record. */
+    /** A committed local write: the row and its outbox event. */
     async writeLocally(event: StoredChangeBusEvent) {
       if (event.type === "delete") rows.delete(event.recordId);
       else rows.set(event.recordId, event.data as Row);
       await store.appendEvents([event]);
-      await store.upsertDirtyRecord({
-        collection: "todos",
-        recordId: event.recordId,
-        state: event.type === "delete" ? "deleted" : "dirty",
-        updatedAt: event.createdAt,
-      });
     },
   };
 }

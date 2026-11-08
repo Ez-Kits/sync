@@ -10,7 +10,7 @@ type LocalMutationBase = {
   collection: string;
   /** Primary key value of the written row. */
   id: unknown;
-  /** Stringified primary key used by the outbox and dirty records. */
+  /** Stringified primary key used by the outbox. */
   recordId: string;
   eventId: string;
   createdAt: number;
@@ -22,7 +22,7 @@ export type CommittedLocalMutation = LocalMutationBase &
 
 /**
  * A structured-cloneable description of one local write. The storage owner turns it
- * into one atomic row + outbox + dirty-record commit, so it can cross a tab boundary.
+ * into one atomic row + outbox commit, so it can cross a tab boundary.
  * An `upsert` inserts the row when its primary key is missing, else updates it.
  */
 export type LocalMutation =
@@ -34,7 +34,7 @@ export interface LocalMutationWriter {
   /** Reads and writes of the open transaction. */
   readonly operations: DBAdapterOperations<any>;
   /**
-   * Write the rows now, in order; their outbox events and dirty records are saved before the
+   * Write the rows now, in order; their outbox events are saved before the
    * transaction commits. Resolves to the mutations as applied.
    */
   apply(mutations: readonly LocalMutation[]): Promise<CommittedLocalMutation[]>;
@@ -104,10 +104,10 @@ async function applyRow(
 }
 
 /**
- * Run `fn` against an atomic storage pair: the rows it applies, their outbox events and dirty
- * records commit in one transaction. The only caller of `commitLocalMutation`. A mutation of
- * a `localOnly` collection (one no sync adapter handles) leaves no pending outbox event or
- * dirty record; its event is still recorded as applied, for `isLocalMutationCommitted`.
+ * Run `fn` against an atomic storage pair: the rows it applies, and their outbox events commit
+ * in one transaction. The only caller of `commitLocalMutation`. A mutation of
+ * a `localOnly` collection (one no sync adapter handles) leaves no pending outbox event;
+ * its event is still recorded as applied, for `isLocalMutationCommitted`.
  * `applied` collects what `fn` applied, so a caller still has it when the commit's
  * acknowledgement is lost.
  */
@@ -147,20 +147,6 @@ export async function executeLocalMutations<T>(
       await localChangeStore.appendEvents(applied.map(toStoredChangeBusEvent), context.native);
       const localOnly = applied.filter(isLocalOnly).map(({ eventId }) => eventId);
       if (localOnly.length > 0) await localChangeStore.deleteEvents(localOnly, context.native);
-    },
-    persistDirtyRecord: async (context: LocalMutationTransactionContext<any>) => {
-      for (const mutation of applied) {
-        if (isLocalOnly(mutation)) continue;
-        await localChangeStore.upsertDirtyRecord(
-          {
-            collection: mutation.collection,
-            recordId: mutation.recordId,
-            state: mutation.type === "delete" ? "deleted" : "dirty",
-            updatedAt: mutation.createdAt,
-          },
-          context.native,
-        );
-      }
     },
   });
   return result;

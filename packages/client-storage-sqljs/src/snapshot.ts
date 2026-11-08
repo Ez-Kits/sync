@@ -29,7 +29,7 @@ export function deleteSnapshot({ name, factory }: SnapshotLocation): Promise<voi
   });
 }
 
-export function toArrayBuffer(view: ArrayBufferView): ArrayBuffer {
+function toArrayBuffer(view: ArrayBufferView): ArrayBuffer {
   return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice().buffer;
 }
 

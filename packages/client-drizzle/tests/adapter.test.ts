@@ -138,15 +138,11 @@ test("Drizzle commitLocalMutation uses transaction-bound operations", async () =
       expect(context).toBe(transactionContext);
       callbackOrder.push("outbox");
     },
-    persistDirtyRecord: async (context) => {
-      expect(context).toBe(transactionContext);
-      callbackOrder.push("dirty");
-    },
   });
 
   expect(dbStorage.transaction).toHaveBeenCalledOnce();
   expect(transactionContext.native).toBe(db);
-  expect(callbackOrder).toEqual(["mutate", "outbox", "dirty"]);
+  expect(callbackOrder).toEqual(["mutate", "outbox"]);
   expect(calls).toContainEqual(["insert", todos, { id: 9, title: "transactional" }]);
 });
 
@@ -160,12 +156,6 @@ test("Drizzle local-change writes use the transaction handle", async () => {
     recordId: text("record_id"),
     createdAt: integer("created_at"),
   });
-  const dirtyRecords = sqliteTable("dirty_records", {
-    collection: text("collection"),
-    recordId: text("record_id"),
-    state: text("state"),
-    updatedAt: integer("updated_at"),
-  });
   const rootInsert = vi.fn();
   const inserted: unknown[] = [];
   const transactionInsert = vi.fn(() => ({
@@ -176,7 +166,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   }));
   const store = createDrizzleLocalChangeStore({
     db: { insert: rootInsert },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
+    tables: { events, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
   const pruned: unknown[] = [];
@@ -200,10 +190,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   // The applied record is pruned and written in the same transaction.
   expect(pruned).toEqual([appliedEvents]);
   expect(inserted[1]).toEqual([{ eventId: "event", appliedAt: 1 }]);
-  await store.upsertDirtyRecord(
-    { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
-    nativeTransaction,
-  );
+  await store.saveCheckpoint("todos", "c1", nativeTransaction);
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
   expect(store).toMatchObject({ initialize });
@@ -211,7 +198,7 @@ test("Drizzle local-change writes use the transaction handle", async () => {
   expect(rootInsert).not.toHaveBeenCalled();
 });
 
-test("Drizzle local-change store queries and deletes events and dirty records", async () => {
+test("Drizzle local-change store queries and deletes events", async () => {
   const events = sqliteTable("outbox_queries", {
     seq: integer("seq").primaryKey({ autoIncrement: true }),
     id: text("id").notNull().unique(),
@@ -221,14 +208,7 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
     recordId: text("record_id"),
     createdAt: integer("created_at"),
   });
-  const dirtyRecords = sqliteTable("dirty_queries", {
-    collection: text("collection"),
-    recordId: text("record_id"),
-    state: text("state"),
-    updatedAt: integer("updated_at"),
-  });
   const eventRows = [{ id: "event", collection: "todos", createdAt: 1 }];
-  const dirtyRows = [{ collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 }];
   const queryCalls: unknown[][] = [];
   const queryFor = (rows: unknown[]) => {
     let query!: Promise<unknown[]> & {
@@ -253,9 +233,9 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
     select: vi.fn((fields?: unknown) => {
       selections.push(fields);
       return {
-        from: (table: unknown) => {
+        from: () => {
           queryCalls.push(["from", label]);
-          return queryFor(table === events ? eventRows : dirtyRows);
+          return queryFor(eventRows);
         },
       };
     }),
@@ -269,30 +249,17 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
   const tx = databaseFor("tx");
   const store = createDrizzleLocalChangeStore({
     db,
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
+    tables: { events, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
 
   await store.appendEvents([]);
   await store.deleteEvents([]);
-  await store.removeDirtyRecords([]);
   await expect(store.getPendingEvents("todos")).resolves.toEqual(eventRows);
   await expect(store.getPendingEvents()).resolves.toEqual(eventRows);
   await store.deleteEvents(["event"]);
-  await expect(store.getDirtyRecords("todos")).resolves.toEqual(dirtyRows);
-  await expect(store.getDirtyRecords()).resolves.toEqual(dirtyRows);
-  await store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
 
-  expect(queryCalls.map(([kind]) => kind)).toEqual([
-    "from",
-    "where",
-    "orderBy",
-    "from",
-    "orderBy",
-    "from",
-    "where",
-    "from",
-  ]);
+  expect(queryCalls.map(([kind]) => kind)).toEqual(["from", "where", "orderBy", "from", "orderBy"]);
   // Pending events sort by the database-assigned `seq` alone.
   const seq = getColumns(events).seq;
   for (const call of queryCalls.filter(([kind]) => kind === "orderBy")) {
@@ -308,25 +275,19 @@ test("Drizzle local-change store queries and deletes events and dirty records", 
     "recordId",
     "createdAt",
   ]);
-  expect(deletes).toHaveLength(2);
+  expect(deletes).toHaveLength(1);
   expect(deletes[0]?.slice(0, 2)).toEqual(["root", events]);
-  expect(deletes[1]?.slice(0, 2)).toEqual(["root", dirtyRecords]);
 
   // Every method, reads included, runs on a transaction handle it is given.
   queryCalls.length = 0;
   deletes.length = 0;
   const key = { collection: "todos", recordId: "1" };
   await store.getPendingEvents(key, tx);
-  await store.getDirtyRecords(key, tx);
   await store.deleteEvents(["event"], tx);
-  await store.removeDirtyRecords([key], tx);
-  expect(queryCalls.filter(([kind]) => kind === "from")).toEqual([
-    ["from", "tx"],
-    ["from", "tx"],
-  ]);
-  expect(deletes.map(([label]) => label)).toEqual(["tx", "tx"]);
-  expect(db.select).toHaveBeenCalledTimes(4);
-  expect(db.delete).toHaveBeenCalledTimes(2);
+  expect(queryCalls.filter(([kind]) => kind === "from")).toEqual([["from", "tx"]]);
+  expect(deletes.map(([label]) => label)).toEqual(["tx"]);
+  expect(db.select).toHaveBeenCalledTimes(2);
+  expect(db.delete).toHaveBeenCalledTimes(1);
 });
 
 test("Drizzle local-change store supports MySQL upserts and reports unsupported dialects", async () => {
@@ -339,12 +300,6 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
     recordId: text("record_id"),
     createdAt: integer("created_at"),
   });
-  const dirtyRecords = sqliteTable("dirty_upsert", {
-    collection: text("collection"),
-    recordId: text("record_id"),
-    state: text("state"),
-    updatedAt: integer("updated_at"),
-  });
   const onDuplicateKeyUpdate = vi.fn();
   const duplicateStore = createDrizzleLocalChangeStore({
     db: {
@@ -352,21 +307,19 @@ test("Drizzle local-change store supports MySQL upserts and reports unsupported 
         values: () => ({ onDuplicateKeyUpdate }),
       }),
     },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
+    tables: { events, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
-  const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
-  await duplicateStore.upsertDirtyRecord(record);
-  expect(onDuplicateKeyUpdate).toHaveBeenCalledWith({
-    set: { state: "dirty", updatedAt: 1 },
-  });
+  const revision = { collection: "todos", recordId: "1", rev: 1 };
+  await duplicateStore.upsertRevision(revision);
+  expect(onDuplicateKeyUpdate).toHaveBeenCalledWith({ set: { rev: 1 } });
 
   const unsupportedStore = createDrizzleLocalChangeStore({
     db: { insert: () => ({ values: () => ({}) }) },
-    tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
+    tables: { events, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
     initialize,
   });
-  await expect(unsupportedStore.upsertDirtyRecord(record)).rejects.toThrow(
+  await expect(unsupportedStore.upsertRevision(revision)).rejects.toThrow(
     "does not support local-change upserts",
   );
 });
@@ -377,19 +330,12 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
     id: text("id").primaryKey(),
     collection: text("collection"),
   });
-  const dirtyRecords = sqliteTable("dirty_records", {
-    collection: text("collection"),
-    recordId: text("record_id"),
-    state: text("state"),
-    updatedAt: integer("updated_at"),
-  });
 
   createDrizzleLocalChangeStore({
     db,
     tables: {
       // @ts-expect-error event table omits persisted event columns
       events: invalidEvents,
-      dirtyRecords,
       appliedEvents,
       checkpoints,
       skippedRemoteEvents,
@@ -412,7 +358,6 @@ test("Drizzle local-change tables reject incomplete row schemas at type level", 
     db,
     tables: {
       events: textDataEvents,
-      dirtyRecords,
       appliedEvents,
       checkpoints,
       skippedRemoteEvents,

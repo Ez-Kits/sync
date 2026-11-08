@@ -23,6 +23,7 @@ import {
   realtimeDBPushError,
   rejectedPush,
 } from "../shared/push-error.ts";
+import { deletedAtFrom, defaultIsDeleted } from "../shared/tombstone.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
@@ -31,28 +32,6 @@ type RealtimeChildListenTarget = ReturnType<typeof ref> | Query;
 
 /** How a child reached the listeners. */
 type ChildChangeKind = "added" | "changed" | "removed";
-
-function defaultIsDeleted(data: unknown): boolean {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    "deleted" in data &&
-    (data as { deleted?: unknown }).deleted === true
-  );
-}
-
-function deletedAtFrom(data: unknown): number {
-  if (
-    typeof data === "object" &&
-    data !== null &&
-    "deletedAt" in data &&
-    typeof data.deletedAt === "number" &&
-    Number.isFinite(data.deletedAt)
-  ) {
-    return data.deletedAt;
-  }
-  return Date.now();
-}
 
 function recordPath(collectionPath: string, recordId: string): string {
   return `${collectionPath}/${recordId}`;
@@ -90,7 +69,10 @@ function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<
       id: collectionConfig.deserializeDeleteId
         ? collectionConfig.deserializeDeleteId({ snapshot })
         : (snapshot.key as C[N]["delete"]),
-      deletedAt: collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
+      deletedAt:
+        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ??
+        deletedAtFrom(raw) ??
+        (collectionConfig.revisionField === undefined ? Date.now() : undefined),
       ...revision,
     } as unknown as ChangeBusEvent<C, N>;
   }
@@ -451,10 +433,9 @@ export function createRealtimeDBSyncAdapterFromResolved<
           const deletedAt = event.deletedAt ?? Date.now();
           const payload = collectionConfig.serializeDelete
             ? collectionConfig.serializeDelete(event.id as C[N]["delete"], { deletedAt })
-            : {
-                deleted: true,
-                deletedAt,
-              };
+            : revisionField === undefined
+              ? { deleted: true, deletedAt }
+              : { deleted: true };
           write = recordWrite(withRevision(payload), true);
         } else if (event.type === "create") {
           const payload = collectionConfig.serializeCreate

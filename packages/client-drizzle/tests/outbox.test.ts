@@ -101,7 +101,7 @@ for (const dialect of dialects) {
     // Several contexts initialize together; the transactions serialize on the leader.
     await Promise.all([localChangeStore.initialize(), localChangeStore.initialize()]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 5 },
+      { key: "schema_version", value: 6 },
     ]);
     await localChangeStore.appendEvents([event("pending", 1)]);
 
@@ -112,12 +112,17 @@ for (const dialect of dialects) {
     await dbStorage.close();
   }, 30_000);
 
-  test(`${dialect.name}: a version 4 database gets the revisions table and keeps its data`, async () => {
+  test(`${dialect.name}: a version 4 database gets the revisions table, loses the dirty-record table and keeps its data`, async () => {
     const dbStorage = dialect.storage("CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);");
     const { localChangeStore } = dialect.adapter(dbStorage);
     await localChangeStore.initialize();
     await localChangeStore.appendEvents([event("pending", 1)]);
     await dbStorage.exec({ sql: "DROP TABLE ez_sync_revisions", params: [], method: "run" });
+    await dbStorage.exec({
+      sql: "CREATE TABLE ez_sync_dirty_records (collection TEXT)",
+      params: [],
+      method: "run",
+    });
     await dbStorage.exec({
       sql: "UPDATE ez_sync_meta SET value = 4 WHERE key = 'schema_version'",
       params: [],
@@ -126,11 +131,14 @@ for (const dialect of dialects) {
 
     await localChangeStore.initialize();
     const key = { collection: "todos", recordId: "a" };
+    await expect(
+      dbStorage.exec({ sql: "SELECT 1 FROM ez_sync_dirty_records", params: [], method: "all" }),
+    ).rejects.toThrow();
     await localChangeStore.upsertRevision({ ...key, rev: 2 });
     expect(await localChangeStore.getRevision(key)).toBe(2);
     expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
     expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 5 },
+      { key: "schema_version", value: 6 },
     ]);
     await dbStorage.close();
   }, 30_000);
@@ -187,7 +195,7 @@ async function syncSetup(options: {
       },
     },
   } as never);
-  /** A local write, committed with its outbox event and dirty record. */
+  /** A local write, committed with its outbox event. */
   const writeLocally = (id: string, title: string, eventId: string, type = "update") =>
     adapter.commitLocalMutation({
       mutate: ({ operations }) =>
@@ -197,11 +205,6 @@ async function syncSetup(options: {
       persistOutboxEvent: ({ native }) =>
         adapter.localChangeStore.appendEvents(
           [{ ...event(eventId, 1, id), type: type as never, data: { id, title } }],
-          native,
-        ),
-      persistDirtyRecord: ({ native }) =>
-        adapter.localChangeStore.upsertDirtyRecord(
-          { collection: "todos", recordId: id, state: "dirty", updatedAt: 1 },
           native,
         ),
     });
@@ -217,14 +220,19 @@ async function syncSetup(options: {
   };
 }
 
-test("a failure part way through an acknowledgement leaves the outbox and dirty records as they were", async () => {
+test("a failure part way through an acknowledgement leaves the outbox as it was", async () => {
   const { dbStorage, adapter, handler, errors, push, writeLocally } = await syncSetup({});
   await writeLocally("a", "one", "e1", "create");
   await writeLocally("a", "two", "e2");
   const store = adapter.localChangeStore;
-  // Events are deleted first; the dirty-record cleanup after them fails.
+  // Events are deleted first; the per-record lookup after them fails.
   const deleteEvents = vi.spyOn(store, "deleteEvents");
-  vi.spyOn(store, "removeDirtyRecords").mockRejectedValue(new Error("disk full"));
+  const getPendingEvents = store.getPendingEvents.bind(store);
+  vi.spyOn(store, "getPendingEvents").mockImplementation((scope, transactionContext) =>
+    typeof scope === "object" && transactionContext
+      ? Promise.reject(new Error("disk full"))
+      : getPendingEvents(scope, transactionContext),
+  );
   handler.start();
   await vi.waitFor(() => expect(errors).toHaveLength(1));
   handler.stop();
@@ -233,9 +241,6 @@ test("a failure part way through an acknowledgement leaves the outbox and dirty 
   expect((errors[0] as Error).message).toBe("disk full");
   // The whole acknowledgement rolled back: the events will be pushed again.
   expect((await store.getPendingEvents()).map(({ id }) => id)).toEqual(["e1", "e2"]);
-  expect(await store.getDirtyRecords()).toEqual([
-    { collection: "todos", recordId: "a", state: "dirty", updatedAt: 1 },
-  ]);
   await dbStorage.close();
 });
 

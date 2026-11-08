@@ -105,11 +105,8 @@ for (const scope of ["global", "collection"] as const) {
     expect(f.onSyncError).toHaveBeenCalledWith(rejection);
     // Not synced while an event is parked: the push never reports success.
     expect(onSyncSuccess.mock.calls.length).toBeLessThanOrEqual(1);
-    // Nothing is lost: the event and its dirty record stay.
+    // Nothing is lost: the event stays.
     expect(await pendingIds(f)).toEqual(["e3"]);
-    expect(await f.store.getDirtyRecords()).toEqual([
-      expect.objectContaining({ recordId: "3", state: "dirty" }),
-    ]);
     f.stop();
   });
 
@@ -133,7 +130,6 @@ for (const scope of ["global", "collection"] as const) {
     ]);
     expect(log.some((entry) => entry === "rejected e2")).toBe(false);
     expect(await pendingIds(f)).toEqual(["e1", "e2", "e3", "e4"]);
-    expect(await f.store.getDirtyRecords()).toHaveLength(3);
 
     signedIn = true;
     const before = log.length;
@@ -141,7 +137,6 @@ for (const scope of ["global", "collection"] as const) {
     await vi.waitFor(async () => expect(await pendingIds(f)).toEqual([]));
     // The oldest parked event probes alone, then the other parked events, then what they held.
     expect(log.slice(before)).toEqual(["accepted e1", "accepted e3,e4", "accepted e2"]);
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     expect(onPushRejected).toHaveBeenCalledTimes(3);
     f.stop();
   });
@@ -315,7 +310,6 @@ for (const scope of ["global", "collection"] as const) {
     // Only e1 was discarded; the record's later events are pushed after it, in order.
     expect(log.at(-1)).toBe("accepted e2,e4");
     expect(f.rows.get("1")).toEqual({ id: 1, title: "again" });
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     // Discarding again, or an event no longer parked, does nothing.
     await discard();
     expect(log.at(-1)).toBe("accepted e2,e4");
@@ -438,7 +432,6 @@ for (const scope of ["global", "collection"] as const) {
     expect(f.rows.get("1")).toEqual({ id: 1, title: "remote" });
     expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([remote]);
     expect(await pendingIds(f)).toEqual([]);
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     f.stop();
   });
 

@@ -45,7 +45,7 @@ export function primaryKeyEntries(config: PrimaryKeyConfig, key: unknown): [stri
 }
 
 /**
- * The string the outbox and dirty records identify a record by: the key itself for one field,
+ * The string the outbox identifies a record by: the key itself for one field,
  * or a JSON array of the key values, in `primaryField` order, for a composite key.
  */
 export function recordIdOf(config: PrimaryKeyConfig, key: unknown): string {

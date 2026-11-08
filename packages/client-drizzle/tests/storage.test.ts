@@ -87,10 +87,6 @@ async function exerciseAdapter(
     id: "a",
     title: "first",
   });
-  expect(await adapter.localChangeStore.getDirtyRecords("todos")).toEqual([
-    expect.objectContaining({ recordId: "a", state: "dirty" }),
-    expect.objectContaining({ recordId: "b", state: "deleted" }),
-  ]);
 
   // A failing write leaves neither the row nor its outbox event behind.
   await expect(client.collections.todos.insert({ id: "a", title: "duplicate" })).rejects.toThrow();
@@ -249,20 +245,6 @@ test("adapters keep caller-supplied codecs", () => {
       drizzleOptions: { codecs },
     }).queryBuilder,
   ).toBeDefined();
-});
-
-test("predefined dirty-record tables are unique per collection and record", () => {
-  for (const config of [
-    getSqliteTableConfig(sqliteLocalChangeTables.dirtyRecords),
-    getPgTableConfig(pgLocalChangeTables.dirtyRecords),
-  ]) {
-    const [index] = config.indexes;
-    expect(index?.config.unique).toBe(true);
-    expect(index?.config.columns.map((column: any) => column.name)).toEqual([
-      "collection",
-      "recordId",
-    ]);
-  }
 });
 
 test("predefined event tables index pending events by collection, then seq or record", () => {

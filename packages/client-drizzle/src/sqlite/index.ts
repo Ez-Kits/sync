@@ -8,7 +8,6 @@ import {
   primaryKey,
   sqliteTable,
   text,
-  uniqueIndex,
   type DrizzleSQLiteConfig,
 } from "drizzle-orm/sqlite-core";
 import {
@@ -28,7 +27,7 @@ import type { DrizzleDBAdapter } from "../types";
 // Columns are named explicitly so a `casing` option cannot rename them.
 
 /**
- * Outbox, dirty-record, applied-event, checkpoint, skipped-event and revision tables of SQLite
+ * Outbox, applied-event, checkpoint, skipped-event and revision tables of SQLite
  * storages, created by the adapter itself. `seq` is assigned on insert, so pending events follow commit
  * order.
  */
@@ -48,16 +47,6 @@ export const sqliteLocalChangeTables = {
       index("ez_sync_events_collection_seq").on(table.collection, table.seq),
       index("ez_sync_events_record").on(table.collection, table.recordId),
     ],
-  ),
-  dirtyRecords: sqliteTable(
-    "ez_sync_dirty_records",
-    {
-      collection: text("collection").notNull(),
-      recordId: text("recordId").notNull(),
-      state: text("state").notNull(),
-      updatedAt: integer("updatedAt").notNull(),
-    },
-    (table) => [uniqueIndex("ez_sync_dirty_record_key").on(table.collection, table.recordId)],
   ),
   appliedEvents: sqliteTable(
     "ez_sync_applied_events",
@@ -107,14 +96,7 @@ CREATE TABLE IF NOT EXISTS ez_sync_events (
 );
 CREATE INDEX IF NOT EXISTS ez_sync_events_collection_seq ON ez_sync_events (collection, seq);
 CREATE INDEX IF NOT EXISTS ez_sync_events_record ON ez_sync_events (collection, recordId);
-CREATE TABLE IF NOT EXISTS ez_sync_dirty_records (
-  collection TEXT NOT NULL,
-  recordId TEXT NOT NULL,
-  state TEXT NOT NULL,
-  updatedAt INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ez_sync_dirty_record_key
-  ON ez_sync_dirty_records (collection, recordId);
+DROP TABLE IF EXISTS ez_sync_dirty_records;
 CREATE TABLE IF NOT EXISTS ez_sync_applied_events (
   eventId TEXT PRIMARY KEY NOT NULL,
   appliedAt INTEGER NOT NULL

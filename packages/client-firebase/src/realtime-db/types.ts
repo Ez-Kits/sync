@@ -3,13 +3,14 @@ import type {
   ChangeBusEventDataMap,
   CheckpointSerializer,
   CollectionConfig,
-  InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
-  InferCollectionSelectModel,
-  InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type { DataSnapshot, Database, Query } from "firebase/database";
-import type { CollectionKey, DeleteIdHookRequirement } from "../shared/types.ts";
+import type {
+  CollectionKey,
+  DeleteIdHookRequirement,
+  EventMapFromCollectionConfig,
+} from "../shared/types.ts";
 
 export interface RealtimeDBSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
@@ -22,7 +23,7 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
    */
   createCheckpoint: () => TCheckpoint;
   /**
-   * Narrow the pull listener (e.g. `query(ref, orderByChild('updatedAt'), startAt(ts))`)
+   * Narrow the pull listener (e.g. `query(ref, orderByChild('serverUpdatedAt'), startAt(ts))`)
    * for incremental sync. Defaults to the collection root `ref`.
    */
   buildPullQuery?: (args: {
@@ -33,7 +34,7 @@ export interface RealtimeDBSyncAdapterCollectionHandlers<
   /**
    * A small query read first, on the collection's first pull on this device (no checkpoint
    * yet), so the app can show rows before the full pull arrives: e.g.
-   * `query(ref(db, collectionPath), orderByChild("updatedAt"), limitToLast(50))`. Its rows
+   * `query(ref(db, collectionPath), orderByChild("serverUpdatedAt"), limitToLast(50))`. Its rows
    * commit without a checkpoint, and the child listeners open after it; it also answers
    * `hasRemoteData`. Offline or refused, it is skipped.
    */
@@ -98,17 +99,6 @@ export interface RealtimeDBSyncCommonAdapterConfig {
   db: Database;
 }
 
-type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, any, any, any>> =
-  Record<
-    Col["name"],
-    {
-      create: InferCollectionInsertModel<Col>;
-      update: InferCollectionUpdateModel<Col>;
-      delete: InferCollectionPrimaryFieldType<Col>;
-      record: InferCollectionSelectModel<Col>;
-    }
-  >;
-
 /**
  * Collection mapping input used by the client-level RTDB adapter. The checkpoint type is
  * inferred from the handlers (`createCheckpoint`, `createPullCheckpoint`).
@@ -120,7 +110,7 @@ export type RealtimeDBCollectionSyncAdapterConfigInput<
   collectionConfig: Col;
   collectionPath: string;
 } & RealtimeDBSyncAdapterCollectionHandlers<
-  CollectionEventMapFromConfig<Col>,
+  EventMapFromCollectionConfig<Col>,
   Col["name"],
   TCheckpoint
 > &
@@ -128,7 +118,7 @@ export type RealtimeDBCollectionSyncAdapterConfigInput<
     InferCollectionPrimaryFieldType<Col>,
     NonNullable<
       RealtimeDBSyncAdapterCollectionHandlers<
-        CollectionEventMapFromConfig<Col>,
+        EventMapFromCollectionConfig<Col>,
         Col["name"],
         TCheckpoint
       >["deserializeDeleteId"]

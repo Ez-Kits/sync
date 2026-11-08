@@ -1,7 +1,5 @@
 export type {
-  DirtyRecord,
-  DirtyRecordKey,
-  DirtyRecordState,
+  RecordKey,
   AtomicLocalChangeStore,
   ILocalChangeStore,
   LocalChangeScope,

@@ -1,8 +1,7 @@
 import {
   APPLIED_EVENT_RETENTION_MS,
   type AtomicLocalChangeStore,
-  type DirtyRecord,
-  type DirtyRecordKey,
+  type RecordKey,
   type LocalChangeScope,
   type RecordRevision,
   type SkippedRemoteEvent,
@@ -38,13 +37,12 @@ export interface TypeOrmCheckpointRow {
 }
 
 /**
- * The predefined outbox, dirty-record, applied-event, checkpoint, skipped-event and revision
+ * The predefined outbox, applied-event, checkpoint, skipped-event and revision
  * entities of one dialect.
  */
 export interface TypeOrmLocalChangeEntities {
   /** `seq` must be a generated primary key and `id` unique. */
   readonly events: EntitySchema<TypeOrmEventRow>;
-  readonly dirtyRecords: EntitySchema<DirtyRecord>;
   /** `eventId` must be the primary key. */
   readonly appliedEvents: EntitySchema<TypeOrmAppliedEventRow>;
   /** `collection` must be the primary key. */
@@ -56,10 +54,10 @@ export interface TypeOrmLocalChangeEntities {
 }
 
 /**
- * Version of the outbox tables the store reads and writes. Released versions stopped at 4;
- * 5 added the `ez_sync_revisions` table.
+ * Version of the outbox tables the store reads and writes. 5 added the `ez_sync_revisions`
+ * table; 6 dropped `ez_sync_dirty_records`.
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const EVENT_FIELDS = ["id", "type", "collection", "data", "recordId", "createdAt"] as const;
 
@@ -74,7 +72,7 @@ async function readSchemaVersion(queryRunner: QueryRunner) {
 }
 
 /**
- * The outbox/dirty-record store of a TypeORM adapter, on the adapter's own data source.
+ * The outbox store of a TypeORM adapter, on the adapter's own data source.
  * Atomic callbacks and sync transactions pass the transaction's entity manager.
  */
 export function createTypeOrmLocalChangeStore(
@@ -84,7 +82,6 @@ export function createTypeOrmLocalChangeStore(
   const managerFor = (transactionContext?: unknown): EntityManager =>
     (transactionContext as EntityManager | undefined) ?? db.manager;
   const eventTarget = entities.events;
-  const dirtyRecordTarget = entities.dirtyRecords;
   const appliedEventTarget = entities.appliedEvents;
   const checkpointTarget = entities.checkpoints;
   const skippedEventTarget = entities.skippedRemoteEvents;
@@ -102,7 +99,6 @@ export function createTypeOrmLocalChangeStore(
       if ((await readSchemaVersion(queryRunner)) >= SCHEMA_VERSION) return;
       for (const target of [
         eventTarget,
-        dirtyRecordTarget,
         appliedEventTarget,
         checkpointTarget,
         skippedEventTarget,
@@ -111,6 +107,7 @@ export function createTypeOrmLocalChangeStore(
         const metadata = db.getMetadata(target);
         await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
       }
+      await queryRunner.query("DROP TABLE IF EXISTS ez_sync_dirty_records");
       await queryRunner.query(
         `INSERT INTO ez_sync_meta (key, value) VALUES ('schema_version', ${SCHEMA_VERSION})
          ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
@@ -171,20 +168,6 @@ export function createTypeOrmLocalChangeStore(
       const repository = managerFor(transactionContext).getRepository(eventTarget);
       for (const id of ids) await repository.delete({ id });
     },
-    async upsertDirtyRecord(record: DirtyRecord, transactionContext) {
-      await managerFor(transactionContext)
-        .getRepository(dirtyRecordTarget)
-        .upsert(record, ["collection", "recordId"]);
-    },
-    async removeDirtyRecords(keys: DirtyRecordKey[], transactionContext) {
-      const repository = managerFor(transactionContext).getRepository(dirtyRecordTarget);
-      for (const key of keys) await repository.delete(key);
-    },
-    async getDirtyRecords(scope, transactionContext) {
-      return managerFor(transactionContext)
-        .getRepository(dirtyRecordTarget)
-        .find(scopeWhere(scope));
-    },
     async getCheckpoint(collection: string, transactionContext) {
       const row = await managerFor(transactionContext)
         .getRepository(checkpointTarget)
@@ -210,12 +193,12 @@ export function createTypeOrmLocalChangeStore(
           "recordId",
         ]);
     },
-    async removeSkippedRemoteEvents(keys: DirtyRecordKey[], transactionContext) {
+    async removeSkippedRemoteEvents(keys: RecordKey[], transactionContext) {
       const repository = managerFor(transactionContext).getRepository(skippedEventTarget);
       for (const { collection, recordId } of keys)
         await repository.delete({ collection, recordId });
     },
-    async getRevision({ collection, recordId }: DirtyRecordKey, transactionContext) {
+    async getRevision({ collection, recordId }: RecordKey, transactionContext) {
       const row = await managerFor(transactionContext)
         .getRepository(revisionTarget)
         .findOneBy({ collection, recordId });

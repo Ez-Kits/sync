@@ -24,6 +24,7 @@ import {
 } from "firebase/firestore";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
 import { firestorePushError, isFirestorePermissionDenied } from "../shared/push-error.ts";
+import { deletedAtFrom, defaultIsDeleted } from "../shared/tombstone.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
@@ -32,23 +33,6 @@ const FIRESTORE_BATCH_LIMIT = 500;
 
 function getSnapshotData(snapshot: QueryDocumentSnapshot<DocumentData>): DocumentData {
   return snapshot.data() ?? {};
-}
-
-function defaultIsDeleted(data: DocumentData): boolean {
-  return data.deleted === true;
-}
-
-function deletedAtFrom(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "toMillis" in value &&
-    typeof value.toMillis === "function"
-  ) {
-    return value.toMillis();
-  }
-  return Date.now();
 }
 
 /** The revision in a document's field; anything but a number is no revision. */
@@ -86,7 +70,9 @@ function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<
       collection: collectionName,
       id,
       deletedAt:
-        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw.deletedAt),
+        collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ??
+        deletedAtFrom(raw) ??
+        (collectionConfig.revisionField === undefined ? Date.now() : undefined),
       ...revision,
     } as unknown as ChangeBusEvent<C, N>;
   }
@@ -120,7 +106,6 @@ export function createFirestoreSyncAdapterFromResolved<
   db: Firestore,
   collections: readonly ResolvedFirestoreSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
   common: {
-    includeMetadataChanges?: boolean;
     checkpointSerializer?: CheckpointSerializer<TCheckpoint>;
   } = {},
 ): SyncAdapter<C, N, TCheckpoint> {
@@ -323,10 +308,9 @@ export function createFirestoreSyncAdapterFromResolved<
           const deletedAt = event.deletedAt ?? Date.now();
           const payload = collectionConfig.serializeDelete
             ? collectionConfig.serializeDelete(event.id as C[N]["delete"], { deletedAt })
-            : ({
-                deleted: true,
-                deletedAt,
-              } satisfies DocumentData);
+            : ((revisionField === undefined
+                ? { deleted: true, deletedAt }
+                : { deleted: true }) satisfies DocumentData);
           enqueueSet(event, collectionPath, id, withRevision(payload), { merge: true });
           continue;
         }

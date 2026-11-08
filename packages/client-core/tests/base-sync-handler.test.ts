@@ -95,7 +95,7 @@ test("base handler propagates fallback reads and inserts only for an explicit ab
   expect(db.update).toHaveBeenCalledWith("todos", { id: 8, title: "exists" });
 });
 
-test("base handler maps pending events and maintains dirty state after acknowledgements", async () => {
+test("base handler maps pending events and removes them on acknowledgement", async () => {
   const { handler, localChangeStore } = fixture();
   await localChangeStore.appendEvents([
     { id: "c", type: "create", collection: "todos", recordId: "1", data: { id: 1 }, createdAt: 1 },
@@ -108,7 +108,6 @@ test("base handler maps pending events and maintains dirty state after acknowled
   expect((await handler.collectAll()).length).toBe(2);
   await handler.ack([{ type: "create", collection: "todos", data: { id: 1 }, eventId: "c" }]);
   expect(await localChangeStore.getPendingEvents()).toHaveLength(1);
-  expect(await localChangeStore.getDirtyRecords()).toEqual([]);
   await handler.ack([{ type: "delete", collection: "todos", id: 2, eventId: "d" }]);
   expect(await localChangeStore.getPendingEvents()).toHaveLength(0);
 });
@@ -129,7 +128,7 @@ test("pending deletes push the id with the type it was written with", async () =
   expect((await handler.collect()).map((event: any) => event.id)).toEqual(["123", 5]);
 });
 
-test("acknowledging one of several changes preserves the latest dirty state", async () => {
+test("acknowledging one of several changes keeps the later ones pending", async () => {
   const { handler, localChangeStore } = fixture();
   await localChangeStore.appendEvents([
     {
@@ -142,71 +141,30 @@ test("acknowledging one of several changes preserves the latest dirty state", as
     },
     { id: "new", type: "delete", collection: "todos", data: null, recordId: "1", createdAt: 2 },
   ]);
-  await localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
   await handler.ack([{ type: "create", collection: "todos", data: { id: 1 }, eventId: "old" }]);
   expect(await localChangeStore.getPendingEvents()).toHaveLength(1);
-  expect((await localChangeStore.getDirtyRecords())[0]?.state).toBe("deleted");
-});
-
-test("acknowledging an older event keeps the latest dirty record state", async () => {
-  const { handler, localChangeStore } = fixture();
-  await localChangeStore.appendEvents([
-    {
-      id: "old",
-      type: "create",
-      collection: "todos",
-      recordId: "1",
-      data: { id: 1 },
-      createdAt: 1,
-    },
-    {
-      id: "new",
-      type: "update",
-      collection: "todos",
-      recordId: "1",
-      data: { id: 1 },
-      createdAt: 2,
-    },
-  ]);
-  await handler.ack([{ type: "create", collection: "todos", data: { id: 1 }, eventId: "old" }]);
-  expect((await localChangeStore.getDirtyRecords())[0]?.state).toBe("dirty");
 });
 
 test("conflict resolution ignores clean rows and supports local, remote, merged and delete decisions", async () => {
   const { handler, localChangeStore, db } = fixture({ resolveConflict: vi.fn(() => "local") });
   const update = { type: "update", collection: "todos", data: { id: 1, title: "remote" } };
   expect(await handler.resolve(update)).toEqual({ event: update, needsPush: false });
-  await localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await localChangeStore.appendEvents([
+    { id: "pending-2", type: "update", collection: "todos", recordId: "1", data: {}, createdAt: 1 },
+  ]);
   expect(await handler.resolve(update)).toEqual({ needsPush: false });
   const remoteResolver = vi.fn(() => "remote");
   const remote = fixture({ resolveConflict: remoteResolver });
-  await remote.localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await remote.localChangeStore.appendEvents([
+    { id: "pending-3", type: "update", collection: "todos", recordId: "1", data: {}, createdAt: 1 },
+  ]);
   expect(await remote.handler.resolve(update)).toEqual({ event: update, needsPush: false });
-  expect(await remote.localChangeStore.getDirtyRecords()).toEqual([]);
   const merge = fixture({
     resolveConflict: () => ({ data: { id: 1, title: "merged" } }),
   });
-  await merge.localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await merge.localChangeStore.appendEvents([
+    { id: "pending-4", type: "update", collection: "todos", recordId: "1", data: {}, createdAt: 1 },
+  ]);
   expect(await merge.handler.resolve(update)).toEqual({
     event: { ...update, data: { id: 1, title: "merged" } },
     needsPush: true,
@@ -221,12 +179,9 @@ test("conflict resolution ignores clean rows and supports local, remote, merged 
     expect.objectContaining({ type: "create", recordId: "1", data: { id: 1, title: "merged" } }),
   ]);
   db.getOptional.mockRejectedValueOnce(new Error("read unavailable"));
-  await localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 2,
-  });
+  await localChangeStore.appendEvents([
+    { id: "pending-5", type: "update", collection: "todos", recordId: "1", data: {}, createdAt: 2 },
+  ]);
   await expect(handler.resolve(update)).rejects.toThrow("read unavailable");
 });
 
@@ -239,12 +194,16 @@ test("conflict resolution considers pending outbox writes and checkpoints only d
   ]);
   const event = { type: "update", collection: "todos", data: { id: 5 } };
   expect(await handler.resolve(event)).toEqual({ needsPush: false });
-  await localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "not-numeric",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await localChangeStore.appendEvents([
+    {
+      id: "pending-6",
+      type: "update",
+      collection: "todos",
+      recordId: "not-numeric",
+      data: {},
+      createdAt: 1,
+    },
+  ]);
   await handler.resolve({
     type: "update",
     collection: "todos",
@@ -293,12 +252,16 @@ test("missing conflict resolver and recovered push queue both use their fallback
     const event = { type: "update", collection: "todos", data: { id: 1 } };
     expect(await handler.resolve(event)).toEqual({ event, needsPush: false });
     // Without a resolver, a record with pending local writes keeps its local state.
-    await localChangeStore.upsertDirtyRecord({
-      collection: "todos",
-      recordId: "1",
-      state: "deleted",
-      updatedAt: 1,
-    });
+    await localChangeStore.appendEvents([
+      {
+        id: "pending-7",
+        type: "update",
+        collection: "todos",
+        recordId: "1",
+        data: {},
+        createdAt: 1,
+      },
+    ]);
     expect(await handler.resolve(event)).toEqual({ needsPush: false });
     const controller = new AbortController();
     const first = handler.push(
@@ -330,12 +293,9 @@ test("conflict resolver falls back to get and missing primary-field metadata use
     resolveConflict: vi.fn(() => "remote"),
   });
   noOptional.db.getOptional = undefined as never;
-  await noOptional.localChangeStore.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await noOptional.localChangeStore.appendEvents([
+    { id: "pending-8", type: "update", collection: "todos", recordId: "1", data: {}, createdAt: 1 },
+  ]);
   expect(
     await noOptional.handler.resolve({ type: "update", collection: "todos", data: { id: 1 } }),
   ).toBeTruthy();

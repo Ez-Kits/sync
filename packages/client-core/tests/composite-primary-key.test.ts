@@ -77,12 +77,9 @@ test("collection runtime writes composite keys to the outbox", async () => {
   const pending = await store.getPendingEvents("items");
   expect(pending.map(({ recordId }) => recordId)).toEqual(['["l1",1]', '["l1",1]', '["l1",1]']);
   expect(pending[2]).toMatchObject({ type: "delete", data: { id: { listId: "l1", position: 1 } } });
-  expect(await store.getDirtyRecords("items")).toEqual([
-    expect.objectContaining({ recordId: '["l1",1]', state: "deleted" }),
-  ]);
 });
 
-test("sync handler matches pulled composite events to dirty records and reads them by key", async () => {
+test("sync handler matches pulled composite events to pending writes and reads them by key", async () => {
   const db = {
     get: vi.fn(async () => ({ listId: "l1", position: 1, label: "local" })),
     transaction: vi.fn(),
@@ -103,12 +100,16 @@ test("sync handler matches pulled composite events to dirty records and reads th
     localChangeStore,
     resolveConflict,
   } as never);
-  await localChangeStore.upsertDirtyRecord({
-    collection: "items",
-    recordId: '["l1",1]',
-    state: "dirty",
-    updatedAt: 1,
-  });
+  await localChangeStore.appendEvents([
+    {
+      id: "pending-9",
+      type: "update",
+      collection: "items",
+      recordId: '["l1",1]',
+      data: {},
+      createdAt: 1,
+    },
+  ]);
 
   const update = {
     type: "update",

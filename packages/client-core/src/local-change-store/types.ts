@@ -1,5 +1,3 @@
-export type DirtyRecordState = "dirty" | "deleted";
-
 export interface StoredChangeBusEvent {
   id: string;
   type: "create" | "update" | "delete";
@@ -9,7 +7,7 @@ export interface StoredChangeBusEvent {
    * with its own type (`recordId` is always a string). Outboxes written before this hold `null`.
    */
   data: unknown;
-  /** Stringified primary key for indexing and dirty tracking. */
+  /** Stringified primary key for indexing. */
   recordId: string;
   createdAt: number;
 }
@@ -17,14 +15,7 @@ export interface StoredChangeBusEvent {
 /** A pending outbox event without its data (see `ILocalChangeStore.getPendingEventKeys`). */
 export type PendingEventKey = Pick<StoredChangeBusEvent, "id" | "collection">;
 
-export interface DirtyRecord {
-  collection: string;
-  recordId: string;
-  state: DirtyRecordState;
-  updatedAt: number;
-}
-
-export interface DirtyRecordKey {
+export interface RecordKey {
   collection: string;
   recordId: string;
 }
@@ -48,7 +39,7 @@ export interface RecordRevision {
 }
 
 /** What a local-change read covers: a collection by name, or one record of a collection. */
-export type LocalChangeScope = string | DirtyRecordKey;
+export type LocalChangeScope = string | RecordKey;
 
 /**
  * How long a store keeps the record that an event was applied, counted from its
@@ -57,7 +48,7 @@ export type LocalChangeScope = string | DirtyRecordKey;
 export const APPLIED_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The outbox, dirty records and the sync state that must survive with them: pull
+ * The outbox and the sync state that must survive with them: pull
  * checkpoints, skipped remote events and record revisions. Every method takes an optional
  * `transactionContext`: the `native` handle of a `DBAdapterTransactionContext`. With it the
  * call runs in that transaction; without it, on its own, after any open transaction ends.
@@ -91,15 +82,6 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
    */
   getPendingEventKeys?(transactionContext?: TTransactionContext): Promise<PendingEventKey[]>;
   deleteEvents(ids: string[], transactionContext?: TTransactionContext): Promise<void>;
-  upsertDirtyRecord(record: DirtyRecord, transactionContext?: TTransactionContext): Promise<void>;
-  removeDirtyRecords(
-    keys: DirtyRecordKey[],
-    transactionContext?: TTransactionContext,
-  ): Promise<void>;
-  getDirtyRecords(
-    scope?: LocalChangeScope,
-    transactionContext?: TTransactionContext,
-  ): Promise<DirtyRecord[]>;
   /** A collection's serialized pull checkpoint (see `SyncClientConfig.checkpointSerializer`). */
   getCheckpoint(
     collection: string,
@@ -121,12 +103,12 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
     transactionContext?: TTransactionContext,
   ): Promise<void>;
   removeSkippedRemoteEvents(
-    keys: DirtyRecordKey[],
+    keys: RecordKey[],
     transactionContext?: TTransactionContext,
   ): Promise<void>;
   /** The last revision seen of a record, `undefined` when none was. Outlives a local delete. */
   getRevision(
-    key: DirtyRecordKey,
+    key: RecordKey,
     transactionContext?: TTransactionContext,
   ): Promise<number | undefined>;
   /** Insert or replace the revision of `entry`'s record. */

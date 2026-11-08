@@ -104,14 +104,12 @@ for (const scope of ["global", "collection"] as const) {
     f.streams[0]!.options.commitChanges({ changes: [remoteUpdate("remote")], checkpoint: {} });
     await vi.waitFor(() => expect(f.rows.get("1")?.title).toBe("remote"));
     expect(await f.store.getPendingEvents()).toEqual([]);
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     const deleteEvents = vi.spyOn(f.store, "deleteEvents");
     release();
     await settle();
     // Its acknowledgement of a removed event leaves the outbox empty and clean.
     expect(deleteEvents).toHaveBeenCalledWith(["e1"], f.native);
     expect(await f.store.getPendingEvents()).toEqual([]);
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     expect(f.pushed).toHaveLength(1);
     expect(f.onSyncError).not.toHaveBeenCalled();
     f.stop();
@@ -137,20 +135,16 @@ for (const scope of ["global", "collection"] as const) {
     const mergedId = pending[0]!.id;
     expect(["e1", "e2"]).not.toContain(mergedId);
     expect(appendEvents).toHaveBeenCalledWith(pending, f.native);
-    expect(await f.store.getDirtyRecords()).toEqual([
-      expect.objectContaining({ recordId: "1", state: "dirty" }),
-    ]);
     expect(f.published.at(-1)).toEqual([{ ...remoteUpdate("remote"), data: merged }]);
     expect(f.onRemoteChangesCommitted).toHaveBeenCalledWith([
       { ...remoteUpdate("remote"), data: merged },
     ]);
 
-    // Acknowledging the in-flight e1/e2 keeps the merged event and its dirty record.
+    // Acknowledging the in-flight e1/e2 keeps the merged event.
     let outboxBeforeSecondPush: unknown;
     f.adapter.push.mockImplementationOnce(async ({ events, commitChanges }: any) => {
       outboxBeforeSecondPush = {
         pending: await f.store.getPendingEvents(),
-        dirty: await f.store.getDirtyRecords(),
       };
       f.pushed.push(events);
       await commitChanges({ events });
@@ -159,13 +153,11 @@ for (const scope of ["global", "collection"] as const) {
     await vi.waitFor(() => expect(f.pushed).toHaveLength(2));
     expect(outboxBeforeSecondPush).toEqual({
       pending,
-      dirty: [expect.objectContaining({ recordId: "1", state: "dirty" })],
     });
     expect(f.pushed[1]).toEqual([
       { type: "update", collection: "todos", data: merged, eventId: mergedId },
     ]);
     await vi.waitFor(async () => expect(await f.store.getPendingEvents()).toEqual([]));
-    expect(await f.store.getDirtyRecords()).toEqual([]);
     f.stop();
   });
 
@@ -190,9 +182,6 @@ for (const scope of ["global", "collection"] as const) {
     );
     expect(f.rows.get("1")).toEqual(merged);
     expect(f.published.at(-1)).toEqual([{ type: "create", collection: "todos", data: merged }]);
-    expect(await f.store.getDirtyRecords()).toEqual([
-      expect.objectContaining({ recordId: "1", state: "dirty" }),
-    ]);
     f.stop();
   });
 
@@ -256,7 +245,6 @@ for (const scope of ["global", "collection"] as const) {
       // Applied in the acknowledgement's own transaction, which left the record clean.
       expect(f.db.transaction).toHaveBeenCalledTimes(transactions + 1);
       expect(f.rows.get("1")).toEqual({ id: 1, title: "local", updatedAt: 100 });
-      expect(await f.store.getDirtyRecords()).toEqual([]);
       expect(f.published.at(-1)).toEqual([echo("local", 100)]);
       expect(f.onRemoteChangesCommitted).toHaveBeenCalledExactlyOnceWith([echo("local", 100)]);
       f.stop();
@@ -385,7 +373,6 @@ for (const scope of ["global", "collection"] as const) {
     await vi.waitFor(() => expect(f.checkpoints.get("todos")).toBe("c1"));
     // The pending write leaves the outbox without an acknowledgement of this handler.
     await f.store.deleteEvents(["e1"]);
-    await f.store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
     expect(await f.store.getSkippedRemoteEvents()).toEqual([
       { collection: "todos", recordId: "1", event: remoteUpdate("first") },
     ]);

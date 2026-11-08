@@ -28,7 +28,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("collection runtime persists outbox and dirty records before publishing, and delegates reads", async () => {
+test("collection runtime persists the outbox before publishing, and delegates reads", async () => {
   const db = makeDb();
   const store = atomicMemoryStore();
   const bus = new ChangeBus<any>();
@@ -50,7 +50,6 @@ test("collection runtime persists outbox and dirty records before publishing, an
       expect.objectContaining({ type: "delete", recordId: "1", data: { id: "1" } }),
     ]),
   );
-  expect((await store.getDirtyRecords("todos"))[0]?.state).toBe("deleted");
   const published = listener.mock.calls.flatMap(([events]) => events as any[]);
   expect(published.map((e) => e.type)).toEqual(["create", "update", "delete"]);
   expect(published.at(-1)).toMatchObject({ id: "1", deletedAt: expect.any(Number) });
@@ -62,18 +61,15 @@ test("collection runtime persists outbox and dirty records before publishing, an
 test("collection runtime commits database mutation before persisting local change state", async () => {
   const order: string[] = [];
   const db = makeDb();
-  db.commitLocalMutation = vi.fn(
-    async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
-      await db.transaction(async (tx: any) => {
-        const context = { operations: tx, native: tx };
-        await mutate(context);
-        order.push("row-write");
-        await persistOutboxEvent(context);
-        await persistDirtyRecord(context);
-      });
-      order.push("db-commit");
-    },
-  );
+  db.commitLocalMutation = vi.fn(async ({ mutate, persistOutboxEvent }: any) => {
+    await db.transaction(async (tx: any) => {
+      const context = { operations: tx, native: tx };
+      await mutate(context);
+      order.push("row-write");
+      await persistOutboxEvent(context);
+    });
+    order.push("db-commit");
+  });
   const backingStore = createTestLocalChangeStore();
   const store = {
     ...backingStore,
@@ -81,10 +77,6 @@ test("collection runtime commits database mutation before persisting local chang
     appendEvents: vi.fn(async (events: any[]) => {
       order.push("outbox");
       await backingStore.appendEvents(events);
-    }),
-    upsertDirtyRecord: vi.fn(async (record: any) => {
-      order.push("dirty");
-      await backingStore.upsertDirtyRecord(record);
     }),
   };
   const runtime = new CollectionRuntime(
@@ -94,10 +86,7 @@ test("collection runtime commits database mutation before persisting local chang
   );
   await runtime.insert({ id: "transactional" } as never);
   expect(db.commitLocalMutation).toHaveBeenCalledOnce();
-  expect(order).toEqual(["row-write", "outbox", "dirty", "db-commit"]);
-  expect(await store.getDirtyRecords("todos")).toMatchObject([
-    { recordId: "transactional", state: "dirty" },
-  ]);
+  expect(order).toEqual(["row-write", "outbox", "db-commit"]);
   db.insert.mockRejectedValueOnce(new Error("db failure"));
   order.length = 0;
   await expect(runtime.insert({ id: "bad" } as never)).rejects.toThrow("db failure");
@@ -392,7 +381,6 @@ test("writes to collections no sync adapter handles stay out of the outbox", asy
   await client.collections.notes.insert({ id: "3" } as never);
   const pending = await db.localChangeStore.getPendingEvents();
   expect(pending.map((event: any) => event.collection)).toEqual(["todos", "notes"]);
-  expect(await db.localChangeStore.getDirtyRecords("drafts")).toEqual([]);
   // Still recorded as applied, so a retried local-only write is not applied twice.
   const draft = published.find((event) => event.collection === "drafts");
   expect(await db.localChangeStore.hasAppliedEvent(draft.eventId)).toBe(true);

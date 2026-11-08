@@ -1,7 +1,6 @@
 import {
   APPLIED_EVENT_RETENTION_MS,
-  type DirtyRecord,
-  type DirtyRecordKey,
+  type RecordKey,
   type AtomicLocalChangeStore,
   type LocalChangeScope,
   type SkippedRemoteEvent,
@@ -31,13 +30,6 @@ export type DrizzleEventTable = Table & {
   data: Column;
   recordId: Column;
   createdAt: Column;
-};
-
-export type DrizzleDirtyRecordTable = Table & {
-  collection: Column;
-  recordId: Column;
-  state: Column;
-  updatedAt: Column;
 };
 
 /** The `id`s of appended events, kept after acknowledgement so retries can find them. */
@@ -82,14 +74,12 @@ export type DrizzleRevisionTable = Table & {
 
 export interface DrizzleLocalChangeStoreTables<
   TEvents extends DrizzleEventTable,
-  TDirtyRecords extends DrizzleDirtyRecordTable,
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
   TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 > {
   events: TEvents;
-  dirtyRecords: TDirtyRecords;
   appliedEvents: TAppliedEvents;
   checkpoints: TCheckpoints;
   skippedRemoteEvents: TSkippedRemoteEvents;
@@ -99,7 +89,6 @@ export interface DrizzleLocalChangeStoreTables<
 export interface DrizzleLocalChangeStoreConfig<
   TDb,
   TEvents extends DrizzleEventTable,
-  TDirtyRecords extends DrizzleDirtyRecordTable,
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
@@ -108,7 +97,6 @@ export interface DrizzleLocalChangeStoreConfig<
   db: TDb;
   tables: DrizzleLocalChangeStoreTables<
     TEvents,
-    TDirtyRecords,
     TAppliedEvents,
     TCheckpoints,
     TSkippedRemoteEvents,
@@ -123,20 +111,17 @@ export interface DrizzleLocalChangeStoreConfig<
 /** `seq` must be database-assigned: an insert of a {@link StoredChangeBusEvent} omits it. */
 export type DrizzleSchemaTypeCheck<
   TEvents extends DrizzleEventTable,
-  TDirtyRecords extends DrizzleDirtyRecordTable,
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
   TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 > =
   StoredChangeBusEvent extends InferInsertModel<TEvents>
-    ? DirtyRecord extends InferInsertModel<TDirtyRecords>
-      ? DrizzleAppliedEvent extends InferInsertModel<TAppliedEvents>
-        ? DrizzleCheckpoint extends InferInsertModel<TCheckpoints>
-          ? SkippedRemoteEvent extends InferInsertModel<TSkippedRemoteEvents>
-            ? RecordRevision extends InferInsertModel<TRevisions>
-              ? []
-              : [schemaError: never]
+    ? DrizzleAppliedEvent extends InferInsertModel<TAppliedEvents>
+      ? DrizzleCheckpoint extends InferInsertModel<TCheckpoints>
+        ? SkippedRemoteEvent extends InferInsertModel<TSkippedRemoteEvents>
+          ? RecordRevision extends InferInsertModel<TRevisions>
+            ? []
             : [schemaError: never]
           : [schemaError: never]
         : [schemaError: never]
@@ -144,13 +129,12 @@ export type DrizzleSchemaTypeCheck<
     : [schemaError: never];
 
 /**
- * Create an outbox/dirty-record store in the same Drizzle database as the
+ * Create an outbox store in the same Drizzle database as the
  * collection adapter. Pass the transaction handle through atomic callbacks.
  */
 export function createDrizzleLocalChangeStore<
   TDb,
   TEvents extends DrizzleEventTable,
-  TDirtyRecords extends DrizzleDirtyRecordTable,
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
@@ -159,44 +143,30 @@ export function createDrizzleLocalChangeStore<
   config: DrizzleLocalChangeStoreConfig<
     TDb,
     TEvents,
-    TDirtyRecords,
     TAppliedEvents,
     TCheckpoints,
     TSkippedRemoteEvents,
     TRevisions
   >,
-  ...typeCheck: DrizzleSchemaTypeCheck<
-    TEvents,
-    TDirtyRecords,
-    TAppliedEvents,
-    TCheckpoints,
-    TSkippedRemoteEvents
-  >
+  ...typeCheck: DrizzleSchemaTypeCheck<TEvents, TAppliedEvents, TCheckpoints, TSkippedRemoteEvents>
 ): AtomicLocalChangeStore {
   void typeCheck;
   const { db, tables, initialize } = config;
   const events = tables.events;
-  const dirty = tables.dirtyRecords;
   const applied = tables.appliedEvents;
   const checkpoints = tables.checkpoints;
   const skipped = tables.skippedRemoteEvents;
   const revisions = tables.revisions;
-  const eventColumns = getColumns(events);
-  const dirtyColumns = getColumns(dirty);
-  const appliedColumns = getColumns(applied);
-  const checkpointColumns = getColumns(checkpoints);
-  const skippedColumns = getColumns(skipped);
-  const revisionColumns = getColumns(revisions);
-
   const dbFor = (transactionContext?: unknown): any => transactionContext ?? db;
-  const eventColumn = (key: string) => eventColumns[key as keyof typeof eventColumns] as any;
-  const dirtyColumn = (key: string) => dirtyColumns[key as keyof typeof dirtyColumns] as any;
-  const appliedColumn = (key: string) => appliedColumns[key as keyof typeof appliedColumns] as any;
-  const checkpointColumn = (key: string) =>
-    checkpointColumns[key as keyof typeof checkpointColumns] as any;
-  const skippedColumn = (key: string) => skippedColumns[key as keyof typeof skippedColumns] as any;
-  const revisionColumn = (key: string) =>
-    revisionColumns[key as keyof typeof revisionColumns] as any;
+  const columnsOf = (table: Table) => {
+    const columns = getColumns(table);
+    return (key: string) => columns[key as keyof typeof columns] as any;
+  };
+  const eventColumn = columnsOf(events);
+  const appliedColumn = columnsOf(applied);
+  const checkpointColumn = columnsOf(checkpoints);
+  const skippedColumn = columnsOf(skipped);
+  const revisionColumn = columnsOf(revisions);
   /** Insert `values`, or update `set` on the row with the same `target` key. */
   const upsert = async (
     transactionContext: unknown,
@@ -279,26 +249,6 @@ export function createDrizzleLocalChangeStore<
         .delete(events)
         .where(inArray(eventColumn("id"), ids));
     },
-    async upsertDirtyRecord(record: DirtyRecord, transactionContext) {
-      await upsert(
-        transactionContext,
-        dirty,
-        { ...record },
-        [dirtyColumn("collection"), dirtyColumn("recordId")],
-        { state: record.state, updatedAt: record.updatedAt },
-      );
-    },
-    async removeDirtyRecords(keys: DirtyRecordKey[], transactionContext) {
-      for (const key of keys) {
-        await dbFor(transactionContext).delete(dirty).where(scopeWhere(dirtyColumn, key));
-      }
-    },
-    async getDirtyRecords(scope, transactionContext) {
-      const query = dbFor(transactionContext).select().from(dirty);
-      const rows =
-        scope === undefined ? await query : await query.where(scopeWhere(dirtyColumn, scope));
-      return rows as DirtyRecord[];
-    },
     async getCheckpoint(collection: string, transactionContext) {
       const rows = await dbFor(transactionContext)
         .select({ value: checkpointColumn("value") })
@@ -343,12 +293,12 @@ export function createDrizzleLocalChangeStore<
         { event },
       );
     },
-    async removeSkippedRemoteEvents(keys: DirtyRecordKey[], transactionContext) {
+    async removeSkippedRemoteEvents(keys: RecordKey[], transactionContext) {
       for (const key of keys) {
         await dbFor(transactionContext).delete(skipped).where(scopeWhere(skippedColumn, key));
       }
     },
-    async getRevision(key: DirtyRecordKey, transactionContext) {
+    async getRevision(key: RecordKey, transactionContext) {
       const rows = await dbFor(transactionContext)
         .select({ rev: revisionColumn("rev") })
         .from(revisions)
