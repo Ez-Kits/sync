@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.0](https://github.com/Ez-Kits/sync/compare/sync-client-react-v0.1.4...sync-client-react-v0.2.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client-core:** report live query failures and skip unchanged results ([#20](https://github.com/Ez-Kits/sync/issues/20))
+* add per-record revisions to detect sync conflicts exactly ([#21](https://github.com/Ez-Kits/sync/issues/21))
+
+### Features
+
+* add per-record revisions to detect sync conflicts exactly ([#21](https://github.com/Ez-Kits/sync/issues/21)) ([4e60167](https://github.com/Ez-Kits/sync/commit/4e60167a5badd2ded5f5dde9d75e4357b0fc1887))
+* **client-core:** report live query failures and skip unchanged results ([#20](https://github.com/Ez-Kits/sync/issues/20)) ([309f7a2](https://github.com/Ez-Kits/sync/commit/309f7a2adef78711c2a763aa454e6cef9f6b92ec))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+
 ## [0.1.4](https://github.com/Ez-Kits/sync/compare/sync-client-react-v0.1.3...sync-client-react-v0.1.4) (2026-11-07)
 
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/Ez-Kits/sync/compare/sync-client-typeorm-adapter-v0.2.1...sync-client-typeorm-adapter-v0.3.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* add per-record revisions to detect sync conflicts exactly ([#21](https://github.com/Ez-Kits/sync/issues/21))
+
+### Features
+
+* add per-record revisions to detect sync conflicts exactly ([#21](https://github.com/Ez-Kits/sync/issues/21)) ([4e60167](https://github.com/Ez-Kits/sync/commit/4e60167a5badd2ded5f5dde9d75e4357b0fc1887))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+    * @ez-kits/sync-client-storage-pglite bumped to 0.0.6
+    * @ez-kits/sync-client-storage-sqljs bumped to 0.0.6
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+
 ## [0.2.1](https://github.com/Ez-Kits/sync/compare/sync-client-typeorm-adapter-v0.2.0...sync-client-typeorm-adapter-v0.2.1) (2026-11-07)
 
 
