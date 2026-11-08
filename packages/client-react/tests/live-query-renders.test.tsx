@@ -19,9 +19,6 @@ function setup() {
       hasAppliedEvent: async () => false,
       getPendingEvents: async () => [],
       deleteEvents: async () => {},
-      upsertDirtyRecord: async () => {},
-      removeDirtyRecords: async () => {},
-      getDirtyRecords: async () => [],
       getCheckpoint: async () => undefined,
       saveCheckpoint: async () => {},
       getSkippedRemoteEvents: async () => [],
@@ -36,11 +33,10 @@ function setup() {
     get: async () => undefined,
     getMany: async () => [],
     transaction: async (fn: (tx: any) => Promise<unknown>) => fn(db),
-    commitLocalMutation: async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
+    commitLocalMutation: async ({ mutate, persistOutboxEvent }: any) => {
       const context = { operations: db, native: db };
       await mutate(context);
       await persistOutboxEvent(context);
-      await persistDirtyRecord(context);
     },
   };
   const client = createSyncClientReact({

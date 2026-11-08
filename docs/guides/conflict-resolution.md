@@ -10,7 +10,7 @@ Records **without** unpushed local writes are never in conflict: they always tak
 
 ## The default: local wins
 
-Without a resolver, the **local** writes win. The remote change is set aside, and the local writes are pushed over it. This is predictable and never loses what the user just typed on this device, but the other device's edit is overwritten.
+Without a resolver, the **local** writes win. The remote change is set aside, the local writes are pushed over it, and the kept change is applied once the server has confirmed them ([details](#what-happens-after-a-decision)). This never loses what the user just typed on this device, but where both devices wrote the same fields the other device's edit is overwritten.
 
 ## Choosing a policy
 
@@ -22,7 +22,7 @@ npm install @ez-kits/sync-client-conflict-resolution
 
 ### Last write wins (recommended for most apps)
 
-The newer edit wins, by a version you choose, typically an `updatedAt` timestamp you set on every write:
+The newer edit wins, by a version you choose, typically an `updatedAt` timestamp you set on every write. Device clocks can disagree, so use [revisions](#exact-conflicts-with-revisions) when you need to detect conflicts without them:
 
 ```ts
 import { lastWriteWins } from "@ez-kits/sync-client-conflict-resolution";

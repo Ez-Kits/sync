@@ -37,7 +37,7 @@ client.startSync();
 
 What this does:
 
-- **Push**: a create replaces the record node; an update merges the changed fields into it; a delete merges a tombstone (`deleted: true`, `deletedAt`). All writes of one push go out as **one multipath `update`** where possible, and several writes to the same record are folded into one.
+- **Push**: a create replaces the record node; an update merges the changed fields into it; a delete merges a tombstone (`deleted: true`, and `deletedAt` without `revisionField`). All writes of one push go out as **one multipath `update`** where possible, and several writes to the same record are folded into one.
 - **Pull**: listens with `onChildAdded`, `onChildChanged` and `onChildRemoved` on the collection path, and applies each change.
 
 ## Pull only what changed
@@ -95,7 +95,7 @@ Use `limitToLast(1)` when you only need `hasRemoteData`. See [First sync and pul
 
 ## Deletes
 
-Like the Firestore adapter, deletes are **tombstones** by default: the node gets `deleted: true` and `deletedAt` (milliseconds) merged in, and stays. Other devices see the change and delete their local row. A node that is really removed (`onChildRemoved`) is also applied as a delete.
+Like the Firestore adapter, deletes are **tombstones** by default: the node gets `deleted: true` and `deletedAt` (milliseconds; left out with `revisionField`) merged in, and stays. Other devices see the change and delete their local row. A node that is really removed (`onChildRemoved`) is also applied as a delete.
 
 Change this with `serializeDelete`, `isDeleted`, `resolveDeletedAt` and `deserializeDeleteId`; they work like their [Firestore counterparts](firestore.md#deletes).
 

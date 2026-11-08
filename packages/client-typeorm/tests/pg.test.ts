@@ -65,7 +65,6 @@ test("a sync client writes through the adapter, its outbox created by the adapte
   ).toEqual([
     "ez_sync_applied_events",
     "ez_sync_checkpoints",
-    "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
     "ez_sync_revisions",
@@ -85,10 +84,6 @@ test("a sync client writes through the adapter, its outbox created by the adapte
   const created = pending.find((event) => event.type === "create" && event.recordId === "a")!;
   expect(created.data).toEqual({ id: "a", title: "first" });
   expect(typeof created.createdAt).toBe("number");
-  expect(await adapter.localChangeStore.getDirtyRecords("todos")).toEqual([
-    expect.objectContaining({ recordId: "a", state: "dirty", updatedAt: expect.any(Number) }),
-    expect.objectContaining({ recordId: "b", state: "deleted" }),
-  ]);
 
   // A failing write leaves neither the row nor its outbox event behind.
   await expect(client.collections.todos.insert({ id: "a", title: "duplicate" })).rejects.toThrow();

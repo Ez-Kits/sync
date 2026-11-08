@@ -15,7 +15,7 @@ sync client (@ez-kits/sync-client-core)
    ├──────────────► SyncAdapter (provider: @ez-kits/sync-client-firebase, ...)
    ▼
 DB adapter (ORM bridge: Drizzle, TypeORM)
-   │  collection CRUD · local-change store (outbox, dirty records, checkpoints, skipped remote events, revisions)
+   │  collection CRUD · local-change store (outbox, checkpoints, skipped remote events, revisions)
    ▼
 DBStorage (contract: exec, transaction, dialect, role)
    │  leader election and forwarding across tabs
@@ -89,15 +89,15 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 - **Status:** Accepted
 - **Date:** 2026-10-25 (cb9a3d6)
 
-**Context.** A local-first write has three parts: the row, the outbox event that will push it, and the dirty-record state that protects it from being overwritten by a pull. If any part can persist without the others, a crash loses a write or pushes one that never happened locally.
+**Context.** A local-first write has two parts: the row and the outbox event that will push it, which also protects it from being overwritten by a pull. If either part can persist without the other, a crash loses a write or pushes one that never happened locally.
 
-**Decision.** `commitLocalMutation` is required on every adapter and runs the row mutation, the outbox append and the dirty-record update in one storage transaction. The change bus is notified only after commit. The sync client refuses adapters without a `DBStorage` or an `AtomicLocalChangeStore` (`atomicLocalMutationCapability: "atomic"`); there is no default outbox and no best-effort path.
+**Decision.** `commitLocalMutation` is required on every adapter and runs the row mutation and the outbox append in one storage transaction. The change bus is notified only after commit. The sync client refuses adapters without a `DBStorage` or an `AtomicLocalChangeStore` (`atomicLocalMutationCapability: "atomic"`); there is no default outbox and no best-effort path.
 
 **Consequences.**
 
 - The outbox must live in the same database as the rows, which rules out keeping it in localStorage or a separate store.
 - Adapter authors carry more responsibility, but core never has to repair a half-written mutation.
-- A write to a collection no sync adapter covers would sit in the outbox forever, so it leaves none: its event is appended and deleted in the same transaction, which still records it as applied (ADR-8), and it marks no dirty record.
+- A write to a collection no sync adapter covers would sit in the outbox forever, so it leaves none: its event is appended and deleted in the same transaction, which still records it as applied (ADR-8).
 
 ## ADR-4: The local-change store owns its schema
 
@@ -106,7 +106,7 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 
 **Context.** The outbox tables are library internals that change between versions. Asking applications to create and migrate them invites drift and broken upgrades.
 
-**Decision.** Every store implements `initialize()`, which creates missing tables and records the schema version in `ez_sync_meta`. It must be idempotent and safe to run from several tabs at once. The sync client calls it once the storage is ready, in every context, and blocks every read, write, live query and sync on it. Tables: `ez_sync_events`, `ez_sync_dirty_records`, `ez_sync_applied_events`, `ez_sync_checkpoints`, `ez_sync_skipped_remote_events` and `ez_sync_revisions`.
+**Decision.** Every store implements `initialize()`, which creates missing tables and records the schema version in `ez_sync_meta`. It must be idempotent and safe to run from several tabs at once. The sync client calls it once the storage is ready, in every context, and blocks every read, write, live query and sync on it. Tables: `ez_sync_events`, `ez_sync_applied_events`, `ez_sync_checkpoints`, `ez_sync_skipped_remote_events` and `ez_sync_revisions`.
 
 **Consequences.**
 
@@ -174,7 +174,7 @@ DB engine (sql.js, SQLite WASM, wa-sqlite, PGlite), opened only by the leader
 
 **Context.** Concurrent pushes can re-read events another push is about to acknowledge, and acknowledging before the provider has accepted a write loses it on failure.
 
-**Decision.** A `SyncAdapter.push` resolves only after the provider durably accepted the events, and calls `commitChanges` only for accepted events. `commitChanges` deletes them from the outbox and refreshes dirty records in one transaction, and returns a promise the adapter awaits. Core runs one push at a time and starts the next only after every acknowledgement of the previous one settled. Failures, including a failed acknowledgement, are retried with bounded exponential backoff, re-sending whatever is still in the outbox.
+**Decision.** A `SyncAdapter.push` resolves only after the provider durably accepted the events, and calls `commitChanges` only for accepted events. `commitChanges` deletes them from the outbox in one transaction, and returns a promise the adapter awaits. Core runs one push at a time and starts the next only after every acknowledgement of the previous one settled. Failures, including a failed acknowledgement, are retried with bounded exponential backoff, re-sending whatever is still in the outbox.
 
 **Consequences.** Providers must make repeated pushes idempotent (stable ids, idempotent writes), since a push can be re-sent after a partial success. Throughput is bounded by one push in flight; providers can acknowledge progressively within one push (ADR-16).
 
@@ -280,7 +280,7 @@ Records without pending writes always take remote changes. A skipped remote even
 - Firestore pushes commit in batches of up to 500 writes and acknowledge each before the next, so a failure leaves only its own and later events in the outbox. The Realtime Database adapter coalesces each record's events into one multipath `update`, splitting when paths would nest.
 - `resolveDocumentId` / `resolveRecordId` address every event, deletes included.
 - Permanent: Firestore `permission-denied`, `invalid-argument`, `out-of-range`, `failed-precondition`; RTDB `PERMISSION_DENIED` and synchronous SDK validation errors. Everything else, including `unauthenticated` and unknown codes, is retried rather than risk dropping a write.
-- Deletes are tombstones by default (`deleted: true`, `deletedAt`) so listeners propagate them.
+- Deletes are tombstones by default (`deleted: true`, plus `deletedAt` on collections without revisions) so listeners propagate them.
 
 **Consequences.** A signed-out client's writes are parked, not lost; apps call `retryRejectedPushes()` on sign-in. Authentication and security rules remain the host application's responsibility.
 

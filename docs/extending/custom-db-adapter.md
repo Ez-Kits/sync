@@ -22,7 +22,7 @@ Read these first; each one protects a guarantee.
 1. **One storage, one dialect.** Every statement runs on `config.dbStorage`. Throw if `dbStorage.dialect` is not the dialect you generate SQL for.
 2. **Never send `BEGIN` / `COMMIT`.** Open transactions with `dbStorage.transaction((tx) => ...)`. If your ORM manages transactions itself, map them onto `dbStorage.transaction` (the TypeORM adapter does this) or do not use that feature.
 3. **Inside a transaction, use only its executor `tx`.** A statement sent on `dbStorage` while a transaction is open waits for that transaction to end: awaiting it inside the transaction deadlocks until the timeout.
-4. **`commitLocalMutation` is atomic.** Run `mutate`, `persistOutboxEvent` and `persistDirtyRecord` in **one** transaction, in that order, and pass each the same context.
+4. **`commitLocalMutation` is atomic.** Run `mutate` and `persistOutboxEvent` in **one** transaction, in that order, and pass both the same context.
 5. **The context's `native` is your transaction handle.** The store's methods receive it as `transactionContext` and must then run on that transaction. For plain SQL it is the `tx` executor; for Drizzle, a Drizzle database bound to `tx`; for TypeORM, an `EntityManager`.
 6. **`getOptional` returns `undefined` only when the row is missing.** A failed query must reject, never look like "missing". `get` rejects when the row is missing. Sync decisions depend on this.
 7. **`update` is partial.** It receives the primary key plus only the changed fields. Leave other columns untouched.
@@ -185,7 +185,7 @@ export function createOperations<C extends CollectionConfigMap>(
 }
 ```
 
-Pulled changes are applied through these operations too: EzSync calls `getOptional`, then `update` if the row exists or `insert` if not, and `delete` for deletes. A local `upsert` decides the same way, inside its transaction. One `commitLocalMutation` can carry many rows (a `*Many` call or a `client.transaction`): `mutate` writes them all, then `persistOutboxEvent` and `persistDirtyRecord` save every event and record.
+Pulled changes are applied through these operations too: EzSync calls `getOptional`, then `update` if the row exists or `insert` if not, and `delete` for deletes. A local `upsert` decides the same way, inside its transaction. One `commitLocalMutation` can carry many rows (a `*Many` call or a `client.transaction`): `mutate` writes them all, then `persistOutboxEvent` saves every event.
 
 ## Step 4: the local-change store
 
@@ -198,7 +198,6 @@ import {
   type AtomicLocalChangeStore,
   type DBExecutor,
   type DBStorage,
-  type DirtyRecord,
   type LocalChangeScope,
   type SkippedRemoteEvent,
   type StoredChangeBusEvent,
@@ -217,13 +216,6 @@ CREATE TABLE IF NOT EXISTS app_sync_events (
   createdAt INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS app_sync_events_record ON app_sync_events (collection, recordId);
-CREATE TABLE IF NOT EXISTS app_sync_dirty_records (
-  collection TEXT NOT NULL,
-  recordId TEXT NOT NULL,
-  state TEXT NOT NULL,
-  updatedAt INTEGER NOT NULL,
-  PRIMARY KEY (collection, recordId)
-);
 CREATE TABLE IF NOT EXISTS app_sync_applied_events (
   eventId TEXT PRIMARY KEY NOT NULL,
   appliedAt INTEGER NOT NULL
@@ -327,30 +319,6 @@ export function createSqlLocalChangeStore(dbStorage: DBStorage): AtomicLocalChan
         ids,
       );
     },
-    async upsertDirtyRecord(record: DirtyRecord, tx) {
-      await run(
-        tx,
-        `INSERT INTO app_sync_dirty_records (collection, recordId, state, updatedAt) VALUES (?, ?, ?, ?)
-         ON CONFLICT (collection, recordId) DO UPDATE SET state = excluded.state, updatedAt = excluded.updatedAt`,
-        [record.collection, record.recordId, record.state, record.updatedAt],
-      );
-    },
-    async removeDirtyRecords(keys, tx) {
-      for (const key of keys) {
-        await run(tx, "DELETE FROM app_sync_dirty_records WHERE collection = ? AND recordId = ?", [
-          key.collection,
-          key.recordId,
-        ]);
-      }
-    },
-    async getDirtyRecords(scope, tx) {
-      const { where, params } = scopeWhere(scope);
-      return all<DirtyRecord>(
-        tx,
-        `SELECT collection, recordId, state, updatedAt FROM app_sync_dirty_records ${where}`,
-        params,
-      );
-    },
     async getCheckpoint(collection, tx) {
       const rows = await all<{ value: string }>(
         tx,
@@ -430,7 +398,6 @@ What each table is for:
 | Table                            | Written by                                                  | Read by                                                                   |
 | -------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `app_sync_events` (the outbox)   | `appendEvents` on every local write                         | `getPendingEvents` before each push; `deleteEvents` after acknowledgement |
-| `app_sync_dirty_records`         | `upsertDirtyRecord` on every local write                    | conflict detection on pull                                                |
 | `app_sync_applied_events`        | `appendEvents`                                              | `hasAppliedEvent` when a write is retried after a leader change           |
 | `app_sync_checkpoints`           | `saveCheckpoint` with each pulled batch                     | `getCheckpoint` when a pull starts                                        |
 | `app_sync_skipped_remote_events` | `upsertSkippedRemoteEvent` on a `"local"` conflict decision | applied when the record's last local write is acknowledged                |
@@ -493,12 +460,11 @@ export function createSqlDBAdapter<C extends CollectionConfigMap>(config: {
     localChangeStore: createSqlLocalChangeStore(dbStorage),
     ...createOperations(dbStorage, collections),
     transaction: (fn) => inTransaction(fn),
-    // Rule 4: the three steps of a local write, atomically and in order.
-    commitLocalMutation: ({ mutate, persistOutboxEvent, persistDirtyRecord }) =>
+    // Rule 4: the two steps of a local write, atomically and in order.
+    commitLocalMutation: ({ mutate, persistOutboxEvent }) =>
       inTransaction(async (_operations, context) => {
         await mutate(context);
         await persistOutboxEvent(context);
-        await persistDirtyRecord(context);
       }),
   };
 }
@@ -567,7 +533,7 @@ See `packages/client-drizzle/src/sqlite/index.ts` for how the SQLite adapter wir
 - [ ] `createSyncClient` accepts the adapter (it checks `dbStorage`, `commitLocalMutation`, and `localChangeStore.atomicLocalMutationCapability === "atomic"` with `initialize`).
 - [ ] `initialize()` can run twice, and from two clients at once, without errors.
 - [ ] After `insert`, `getPendingEvents()` returns the event, and `hasAppliedEvent(id)` is `true`.
-- [ ] A throw inside `commitLocalMutation`'s `persistDirtyRecord` leaves **no** row and **no** outbox event.
+- [ ] A throw inside `commitLocalMutation`'s `persistOutboxEvent` leaves **no** row and **no** outbox event.
 - [ ] `getOptional` returns `undefined` for a missing row and rejects when the table is missing.
 - [ ] `update` with only some fields keeps the others.
 - [ ] A full round trip works with a [fake sync adapter](custom-sync-adapter.md#a-fake-adapter-for-tests): local insert is pushed; a pulled change appears in `getMany`.

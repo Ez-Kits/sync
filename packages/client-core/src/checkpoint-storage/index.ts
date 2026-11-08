@@ -23,7 +23,7 @@ export interface CheckpointStorage<TCollectionName, TCheckpoint> {
   ): Promise<void>;
 }
 
-export const jsonCheckpointSerializer: CheckpointSerializer<any> = {
+const jsonCheckpointSerializer: CheckpointSerializer<any> = {
   serialize: (checkpoint) => JSON.stringify(checkpoint),
   deserialize: (value) => JSON.parse(value),
 };

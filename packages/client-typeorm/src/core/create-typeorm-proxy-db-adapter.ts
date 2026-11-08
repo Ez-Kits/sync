@@ -254,11 +254,10 @@ export function createTypeOrmProxyDBAdapter<C extends CollectionConfigMap, TData
       await lastTransaction;
       if (dataSource.isInitialized) await dataSource.destroy();
     },
-    commitLocalMutation({ mutate, persistOutboxEvent, persistDirtyRecord }) {
+    commitLocalMutation({ mutate, persistOutboxEvent }) {
       return inTransaction(async (context) => {
         await mutate(context);
         await persistOutboxEvent(context);
-        await persistDirtyRecord(context);
       });
     },
   };

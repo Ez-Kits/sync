@@ -12,12 +12,7 @@ import type {
   DBAdapterTransactionContext,
 } from "../db-adapter";
 import { LeaderChangedError } from "../db-storage/errors";
-import type {
-  DirtyRecordKey,
-  DirtyRecordState,
-  ILocalChangeStore,
-  StoredChangeBusEvent,
-} from "../local-change-store";
+import type { RecordKey, ILocalChangeStore, StoredChangeBusEvent } from "../local-change-store";
 import { isPermanentPushError, PushConflictError } from "./errors";
 import type { ConflictResolution, PullStateEvent, PushRejection, SyncAdapter } from "./types";
 
@@ -376,8 +371,7 @@ export abstract class BaseSyncHandler<
    *   pushes it: a create when the remote deleted the record, an update otherwise.
    *
    * A push in flight may already hold the replaced writes. Its acknowledgement deletes only the
-   * ids it sent and recomputes the dirty state from what remains, so a merged event stays
-   * pending and is pushed after it. What the provider accepted cannot be taken back, though: it
+   * ids it sent, so a merged event stays pending and is pushed after it. What the provider accepted cannot be taken back, though: it
    * lands remotely after the decision and, like any remote write, comes back through pull,
    * where both sides converge on it.
    *
@@ -412,7 +406,7 @@ export abstract class BaseSyncHandler<
     pushConflict = false,
   ): Promise<{ event?: ChangeBusEvent<SyncHandlerDataMap<C>>; needsPush: boolean }> {
     const collection = event.collection as CollectionNames<C>;
-    const key = this.dirtyRecordKey(event);
+    const key = this.eventRecordKey(event);
     const { recordId } = key;
     const skippedKey = recordKeyString(key);
     const store = this.config.localChangeStore;
@@ -433,9 +427,8 @@ export abstract class BaseSyncHandler<
     const storeRev = async () => {
       if (rev !== undefined) await store.upsertRevision({ ...key, rev }, native);
     };
-    const dirty = await store.getDirtyRecords(key, native);
     const pending = await store.getPendingEvents(key, native);
-    if (dirty.length === 0 && pending.length === 0) {
+    if (pending.length === 0) {
       await forgetSkipped();
       await storeRev();
       return { event, needsPush: false };
@@ -474,18 +467,13 @@ export abstract class BaseSyncHandler<
       pending.map(({ id }) => id),
       native,
     );
-    if (resolution === "remote") {
-      await store.removeDirtyRecords([key], native);
-      return { event, needsPush: false };
-    }
+    if (resolution === "remote") return { event, needsPush: false };
 
     const type = event.type === "delete" ? "create" : "update";
-    const now = Date.now();
     await store.appendEvents(
-      [{ id: crypto.randomUUID(), type, ...key, data: resolution.data, createdAt: now }],
+      [{ id: crypto.randomUUID(), type, ...key, data: resolution.data, createdAt: Date.now() }],
       native,
     );
-    await store.upsertDirtyRecord({ ...key, state: "dirty", updatedAt: now }, native);
     const merged =
       event.type === "delete"
         ? { type, collection: event.collection, data: resolution.data }
@@ -675,7 +663,7 @@ export abstract class BaseSyncHandler<
       }
     });
     const resolvedKeys = new Set(
-      conflict.events.map((event) => recordKeyString(this.dirtyRecordKey(event))),
+      conflict.events.map((event) => recordKeyString(this.eventRecordKey(event))),
     );
     for (const [eventId, parked] of this.parkedEvents) {
       if (resolvedKeys.has(parked.recordKey)) this.forgetParked(eventId);
@@ -690,7 +678,7 @@ export abstract class BaseSyncHandler<
 
   /** Whether another event of the record is parked, so this one must wait behind it. */
   private isHeld(event: ChangeBusEvent<SyncHandlerDataMap<C>>): boolean {
-    const recordKey = recordKeyString(this.dirtyRecordKey(event));
+    const recordKey = recordKeyString(this.eventRecordKey(event));
     for (const [eventId, parked] of this.parkedEvents) {
       if (parked.recordKey === recordKey && eventId !== event.eventId) return true;
     }
@@ -707,7 +695,7 @@ export abstract class BaseSyncHandler<
     this.parkedEvents.set(eventId, {
       event,
       queueKey: pass.queueKey,
-      recordKey: recordKeyString(this.dirtyRecordKey(event)),
+      recordKey: recordKeyString(this.eventRecordKey(event)),
     });
     pass.rejections.push(error);
     if (this.reportedRejections.has(eventId)) return;
@@ -777,7 +765,7 @@ export abstract class BaseSyncHandler<
         numbered.push(event);
         continue;
       }
-      const key = this.dirtyRecordKey(event);
+      const key = this.eventRecordKey(event);
       const recordKey = recordKeyString(key);
       const rev =
         (lastRevs.get(recordKey) ?? (await this.config.localChangeStore.getRevision(key)) ?? 0) + 1;
@@ -841,7 +829,7 @@ export abstract class BaseSyncHandler<
   }
 
   /**
-   * Remove pushed events from the local store and refresh dirty tracking, in one transaction:
+   * Remove pushed events from the local store, in one transaction:
    * a failure part way leaves the outbox as it was. A record left with no pending writes takes
    * its stored skipped remote event (see `resolveRemoteEvent`) in that transaction, which also
    * removes it, announced like a pulled change once it commits. Resolves false when this
@@ -859,10 +847,10 @@ export abstract class BaseSyncHandler<
       .map((event) => event.eventId)
       .filter((eventId): eventId is string => typeof eventId === "string");
 
-    const affectedKeys = new Map<string, DirtyRecordKey>();
+    const affectedKeys = new Map<string, RecordKey>();
     const acknowledgedRevs = new Map<string, number>();
     for (const event of events) {
-      const key = this.dirtyRecordKey(event);
+      const key = this.eventRecordKey(event);
       const recordKey = recordKeyString(key);
       affectedKeys.set(recordKey, key);
       if (event.rev !== undefined) acknowledgedRevs.set(recordKey, event.rev);
@@ -874,10 +862,8 @@ export abstract class BaseSyncHandler<
       applied = [];
       if (eventIds.length > 0) await store.deleteEvents(eventIds, native);
 
-      const storedRevOf = async (key: DirtyRecordKey) =>
-        (await store.getRevision(key, native)) ?? 0;
-      const keysToRemove: DirtyRecordKey[] = [];
-      const settledKeys: DirtyRecordKey[] = [];
+      const storedRevOf = async (key: RecordKey) => (await store.getRevision(key, native)) ?? 0;
+      const settledKeys: RecordKey[] = [];
       // Read once, when a record is left with no pending writes.
       let skippedEvents: Map<string, unknown> | undefined;
       for (const [recordKey, key] of affectedKeys) {
@@ -886,37 +872,26 @@ export abstract class BaseSyncHandler<
           await store.upsertRevision({ ...key, rev: acknowledgedRev }, native);
         }
         const remaining = await store.getPendingEvents(key, native);
-        if (remaining.length === 0) {
-          keysToRemove.push(key);
-          skippedEvents ??= new Map(
-            (await store.getSkippedRemoteEvents(undefined, native)).map((entry) => [
-              recordKeyString(entry),
-              entry.event,
-            ]),
-          );
-          const skipped = skippedEvents.get(recordKey) as
-            | ChangeBusEvent<SyncHandlerDataMap<C>>
-            | undefined;
-          if (skipped) {
-            settledKeys.push(key);
-            const { rev } = skipped;
-            if (rev !== undefined && rev <= (await storedRevOf(key))) continue;
-            await this.applyAnyCollectionEvent(skipped, tx);
-            applied.push(skipped);
-            if (rev !== undefined) await store.upsertRevision({ ...key, rev }, native);
-          }
-          continue;
-        }
-
-        const latest = remaining[remaining.length - 1]!;
-        const state: DirtyRecordState = latest.type === "delete" ? "deleted" : "dirty";
-        await store.upsertDirtyRecord(
-          { collection: key.collection, recordId: key.recordId, state, updatedAt: Date.now() },
-          native,
+        if (remaining.length > 0) continue;
+        skippedEvents ??= new Map(
+          (await store.getSkippedRemoteEvents(undefined, native)).map((entry) => [
+            recordKeyString(entry),
+            entry.event,
+          ]),
         );
+        const skipped = skippedEvents.get(recordKey) as
+          | ChangeBusEvent<SyncHandlerDataMap<C>>
+          | undefined;
+        if (skipped) {
+          settledKeys.push(key);
+          const { rev } = skipped;
+          if (rev !== undefined && rev <= (await storedRevOf(key))) continue;
+          await this.applyAnyCollectionEvent(skipped, tx);
+          applied.push(skipped);
+          if (rev !== undefined) await store.upsertRevision({ ...key, rev }, native);
+        }
       }
 
-      if (keysToRemove.length > 0) await store.removeDirtyRecords(keysToRemove, native);
       // Removed with the acknowledgement: a failed transaction keeps them for the retry.
       if (settledKeys.length > 0) await store.removeSkippedRemoteEvents(settledKeys, native);
     });
@@ -972,7 +947,7 @@ export abstract class BaseSyncHandler<
     }
   }
 
-  private dirtyRecordKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): DirtyRecordKey {
+  private eventRecordKey(event: ChangeBusEvent<SyncHandlerDataMap<C>>): RecordKey {
     const recordId = recordIdOf(this.keyConfig(event.collection), this.eventKey(event));
     return { collection: String(event.collection), recordId };
   }
@@ -1035,7 +1010,7 @@ interface PushPass {
   rejections: unknown[];
 }
 
-function recordKeyString({ collection, recordId }: DirtyRecordKey): string {
+function recordKeyString({ collection, recordId }: RecordKey): string {
   return `${collection}\0${recordId}`;
 }
 

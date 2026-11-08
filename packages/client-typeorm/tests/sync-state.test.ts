@@ -255,11 +255,6 @@ for (const dialect of dialects) {
           [{ ...event("e1", 1), type: "create", data: { id: "a", title: "local" } }],
           native,
         ),
-      persistDirtyRecord: ({ native }) =>
-        store.upsertDirtyRecord(
-          { collection: "todos", recordId: "a", state: "dirty", updatedAt: 1 },
-          native,
-        ),
     });
     before.client.startSync();
     await vi.waitFor(() => expect(before.pulls).toHaveLength(1));
@@ -281,7 +276,6 @@ for (const dialect of dialects) {
       expect(await after.adapter.getMany("todos")).toEqual([{ id: "a", title: "server" }]),
     );
     expect(await after.adapter.localChangeStore.getPendingEvents()).toEqual([]);
-    expect(await after.adapter.localChangeStore.getDirtyRecords()).toEqual([]);
     expect(await after.adapter.localChangeStore.getSkippedRemoteEvents()).toEqual([]);
     expect(after.errors).toEqual([]);
     after.client.stopSync();

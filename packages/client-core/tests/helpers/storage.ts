@@ -125,14 +125,11 @@ export function makeDb(
       fn(db, { operations: db, native: undefined }),
     ),
   };
-  db.commitLocalMutation = vi.fn(
-    async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
-      const context = { operations: db, native: db };
-      await mutate(context);
-      await persistOutboxEvent(context);
-      await persistDirtyRecord(context);
-    },
-  );
+  db.commitLocalMutation = vi.fn(async ({ mutate, persistOutboxEvent }: any) => {
+    const context = { operations: db, native: db };
+    await mutate(context);
+    await persistOutboxEvent(context);
+  });
   return db;
 }
 

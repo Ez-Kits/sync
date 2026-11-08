@@ -335,7 +335,6 @@ test("Firestore pull maps create, update, removed and tombstone events, advances
   const makeConstraints = vi.fn(({ checkpoint }) => (checkpoint ? ["incremental"] : []));
   const adapter = createFirestoreSyncAdapter({
     db: {} as never,
-    includeMetadataChanges: true,
     collections: [
       {
         collectionName: "todos",
@@ -391,7 +390,6 @@ test("Firestore pull uses custom mappings, defaults, and ignores empty snapshots
     db: {} as never,
     collectionName: "todos",
     collectionPath: "todos",
-    includeMetadataChanges: true,
     createCheckpoint: () => "cp",
     deserializeCreate: (raw: any) => ({ ...raw, mapped: true }),
     deserializeUpdate: (raw: any) => ({ ...raw, mapped: true }),
@@ -1179,7 +1177,6 @@ test("Realtime Database push rejections from rules and SDK validation are perman
 
 test("one write refused by Firestore rules is parked without blocking its batch or later writes", async () => {
   const outbox = new Map<string, any>();
-  const dirty = new Map<string, any>();
   const store = {
     initialize: async () => {},
     appendEvents: async (events: any[]) => {
@@ -1195,16 +1192,6 @@ test("one write refused by Firestore rules is parked without blocking its batch 
     deleteEvents: async (ids: string[]) => {
       for (const id of ids) outbox.delete(id);
     },
-    upsertDirtyRecord: async (record: any) => {
-      dirty.set(record.recordId, record);
-    },
-    removeDirtyRecords: async (keys: any[]) => {
-      for (const key of keys) dirty.delete(key.recordId);
-    },
-    getDirtyRecords: async (scope?: any) =>
-      [...dirty.values()].filter(
-        (record) => typeof scope !== "object" || record.recordId === scope.recordId,
-      ),
     getCheckpoint: async () => undefined,
     saveCheckpoint: async () => {},
     // No remote event is skipped: nothing is pulled.
@@ -1231,7 +1218,6 @@ test("one write refused by Firestore rules is parked without blocking its batch 
         createdAt: i,
       },
     ]);
-    await store.upsertDirtyRecord({ collection: "todos", recordId: id, state: "dirty" });
   }
   sdk.deniedDocument = "denied";
   const onPushRejected = vi.fn();
@@ -1253,15 +1239,13 @@ test("one write refused by Firestore rules is parked without blocking its batch 
     event: { type: "create", data: { id: "denied" }, eventId: "e250" },
     error: { permanent: true, cause: { code: "permission-denied" } },
   });
-  // Parked, not lost: the refused write and its dirty record stay.
+  // Parked, not lost: the refused write stays.
   expect([...outbox.keys()]).toEqual(["e250"]);
-  expect([...dirty.keys()]).toEqual(["denied"]);
   // Every other document is committed exactly once, in outbox order.
   expect(sdk.firestoreCommitted).toEqual(ids.filter((id) => id !== "denied"));
 
   await rejection.discard();
   expect(outbox.size).toBe(0);
-  expect(dirty.size).toBe(0);
   handler.stop();
 });
 
@@ -1531,7 +1515,7 @@ test("Firestore reads the revision of pulled documents and leaves it out of the 
     { type: "update", collection: "todos", data: { id: "b", title: "edit" }, rev: 2 },
     { type: "delete", collection: "todos", id: "c", deletedAt: 5, rev: 3 },
     { type: "update", collection: "todos", data: { id: "d", title: "not a number" } },
-    { type: "delete", collection: "todos", id: "e", deletedAt: expect.any(Number) },
+    { type: "delete", collection: "todos", id: "e" },
   ]);
 });
 
@@ -1563,7 +1547,7 @@ test("Firestore writes the revision and gives each write to a document its own b
     ["a", { id: "a", title: "new", rev: 1 }],
     ["a", { id: "a", title: "edit", rev: 2 }],
     ["b", { id: "b", title: "other", rev: 7 }],
-    ["a", { deleted: true, deletedAt: 5, rev: 3 }],
+    ["a", { deleted: true, rev: 3 }],
   ]);
   expect(commitChanges.mock.calls.map(([call]: any) => call.events)).toEqual([
     [events[0]],
@@ -1604,7 +1588,7 @@ test("Firestore reports a document deleted from the server as revision 0", async
     } as never),
   ).catch((caught: unknown) => caught);
   expect((error as PushConflictError).events).toEqual([
-    { type: "delete", collection: "todos", id: "a", deletedAt: expect.any(Number), rev: 0 },
+    { type: "delete", collection: "todos", id: "a", rev: 0 },
   ]);
 });
 
@@ -1688,7 +1672,7 @@ test("Realtime Database reads the revision of pulled children and leaves it out 
     { type: "update", collection: "todos", data: { id: "b", title: "edit" }, rev: 2 },
     { type: "delete", collection: "todos", id: "c", deletedAt: 5, rev: 3 },
     { type: "update", collection: "todos", data: { id: "d" } },
-    { type: "delete", collection: "todos", id: "e", deletedAt: expect.any(Number) },
+    { type: "delete", collection: "todos", id: "e" },
     { type: "create", collection: "todos", data: "a primitive" },
   ]);
 });
@@ -1771,7 +1755,7 @@ test("Realtime Database writes the revision and gives each write to a record its
       "todos/b/title": "other",
       "todos/b/rev": 7,
     },
-    { "todos/a/deleted": true, "todos/a/deletedAt": 5, "todos/a/rev": 3 },
+    { "todos/a/deleted": true, "todos/a/rev": 3 },
   ]);
   expect(commitChanges.mock.calls.map(([call]: any) => call.events)).toEqual([
     [events[0]],
@@ -1820,7 +1804,7 @@ test("Realtime Database reports a record removed from the server as revision 0",
     } as never),
   ).catch((caught: unknown) => caught);
   expect((error as PushConflictError).events).toEqual([
-    { type: "delete", collection: "todos", id: "a", deletedAt: expect.any(Number), rev: 0 },
+    { type: "delete", collection: "todos", id: "a", rev: 0 },
   ]);
 });
 

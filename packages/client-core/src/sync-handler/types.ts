@@ -97,8 +97,8 @@ export interface PushRejection<C extends ChangeBusEventDataMap, N extends keyof 
   /** The permanent error the push of this event alone failed with. */
   error: unknown;
   /**
-   * Remove the event from the outbox for good, as if acknowledged (dirty records are
-   * recomputed, and a remote change pulled for the record meanwhile is applied); the
+   * Remove the event from the outbox for good, as if acknowledged (a remote change
+   * pulled for the record meanwhile is applied); the
    * record's later events are then pushed. Resolves without effect once the event is no
    * longer parked (pushed after a retry, already discarded). Rejects with
    * `LeaderChangedError`, leaving the event in the outbox, once this context no longer

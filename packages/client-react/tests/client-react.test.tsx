@@ -19,9 +19,6 @@ function createDB() {
       hasAppliedEvent: vi.fn(async () => false),
       getPendingEvents: vi.fn(async () => []),
       deleteEvents: vi.fn(async () => {}),
-      upsertDirtyRecord: vi.fn(async () => {}),
-      removeDirtyRecords: vi.fn(async () => {}),
-      getDirtyRecords: vi.fn(async () => []),
       getCheckpoint: vi.fn(async () => undefined),
       saveCheckpoint: vi.fn(async () => {}),
       getSkippedRemoteEvents: vi.fn(async () => []),
@@ -39,11 +36,10 @@ function createDB() {
     get: vi.fn(async () => undefined),
     getMany: vi.fn(async () => []),
     transaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(db)),
-    commitLocalMutation: vi.fn(async ({ mutate, persistOutboxEvent, persistDirtyRecord }: any) => {
+    commitLocalMutation: vi.fn(async ({ mutate, persistOutboxEvent }: any) => {
       const context = { operations: db, native: db };
       await mutate(context);
       await persistOutboxEvent(context);
-      await persistDirtyRecord(context);
     }),
   };
   return db;

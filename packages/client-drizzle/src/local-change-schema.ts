@@ -1,10 +1,10 @@
 import type { DBExecutor, DBStorage } from "@ez-kits/sync-client-core";
 
 /**
- * Version of the outbox tables the store reads and writes. Released versions stopped at 4;
- * 5 added the `ez_sync_revisions` table.
+ * Version of the outbox tables the store reads and writes. 5 added the `ez_sync_revisions`
+ * table; 6 dropped `ez_sync_dirty_records`.
  */
-export const LOCAL_CHANGE_SCHEMA_VERSION = 5;
+const LOCAL_CHANGE_SCHEMA_VERSION = 6;
 
 /** One dialect's scripts for {@link initializeLocalChangeSchema}; none takes parameters. */
 export interface LocalChangeSchemaScripts {

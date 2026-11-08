@@ -13,14 +13,7 @@ export function createFirestoreCollectionSyncAdapter<
   N extends CollectionKey<C>,
   TCheckpoint,
 >(config: FirestoreCollectionSyncAdapterConfig<C, N, TCheckpoint>): SyncAdapter<C, N, TCheckpoint> {
-  const {
-    db,
-    includeMetadataChanges,
-    checkpointSerializer,
-    collectionName,
-    collectionPath,
-    ...handlers
-  } = config;
+  const { db, checkpointSerializer, collectionName, collectionPath, ...handlers } = config;
   return createFirestoreSyncAdapterFromResolved(
     db,
     [
@@ -30,6 +23,6 @@ export function createFirestoreCollectionSyncAdapter<
         collectionName: (collectionName ?? collectionNameFromPath(collectionPath)) as N,
       },
     ],
-    { includeMetadataChanges, checkpointSerializer },
+    { checkpointSerializer },
   );
 }

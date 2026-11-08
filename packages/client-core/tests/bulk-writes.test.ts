@@ -79,13 +79,6 @@ test("bulk writes commit once, with one outbox event per record in order", async
     "create:4",
     "delete:3",
   ]);
-  const dirty = await db.localChangeStore.getDirtyRecords("todos");
-  expect(dirty.map((r: any) => `${r.recordId}:${r.state}`).sort()).toEqual([
-    "1:dirty",
-    "2:dirty",
-    "3:deleted",
-    "4:dirty",
-  ]);
   await tick();
   // Once per call, with all of its records.
   expect(published.mock.calls.map(([events]) => events.length)).toEqual([2, 1, 2, 1]);
@@ -141,7 +134,6 @@ test("a transaction commits writes of several collections together and returns i
     "create:t1",
     "update:t1",
   ]);
-  expect(await db.localChangeStore.getDirtyRecords("notes")).toEqual([]);
   await tick();
   expect(published).toHaveBeenCalledOnce();
   expect(events().map((e: any) => `${e.collection}:${e.type}`)).toEqual([
@@ -248,7 +240,7 @@ test("the runtime and sink apply a batch in order and report it as applied", asy
   expect(db.rows.has("2")).toBe(true);
 });
 
-test("local-only mutations of a batch leave no pending event or dirty record", async () => {
+test("local-only mutations of a batch leave no pending event", async () => {
   const db = makeDb();
   const store = atomicMemoryStore();
   const base = { createdAt: 1, type: "create" as const };
@@ -264,5 +256,4 @@ test("local-only mutations of a batch leave no pending event or dirty record", a
   );
   expect((await store.getPendingEvents()).map((e: any) => e.id)).toEqual(["e1"]);
   expect(await store.hasAppliedEvent("e2")).toBe(true);
-  expect(await store.getDirtyRecords("notes")).toEqual([]);
 });

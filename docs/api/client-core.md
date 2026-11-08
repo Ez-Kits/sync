@@ -361,8 +361,7 @@ interface BaseDBAdapter<C, TQueryBuilder, TQuerySchema> extends DBAdapterOperati
   commitLocalMutation(options: {
     mutate: (context) => Promise<void>;
     persistOutboxEvent: (context) => Promise<void>;
-    persistDirtyRecord: (context) => Promise<void>;
-  }): Promise<void>; // runs all three in one transaction
+  }): Promise<void>; // runs both in one transaction
 }
 ```
 
@@ -382,15 +381,12 @@ interface ILocalChangeStore<TTx = unknown> {
   getPendingEvents(scope?: LocalChangeScope, tx?): Promise<StoredChangeBusEvent[]>; // in commit order
   getPendingEventKeys?(tx?): Promise<PendingEventKey[]>; // optional: ids and collections only, for getPendingWrites
   deleteEvents(ids: string[], tx?): Promise<void>;
-  upsertDirtyRecord(record: DirtyRecord, tx?): Promise<void>;
-  removeDirtyRecords(keys: DirtyRecordKey[], tx?): Promise<void>;
-  getDirtyRecords(scope?: LocalChangeScope, tx?): Promise<DirtyRecord[]>;
   getCheckpoint(collection: string, tx?): Promise<string | undefined>;
   saveCheckpoint(collection: string, value: string | undefined, tx?): Promise<void>; // undefined removes
   getSkippedRemoteEvents(scope?: LocalChangeScope, tx?): Promise<SkippedRemoteEvent[]>;
   upsertSkippedRemoteEvent(entry: SkippedRemoteEvent, tx?): Promise<void>;
-  removeSkippedRemoteEvents(keys: DirtyRecordKey[], tx?): Promise<void>;
-  getRevision(key: DirtyRecordKey, tx?): Promise<number | undefined>; // last seen revision; outlives a local delete
+  removeSkippedRemoteEvents(keys: RecordKey[], tx?): Promise<void>;
+  getRevision(key: RecordKey, tx?): Promise<number | undefined>; // last seen revision; outlives a local delete
   upsertRevision(entry: RecordRevision, tx?): Promise<void>;
   removeRevisions(collection: string, tx?): Promise<void>; // except records with pending events; a full re-pull applies the rest again
 }
@@ -404,11 +400,9 @@ interface AtomicLocalChangeStore<TTx = unknown> extends ILocalChangeStore<TTx> {
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `StoredChangeBusEvent`       | `{ id: string; type: "create" \| "update" \| "delete"; collection: string; data: unknown /* null for deletes */; recordId: string; createdAt: number }` |
 | `PendingEventKey`            | `{ id: string; collection: string }`                                                                                                                    |
-| `DirtyRecord`                | `{ collection: string; recordId: string; state: "dirty" \| "deleted"; updatedAt: number }`                                                              |
-| `DirtyRecordKey`             | `{ collection: string; recordId: string }`                                                                                                              |
-| `DirtyRecordState`           | `"dirty" \| "deleted"`                                                                                                                                  |
+| `RecordKey`                  | `{ collection: string; recordId: string }`                                                                                                              |
 | `SkippedRemoteEvent`         | `{ collection: string; recordId: string; event: unknown /* JSON */ }`                                                                                   |
-| `LocalChangeScope`           | `string` (a collection) or `DirtyRecordKey` (one record)                                                                                                |
+| `LocalChangeScope`           | `string` (a collection) or `RecordKey` (one record)                                                                                                     |
 | `APPLIED_EVENT_RETENTION_MS` | `86_400_000` (24 h): how long applied-event ids are kept.                                                                                               |
 
 ---
@@ -492,7 +486,7 @@ These are exported for adapter authors and tests. Applications do not need them.
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `ChangeBus`                                                                                                                                                                                                                                                    | The in-memory event bus the client uses (`publishLocal`, `publishRemote`, `publishLocalBatch`, `publishRemoteBatch`, `subscribe`). |
 | `CollectionRuntime`, `CollectionRuntimeStorage`, `TransactionCollection`                                                                                                                                                                                       | The implementations behind `client.collections.<name>` and `tx.collections.<name>`.                                                |
-| `LocalMutation`, `CommittedLocalMutation`, `LocalMutationWriter`, `LocalMutationOutcome`, `MutationSink`, `executeLocalMutations`, `executeLocalMutation`, `isLocalMutationCommitted`, `createLocalMutationSink`, `toStoredChangeBusEvent`, `toChangeBusEvent` | How local writes become one row + outbox + dirty-record commit. An `upsert` mutation is applied as a `create` or an `update`.      |
+| `LocalMutation`, `CommittedLocalMutation`, `LocalMutationWriter`, `LocalMutationOutcome`, `MutationSink`, `executeLocalMutations`, `executeLocalMutation`, `isLocalMutationCommitted`, `createLocalMutationSink`, `toStoredChangeBusEvent`, `toChangeBusEvent` | How local writes become one row + outbox commit. An `upsert` mutation is applied as a `create` or an `update`.                     |
 | `deepEqual`                                                                                                                                                                                                                                                    | The default `isEqual` of `liveQuery`, for building your own on top of it.                                                          |
 | `SyncClientImpl`                                                                                                                                                                                                                                               | The class behind `createSyncClient`.                                                                                               |
 | `SyncHandler`, `BaseSyncHandler`, `GlobalSyncHandler`, `CollectionSyncHandler`                                                                                                                                                                                 | The pull/push engine run by the leader.                                                                                            |

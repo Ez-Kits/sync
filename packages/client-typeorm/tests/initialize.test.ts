@@ -18,7 +18,6 @@ test("initialize opens the data source and creates the predefined outbox tables 
   expect(tables.map((row: { name: string }) => row.name)).toEqual([
     "ez_sync_applied_events",
     "ez_sync_checkpoints",
-    "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
     "ez_sync_revisions",
@@ -29,19 +28,6 @@ test("initialize opens the data source and creates the predefined outbox tables 
   await store.appendEvents([
     { id: "e1", type: "create", collection: "todos", data: { id: 1 }, recordId: "1", createdAt: 1 },
   ]);
-  await store.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "dirty",
-    updatedAt: 1,
-  });
-  await store.upsertDirtyRecord({
-    collection: "todos",
-    recordId: "1",
-    state: "deleted",
-    updatedAt: 2,
-  });
   expect(await store.getPendingEvents()).toMatchObject([{ id: "e1", data: { id: 1 } }]);
-  expect(await store.getDirtyRecords()).toMatchObject([{ recordId: "1", state: "deleted" }]);
   await db.destroy();
 });

@@ -45,7 +45,7 @@ export class PendingWritesError extends Error {
   }
 }
 
-export function summarizePendingWrites(
+function summarizePendingWrites(
   keys: readonly PendingEventKey[],
   parked: ReadonlySet<string>,
 ): PendingWrites {

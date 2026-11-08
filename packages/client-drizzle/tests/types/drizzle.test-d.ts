@@ -42,12 +42,6 @@ const events = sqliteTable("outbox", {
   recordId: text("record_id"),
   createdAt: integer("created_at"),
 });
-const dirtyRecords = sqliteTable("dirty_records", {
-  collection: text("collection"),
-  recordId: text("record_id"),
-  state: text("state"),
-  updatedAt: integer("updated_at"),
-});
 const appliedEvents = sqliteTable("applied_events", {
   eventId: text("event_id").primaryKey(),
   appliedAt: integer("applied_at").notNull(),
@@ -253,19 +247,19 @@ describe("drizzle adapter", () => {
   test("local-change tables must persist every stored field", () => {
     createDrizzleLocalChangeStore({
       db,
-      tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
+      tables: { events, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
       initialize,
     });
     createDrizzleLocalChangeStore({
       db,
       // @ts-expect-error retries need the applied-event table
-      tables: { events, dirtyRecords },
+      tables: { events },
       initialize,
     });
     createDrizzleLocalChangeStore({
       db,
       // @ts-expect-error checkpoints and skipped remote events live with the outbox
-      tables: { events, dirtyRecords, appliedEvents },
+      tables: { events, appliedEvents },
       initialize,
     });
     const numericCheckpoints = sqliteTable("numeric_checkpoints", {
@@ -277,7 +271,6 @@ describe("drizzle adapter", () => {
       db,
       tables: {
         events,
-        dirtyRecords,
         appliedEvents,
         checkpoints: numericCheckpoints,
         skippedRemoteEvents,
@@ -295,7 +288,6 @@ describe("drizzle adapter", () => {
       db,
       tables: {
         events,
-        dirtyRecords,
         appliedEvents,
         checkpoints,
         skippedRemoteEvents: textSkippedEvents,
@@ -312,7 +304,6 @@ describe("drizzle adapter", () => {
       db,
       tables: {
         events,
-        dirtyRecords,
         appliedEvents: textAppliedEvents,
         checkpoints,
         skippedRemoteEvents,
@@ -330,7 +321,6 @@ describe("drizzle adapter", () => {
       tables: {
         // @ts-expect-error event table omits persisted event columns
         events: invalidEvents,
-        dirtyRecords,
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
@@ -353,7 +343,6 @@ describe("drizzle adapter", () => {
       db,
       tables: {
         events: textDataEvents,
-        dirtyRecords,
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
@@ -376,7 +365,6 @@ describe("drizzle adapter", () => {
       tables: {
         // @ts-expect-error pending events are ordered by a `seq` column
         events: unorderedEvents,
-        dirtyRecords,
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
@@ -394,7 +382,6 @@ describe("drizzle adapter", () => {
       db,
       tables: {
         events: callerSequencedEvents,
-        dirtyRecords,
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,

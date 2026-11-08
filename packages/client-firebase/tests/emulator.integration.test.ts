@@ -355,7 +355,6 @@ async function createDevice(backendName: BackendName, path: string, resolveConfl
     scope === undefined ||
     (item.collection === scope.collection && item.recordId === scope.recordId);
   const outbox = new Map<string, any>();
-  const dirty = new Map<string, any>();
   const skipped = new Map<string, any>();
   const revisions = new Map<string, number>();
   const store = {
@@ -367,12 +366,6 @@ async function createDevice(backendName: BackendName, path: string, resolveConfl
     deleteEvents: async (ids: string[]) => {
       for (const id of ids) outbox.delete(id);
     },
-    upsertDirtyRecord: async (record: any) => void dirty.set(key(record), record),
-    removeDirtyRecords: async (keys: any[]) => {
-      for (const item of keys) dirty.delete(key(item));
-    },
-    getDirtyRecords: async (scope?: any) =>
-      [...dirty.values()].filter((record) => inScope(record, scope)),
     getSkippedRemoteEvents: async (scope?: any) =>
       [...skipped.values()].filter((entry) => inScope(entry, scope)),
     upsertSkippedRemoteEvent: async (entry: any) =>
@@ -425,7 +418,7 @@ async function createDevice(backendName: BackendName, path: string, resolveConfl
     rows,
     applied,
     pending: () => outbox.size,
-    /** A local write, committed like the client's: row, outbox event and dirty record. */
+    /** A local write, committed like the client's: row and outbox event. */
     async write(type: "create" | "update" | "delete", id: string, data: object = {}) {
       const recordId = id;
       if (type === "delete") rows.delete(id);
@@ -440,12 +433,6 @@ async function createDevice(backendName: BackendName, path: string, resolveConfl
           createdAt: Date.now(),
         },
       ]);
-      await store.upsertDirtyRecord({
-        collection: "todos",
-        recordId,
-        state: type === "delete" ? "deleted" : "dirty",
-        updatedAt: Date.now(),
-      });
       handler.notifyOutboxChanged();
     },
   };

@@ -3,10 +3,7 @@ import type {
   ChangeBusEventDataMap,
   CheckpointSerializer,
   CollectionConfig,
-  InferCollectionInsertModel,
   InferCollectionPrimaryFieldType,
-  InferCollectionSelectModel,
-  InferCollectionUpdateModel,
 } from "@ez-kits/sync-client-core";
 import type {
   DocumentData,
@@ -15,7 +12,11 @@ import type {
   QueryDocumentSnapshot,
   QuerySnapshot,
 } from "firebase/firestore";
-import type { CollectionKey, DeleteIdHookRequirement } from "../shared/types.ts";
+import type {
+  CollectionKey,
+  DeleteIdHookRequirement,
+  EventMapFromCollectionConfig,
+} from "../shared/types.ts";
 
 export interface FirestoreSyncAdapterCollectionHandlers<
   C extends ChangeBusEventDataMap,
@@ -43,7 +44,7 @@ export interface FirestoreSyncAdapterCollectionHandlers<
   /**
    * A small query run first, on the collection's first pull on this device (no checkpoint
    * yet), so the app can show rows before the full pull arrives: e.g.
-   * `[orderBy("updatedAt", "desc"), limit(50)]`. Its rows commit without a checkpoint, and
+   * `[orderBy("serverUpdatedAt", "desc"), limit(50)]`. Its rows commit without a checkpoint, and
    * the full listener opens after it; it also answers `hasRemoteData`. Read from the server
    * only: offline, it is skipped.
    */
@@ -54,11 +55,6 @@ export interface FirestoreSyncAdapterCollectionHandlers<
    * documents (at least one). Default: `false`.
    */
   countInitialPull?: boolean;
-  /**
-   * @deprecated Always on: the adapter listens with metadata changes to know when a snapshot
-   * comes from the server rather than the cache (`caughtUp`).
-   */
-  includeMetadataChanges?: boolean;
   /**
    * The document field that holds the record's revision, e.g. `"rev"`: a write counter the
    * security rules must enforce, which detects conflicts without device clocks (see the
@@ -117,20 +113,7 @@ export interface FirestoreCollectionSyncAdapterConfig<
 /** Common Firestore adapter configuration shared by all collections. */
 export interface FirestoreSyncCommonAdapterConfig {
   db: Firestore;
-  /** @deprecated Always on (see the per-collection option). */
-  includeMetadataChanges?: boolean;
 }
-
-type CollectionEventMapFromConfig<Col extends CollectionConfig<any, any, any, any, any, any>> =
-  Record<
-    Col["name"],
-    {
-      create: InferCollectionInsertModel<Col>;
-      update: InferCollectionUpdateModel<Col>;
-      delete: InferCollectionPrimaryFieldType<Col>;
-      record: InferCollectionSelectModel<Col>;
-    }
-  >;
 
 /**
  * Collection mapping input used by the client-level Firestore adapter. The checkpoint type is
@@ -143,7 +126,7 @@ export type FirestoreCollectionSyncAdapterConfigInput<
   collectionConfig: Col;
   collectionPath: string;
 } & FirestoreSyncAdapterCollectionHandlers<
-  CollectionEventMapFromConfig<Col>,
+  EventMapFromCollectionConfig<Col>,
   Col["name"],
   TCheckpoint
 > &
@@ -151,7 +134,7 @@ export type FirestoreCollectionSyncAdapterConfigInput<
     InferCollectionPrimaryFieldType<Col>,
     NonNullable<
       FirestoreSyncAdapterCollectionHandlers<
-        CollectionEventMapFromConfig<Col>,
+        EventMapFromCollectionConfig<Col>,
         Col["name"],
         TCheckpoint
       >["deserializeDeleteId"]

@@ -29,3 +29,6 @@ coverage/
 packages/*/LICENSE
 packages/*/README.md
 packages/client-core/docs/
+
+# Local agent state
+.claude/

@@ -48,7 +48,6 @@ test("runs the adapter and its outbox on the storage, initializing the data sour
   expect(await rows("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")).toEqual([
     { name: "ez_sync_applied_events" },
     { name: "ez_sync_checkpoints" },
-    { name: "ez_sync_dirty_records" },
     { name: "ez_sync_events" },
     { name: "ez_sync_meta" },
     { name: "ez_sync_revisions" },
@@ -77,17 +76,11 @@ test("runs the adapter and its outbox on the storage, initializing the data sour
         ],
         native,
       ),
-    persistDirtyRecord: ({ native }) =>
-      adapter.localChangeStore.upsertDirtyRecord(
-        { collection: "todos", recordId: "b", state: "dirty", updatedAt: 1 },
-        native,
-      ),
   });
   expect(await adapter.getMany("todos")).toHaveLength(2);
   // Typed repositories on the data source the adapter exposes to live queries.
   expect(await db.repositories.todos.findOneBy({ id: "b" })).toMatchObject({ title: "two" });
   expect(await adapter.localChangeStore.getPendingEvents()).toMatchObject([{ id: "e1" }]);
-  expect(await adapter.localChangeStore.getDirtyRecords()).toMatchObject([{ recordId: "b" }]);
   await adapter.delete("todos", "a");
   await expect(adapter.get("todos", "a")).rejects.toThrow();
   await db.destroy();

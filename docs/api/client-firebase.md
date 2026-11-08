@@ -26,17 +26,15 @@ A `SyncAdapter` for several collections, passed to `createSyncClient({ syncAdapt
 ```ts
 createFirestoreSyncAdapter({
   db: firestore,
-  includeMetadataChanges: false,
   collections: [defineFirestoreCollectionSyncAdapterConfig({ ... }), ...],
 });
 ```
 
-| Option                   | Type                                     | Description                                                                                                                                                     |
-| ------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `db`                     | `Firestore`                              | From `getFirestore()`.                                                                                                                                          |
-| `collections`            | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. Only these are pushed; writes to other collections without an adapter stay local. |
-| `includeMetadataChanges` | `boolean`                                | Deprecated: the listener always asks for metadata changes.                                                                                                      |
-| `checkpointSerializer`   | `CheckpointSerializer`                   | How checkpoints are stored in the database. Default: the client's JSON, which turns `Timestamp`s into plain objects.                                            |
+| Option                 | Type                                     | Description                                                                                                                                                     |
+| ---------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db`                   | `Firestore`                              | From `getFirestore()`.                                                                                                                                          |
+| `collections`          | `FirestoreSyncAdapterCollectionConfig[]` | One per synced collection, from `defineFirestoreCollectionSyncAdapterConfig`. Only these are pushed; writes to other collections without an adapter stay local. |
+| `checkpointSerializer` | `CheckpointSerializer`                   | How checkpoints are stored in the database. Default: the client's JSON, which turns `Timestamp`s into plain objects.                                            |
 
 ### `defineFirestoreCollectionSyncAdapterConfig(config)`
 
@@ -52,28 +50,26 @@ Maps one EzSync collection to one Firestore collection, with types inferred from
 | `createPullCheckpoint({ snapshot, previousCheckpoint })` | `=> TCheckpoint`         | no             | The checkpoint to save after a snapshot.                                                                                                                                                             |
 | `buildPreviewQueryConstraints()`                         | `=> QueryConstraint[]`   | no             | A small query fetched from the server first, on the collection's first pull (no checkpoint): its rows show at once and answer `hasRemoteData`.                                                       |
 | `countInitialPull`                                       | `boolean`                | no             | On the first pull, count the full pull query (`getCountFromServer`, one read per 1,000 docs) for `progress.total`. Default `false`.                                                                  |
-| `includeMetadataChanges`                                 | `boolean`                | no             | Deprecated: always on.                                                                                                                                                                               |
 | `revisionField`                                          | `string`                 | no             | The document field holding the record's revision, e.g. `"rev"`; your rules must enforce it. See [revisions](../guides/conflict-resolution.md#exact-conflicts-with-revisions). Default: no revisions. |
 | `serializeCreate(data)`                                  | `=> DocumentData`        | no             | Document written for a create (`set`). Default: `data`.                                                                                                                                              |
 | `serializeUpdate(data)`                                  | `=> DocumentData`        | no             | Fields merged for an update (`set` with `merge`). Default: `data`.                                                                                                                                   |
-| `serializeDelete(id, { deletedAt })`                     | `=> DocumentData`        | no             | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`.                                                                                                                                 |
+| `serializeDelete(id, { deletedAt })`                     | `=> DocumentData`        | no             | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`; `{ deleted: true }` with `revisionField`.                                                                                       |
 | `deserializeCreate(data, { snapshot })`                  | `=> InsertModel`         | no             | Local record for an added document. Default: `data`.                                                                                                                                                 |
 | `deserializeUpdate(data, { snapshot })`                  | `=> UpdateModel`         | no             | Local record for a modified document. Default: `data`.                                                                                                                                               |
 | `deserializeDeleteId({ snapshot })`                      | `=> PrimaryKey`          | composite keys | Local id of a deleted document. Default: `snapshot.id`. Required for a composite key, which only your app can decode from its document id.                                                           |
 | `isDeleted(data, { snapshot })`                          | `=> boolean`             | no             | Whether a document is a tombstone. Default: `data.deleted === true`.                                                                                                                                 |
-| `resolveDeletedAt(data, { snapshot })`                   | `=> number \| undefined` | no             | Delete time in ms. Default: `data.deletedAt` (number or `Timestamp`), else now.                                                                                                                      |
+| `resolveDeletedAt(data, { snapshot })`                   | `=> number \| undefined` | no             | Delete time in ms. Default: `data.deletedAt` (number or `Timestamp`), else now (`undefined` with `revisionField`).                                                                                   |
 
 ### `createFirestoreCollectionSyncAdapter(config)`
 
 A `SyncAdapter` for **one** collection, to pass as that collection's `syncAdapter`. Takes the handler options above (without `collectionConfig`) plus:
 
-| Option                   | Type                   | Description                                                                |
-| ------------------------ | ---------------------- | -------------------------------------------------------------------------- |
-| `db`                     | `Firestore`            | Required.                                                                  |
-| `collectionPath`         | `string`               | Required.                                                                  |
-| `collectionName`         | `string`               | The EzSync collection name. Default: the last segment of `collectionPath`. |
-| `includeMetadataChanges` | `boolean`              | Deprecated: always on.                                                     |
-| `checkpointSerializer`   | `CheckpointSerializer` | Default: the client's JSON.                                                |
+| Option                 | Type                   | Description                                                                |
+| ---------------------- | ---------------------- | -------------------------------------------------------------------------- |
+| `db`                   | `Firestore`            | Required.                                                                  |
+| `collectionPath`       | `string`               | Required.                                                                  |
+| `collectionName`       | `string`               | The EzSync collection name. Default: the last segment of `collectionPath`. |
+| `checkpointSerializer` | `CheckpointSerializer` | Default: the client's JSON.                                                |
 
 ### Behaviour
 
@@ -112,12 +108,12 @@ createRealtimeDBSyncAdapter({
 | `revisionField`                                          | `string`                       | no             | The child field holding the record's revision, e.g. `"rev"`; your rules must enforce it. See [revisions](../guides/conflict-resolution.md#exact-conflicts-with-revisions). Default: no revisions. |
 | `serializeCreate(data)`                                  | `=> unknown`                   | no             | Value written for a create (replaces the node).                                                                                                                                                   |
 | `serializeUpdate(data)`                                  | `=> unknown`                   | no             | Fields merged for an update.                                                                                                                                                                      |
-| `serializeDelete(id, { deletedAt })`                     | `=> unknown`                   | no             | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`.                                                                                                                              |
+| `serializeDelete(id, { deletedAt })`                     | `=> unknown`                   | no             | Fields merged for a delete. Default: `{ deleted: true, deletedAt }`; `{ deleted: true }` with `revisionField`.                                                                                    |
 | `deserializeCreate(data, { snapshot })`                  | `=> InsertModel`               | no             | Local record for an added child.                                                                                                                                                                  |
 | `deserializeUpdate(data, { snapshot })`                  | `=> UpdateModel`               | no             | Local record for a changed child.                                                                                                                                                                 |
 | `deserializeDeleteId({ snapshot })`                      | `=> PrimaryKey`                | composite keys | Default: `snapshot.key`. Required for a composite key, which only your app can decode from its key.                                                                                               |
 | `isDeleted(data, { snapshot })`                          | `=> boolean`                   | no             | Default: `data.deleted === true`.                                                                                                                                                                 |
-| `resolveDeletedAt(data, { snapshot })`                   | `=> number \| undefined`       | no             | Default: `data.deletedAt`, else now.                                                                                                                                                              |
+| `resolveDeletedAt(data, { snapshot })`                   | `=> number \| undefined`       | no             | Default: `data.deletedAt`, else now (`undefined` with `revisionField`).                                                                                                                           |
 
 ### `createRealtimeDBCollectionSyncAdapter(config)`
 

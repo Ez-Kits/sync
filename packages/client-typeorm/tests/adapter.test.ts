@@ -4,7 +4,7 @@ import { PrimaryColumn } from "typeorm";
 import { buildSchemaFromCollections, defineTypeOrmCollection } from "../src/collection";
 import { createTypeOrmProxyDBAdapter } from "../src/core/create-typeorm-proxy-db-adapter";
 import { createTypeOrmLocalChangeStore } from "../src/core/local-change-store";
-import type { DirtyRecord, StoredChangeBusEvent } from "@ez-kits/sync-client-core";
+import type { StoredChangeBusEvent } from "@ez-kits/sync-client-core";
 
 class Todo {
   id!: number;
@@ -20,11 +20,8 @@ class OutboxEvent implements StoredChangeBusEvent {
   createdAt!: number;
 }
 
-class DirtyRecordEntity implements DirtyRecord {
-  collection!: string;
-  recordId!: string;
-  state!: "dirty" | "deleted";
-  updatedAt!: number;
+class ExtraEntity {
+  id!: string;
 }
 
 class AppliedEventEntity {
@@ -36,7 +33,6 @@ const collection = defineTypeOrmCollection({ name: "todos", entity: Todo, primar
 /** Stand-ins for the dialect's outbox entities; only their identity matters here. */
 const entities = {
   events: OutboxEvent,
-  dirtyRecords: DirtyRecordEntity,
   appliedEvents: AppliedEventEntity,
 } as never;
 
@@ -298,15 +294,11 @@ test("TypeORM commitLocalMutation uses transaction-scoped repository operations"
       expect(context).toBe(transactionContext);
       callbackOrder.push("outbox");
     },
-    persistDirtyRecord: async (context) => {
-      expect(context).toBe(transactionContext);
-      callbackOrder.push("dirty");
-    },
   });
 
   expect(db.transaction).toHaveBeenCalledOnce();
   expect(transactionContext.native).toBe(db);
-  expect(callbackOrder).toEqual(["mutate", "outbox", "dirty"]);
+  expect(callbackOrder).toEqual(["mutate", "outbox"]);
   expect(calls).toContainEqual(["insert", { id: 9, title: "transactional" }]);
 });
 
@@ -345,17 +337,17 @@ test("TypeORM local-change writes use the transaction manager", async () => {
   // The applied record is pruned and written in the same transaction.
   expect(transactionDelete).toHaveBeenCalledOnce();
   expect(transactionInsert).toHaveBeenLastCalledWith([{ eventId: "event", appliedAt: 1 }]);
-  await store.upsertDirtyRecord(
-    { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
+  await store.upsertRevision(
+    { collection: "todos", recordId: "1", rev: 1 },
     transactionManager as never,
   );
 
   expect(store.atomicLocalMutationCapability).toBe("atomic");
   expect(transactionInsert).toHaveBeenCalledTimes(2);
-  expect(transactionUpsert).toHaveBeenCalledWith(
-    { collection: "todos", recordId: "1", state: "dirty", updatedAt: 1 },
-    ["collection", "recordId"],
-  );
+  expect(transactionUpsert).toHaveBeenCalledWith({ collection: "todos", recordId: "1", rev: 1 }, [
+    "collection",
+    "recordId",
+  ]);
   expect(rootInsert).not.toHaveBeenCalled();
   expect(rootUpsert).not.toHaveBeenCalled();
 
@@ -374,36 +366,20 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
       createdAt: 1,
     },
   ];
-  const dirtyRows = [{ collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 }];
   const eventRepository = {
     insert: vi.fn(),
     delete: vi.fn(),
     find: vi.fn(async () => eventRows),
   };
-  const dirtyRepository = {
-    upsert: vi.fn(),
-    delete: vi.fn(),
-    find: vi.fn(async () => dirtyRows),
-  };
-  const repositories = () => ({
-    getRepository: vi.fn((entity: unknown) =>
-      entity === OutboxEvent ? eventRepository : dirtyRepository,
-    ),
-  });
+  const repositories = () => ({ getRepository: vi.fn(() => eventRepository) });
   const manager = repositories();
   const store = createTypeOrmLocalChangeStore({ manager } as never, entities);
 
   await store.appendEvents([]);
   await store.deleteEvents([]);
-  await store.removeDirtyRecords([]);
   await expect(store.getPendingEvents("todos")).resolves.toEqual(eventRows);
   await expect(store.getPendingEvents()).resolves.toEqual(eventRows);
   await store.deleteEvents(["event", "other"]);
-  const record = { collection: "todos", recordId: "1", state: "dirty" as const, updatedAt: 1 };
-  await store.upsertDirtyRecord(record);
-  await expect(store.getDirtyRecords("todos")).resolves.toEqual(dirtyRows);
-  await expect(store.getDirtyRecords()).resolves.toEqual(dirtyRows);
-  await store.removeDirtyRecords([{ collection: "todos", recordId: "1" }]);
 
   // Pending events sort by the database-assigned `seq`, which is never read back.
   const select = ["id", "type", "collection", "data", "recordId", "createdAt"];
@@ -415,26 +391,19 @@ test("TypeORM local-change store queries, deletes, and upserts records", async (
   expect(eventRepository.find).toHaveBeenNthCalledWith(2, { select, order: { seq: "ASC" } });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(1, { id: "event" });
   expect(eventRepository.delete).toHaveBeenNthCalledWith(2, { id: "other" });
-  expect(dirtyRepository.upsert).toHaveBeenCalledWith(record, ["collection", "recordId"]);
-  expect(dirtyRepository.find).toHaveBeenNthCalledWith(1, { where: { collection: "todos" } });
-  expect(dirtyRepository.find).toHaveBeenNthCalledWith(2, {});
-  expect(dirtyRepository.delete).toHaveBeenCalledWith({ collection: "todos", recordId: "1" });
 
   // Every method, reads included, runs on a transaction manager it is given.
   const transaction = repositories();
   const key = { collection: "todos", recordId: "1" };
   await store.getPendingEvents(key, transaction as never);
-  await store.getDirtyRecords(key, transaction as never);
   await store.deleteEvents(["event"], transaction as never);
-  await store.removeDirtyRecords([key], transaction as never);
   expect(eventRepository.find).toHaveBeenLastCalledWith({
     where: key,
     select,
     order: { seq: "ASC" },
   });
-  expect(dirtyRepository.find).toHaveBeenLastCalledWith({ where: key });
-  expect(transaction.getRepository).toHaveBeenCalledTimes(4);
-  expect(manager.getRepository).toHaveBeenCalledTimes(9);
+  expect(transaction.getRepository).toHaveBeenCalledTimes(2);
+  expect(manager.getRepository).toHaveBeenCalledTimes(4);
 });
 
 test("TypeORM adapter propagates repository failures and maps null optional reads", async () => {
@@ -457,7 +426,7 @@ test("the driver builds the data source from every entity and exposes typed repo
   const adapter = adapterFor(db, createDataSource);
   expect(createDataSource).toHaveBeenCalledWith(
     { dialect: "sqlite" },
-    [Todo, OutboxEvent, DirtyRecordEntity, AppliedEventEntity],
+    [Todo, OutboxEvent, AppliedEventEntity],
     undefined,
   );
   expect((adapter.db.repositories as any).todos).toBe(repository);
@@ -468,14 +437,14 @@ test("the driver builds the data source from every entity and exposes typed repo
     {
       dbStorage: { dialect: "sqlite" } as never,
       collections: [collection],
-      entities: [DirtyRecordEntity],
+      entities: [ExtraEntity],
       dataSourceOptions: { logging: true },
     },
     { dialect: "sqlite", createDataSource, localChangeEntities: entities },
   );
   expect(createDataSource).toHaveBeenLastCalledWith(
     { dialect: "sqlite" },
-    [Todo, DirtyRecordEntity, OutboxEvent, DirtyRecordEntity, AppliedEventEntity],
+    [Todo, ExtraEntity, OutboxEvent, AppliedEventEntity],
     { logging: true },
   );
 });
