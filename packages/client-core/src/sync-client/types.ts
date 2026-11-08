@@ -92,6 +92,8 @@ export interface SyncClient<
   transaction: <T>(fn: (tx: SyncClientTransaction<C>) => Promise<T>) => Promise<T>;
   subscribe: SubscribeFn<C>;
   liveQuery: LiveQueryFn<C, DB>;
+  /** Run a query once, when the database is ready. Rejects when it or the database fails. */
+  query: QueryFn<DB>;
   /** Start syncing; on a follower, also asks the leader to sync. */
   startSync: () => void;
   stopSync: () => void;
@@ -224,5 +226,17 @@ export type LiveQueryFn<C extends CollectionConfigMap, DB extends BaseDBAdapter<
 >(options: {
   collections?: CollectionNames<C>[];
   query: (db: DB["queryBuilder"], schema: DB["querySchema"]) => TResult | PromiseLike<TResult>;
+  /** Called with the first result, then only with results that differ from the last one. */
   onData: (data: TResult) => void;
+  /**
+   * Called when a run fails, also when the database never became ready; a later change runs
+   * the query again. Without it, the failure surfaces as an unhandled rejection.
+   */
+  onError?: (error: unknown) => void;
+  /** Whether two results are the same, so the later one is not delivered. Default: `deepEqual`. */
+  isEqual?: (previous: TResult, next: TResult) => boolean;
 }) => () => void;
+
+export type QueryFn<DB extends BaseDBAdapter<any, any, any>> = <TResult>(
+  query: (db: DB["queryBuilder"], schema: DB["querySchema"]) => TResult | PromiseLike<TResult>,
+) => Promise<TResult>;

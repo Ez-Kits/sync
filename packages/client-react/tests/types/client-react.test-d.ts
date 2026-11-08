@@ -52,6 +52,15 @@ test("useLiveQuery infers the query result and adapter types", () => {
   expectTypeOf(result.isPending).toEqualTypeOf<boolean>();
 
   react.useLiveQuery({
+    query: () => 1,
+    isEqual: (previous, next) => {
+      expectTypeOf(previous).toEqualTypeOf<number>();
+      expectTypeOf(next).toEqualTypeOf<number>();
+      return previous === next;
+    },
+  });
+
+  react.useLiveQuery({
     // @ts-expect-error live queries only watch known collections
     collections: ["projects"],
     query: () => 1,

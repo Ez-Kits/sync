@@ -105,12 +105,19 @@ export interface UseLiveQueryOptions<
    * only used on the next change of the watched collections.
    */
   deps?: readonly unknown[];
+  /**
+   * Whether two results are the same, so the later one does not re-render. Need not be stable.
+   * Default: `deepEqual`.
+   */
+  isEqual?: (previous: TResult, next: TResult) => boolean;
 }
 
 export interface UseLiveQueryResult<TResult> {
+  /** The last successful result: kept when a run fails, and while new `deps` load. */
   data: TResult | undefined;
-  /** `true` until the first result, and while the query reruns. */
+  /** `true` until the first answer, and again after `deps` change. Not while it reruns. */
   isPending: boolean;
+  /** Why the last run failed; cleared by the next success or a `deps` change. */
   error: Error | undefined;
 }
 
