@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.3.0...sync-client-core-v0.4.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove dirty records and clean up the repo ([#23](https://github.com/Ez-Kits/sync/issues/23))
+
+### Refactors
+
+* remove dirty records and clean up the repo ([#23](https://github.com/Ez-Kits/sync/issues/23)) ([885be93](https://github.com/Ez-Kits/sync/commit/885be937b3d1f94b155bf9f288fcc2c4e87a8fa6))
+
 ## [0.3.0](https://github.com/Ez-Kits/sync/compare/sync-client-core-v0.2.1...sync-client-core-v0.3.0) (2026-11-08)
 
 
