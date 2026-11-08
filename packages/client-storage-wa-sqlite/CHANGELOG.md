@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.2](https://github.com/Ez-Kits/sync/compare/sync-client-storage-wa-sqlite-v0.1.1...sync-client-storage-wa-sqlite-v0.1.2) (2026-11-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+
 ## [0.1.1](https://github.com/Ez-Kits/sync/compare/sync-client-storage-wa-sqlite-v0.1.0...sync-client-storage-wa-sqlite-v0.1.1) (2026-11-07)
 
 

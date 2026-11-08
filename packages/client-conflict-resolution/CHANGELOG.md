@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.6](https://github.com/Ez-Kits/sync/compare/sync-client-conflict-resolution-v0.0.5...sync-client-conflict-resolution-v0.0.6) (2026-11-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+  * peerDependencies
+    * @ez-kits/sync-client-core bumped to 0.3.0
+
 ## [0.0.5](https://github.com/Ez-Kits/sync/compare/sync-client-conflict-resolution-v0.0.4...sync-client-conflict-resolution-v0.0.5) (2026-11-07)
 
 
