@@ -111,6 +111,94 @@ The resolver may be `async`.
 - **Be quick.** While it runs, the database is busy for every tab. An `async` resolver that waits for the user holds everything; use `manualResolution` with a `fallback` instead, and store conflicts to review later yourself.
 - **Throwing is allowed but costly.** A thrown error fails the whole batch; the pull restarts from the last checkpoint and the conflict is resolved again.
 
+## Exact conflicts with revisions
+
+Without revisions, EzSync cannot tell another device's write from the server's echo of your own: any remote change to a record with pending writes counts as a conflict. A **revision** fixes that without relying on any device clock. It is `rev`, a per-record write counter that your backend's rules enforce and each device tracks locally. Conflicts still go to your `resolveConflict`.
+
+Turn it on per collection. With Firestore, name the field:
+
+```ts
+defineFirestoreCollectionSyncAdapterConfig({
+  collectionConfig: todosCollection,
+  collectionPath: `users/${uid}/todos`,
+  revisionField: "rev",
+  // ...
+});
+```
+
+The Realtime Database option has the same name, in `defineRealtimeDBCollectionSyncAdapterConfig`.
+
+Then make your security rules enforce it. Tombstones are updates, so this covers deletes too. For Firestore:
+
+```
+function revisionFollows() {
+  return request.resource.data.rev
+    == (resource == null ? 0 : resource.data.get('rev', 0)) + 1;
+}
+
+match /users/{userId}/{collection}/{id} {
+  allow read: if request.auth.uid == userId;
+  allow create, update: if request.auth.uid == userId
+    && collection in ['todos', 'notes']
+    && revisionFollows();
+}
+```
+
+Put the rule on the path your data already lives at, and list the collections that set `revisionField`. Firestore allows a write if any matching rule allows it, so no broader `match` may also allow writes to these documents.
+
+For the Realtime Database, use `.validate`, which a `.write` granted higher up cannot override:
+
+```json
+"todos": {
+  ".read": "auth != null && auth.uid === $uid",
+  ".write": "auth != null && auth.uid === $uid",
+  "$todoId": {
+    ".validate": "newData.child('rev').val() === (data.child('rev').exists() ? data.child('rev').val() + 1 : 1)"
+  }
+}
+```
+
+`.validate` does not run when a node is removed, so keep the default tombstones: a `serializeDelete` that returns `null` writes no revision.
+
+Records written before you turned revisions on need no migration: both rules count a missing `rev` as 0, and a record gets its `rev` the next time EzSync writes it. Deploy the rule only after every client writes `rev`, because older versions of your app are refused once it is live.
+
+> **The rule is required.** Without it, the server accepts two devices' writes at the same revision. Each device then drops the other's write as a stale echo, `resolveConflict` never runs, and the devices keep different data until the record is written again.
+>
+> The Firebase console, Cloud Functions and the Admin SDK bypass security rules. Anything that writes these records that way must increase the revision by one itself, for example with `FieldValue.increment(1)` in Firestore or `ServerValue.increment(1)` in the Realtime Database. Otherwise devices drop its change as stale.
+
+`rev` lives only on the server document or node: it is stripped from pulled rows, so you add no column for it.
+
+### How a pulled change is handled
+
+Each device stores the last revision it saw of each record, and numbers its pending writes from there (stored + 1, + 2, ...).
+
+| Pulled `rev`                       | Record has pending writes? | What happens                                                                                                                   |
+| ---------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| at or below the stored revision    | either                     | A stale echo: dropped.                                                                                                         |
+| above the stored revision          | no                         | Applied, and its `rev` stored.                                                                                                 |
+| within the pending writes' numbers | yes                        | Maybe your own echo: kept, and applied after your writes are confirmed only if its `rev` is above the stored revision by then. |
+| above the pending writes' numbers  | yes                        | Another device wrote it: a **conflict**, sent to your resolver.                                                                |
+
+If another device's write lands first, the rules refuse your push. EzSync reads the refused records once, sends each to your resolver as a conflict, stores its `rev` and pushes again. A refusal for any other reason stays a [rejected write](rejected-writes.md).
+
+### Decisions on a collection with revisions
+
+`"remote"` and `{ data }` work as above. `"local"` (and having no resolver) **keeps the other device's untouched fields**: the remote row is applied, your pending writes are replayed over it, and they stay pending to be pushed at the next revision.
+
+| Pending write | Replayed over the remote row    |
+| ------------- | ------------------------------- |
+| create        | Replaces the row.               |
+| update        | Merges its fields into the row. |
+| delete        | Deletes the row.                |
+
+An update has nothing to merge into after a **remote delete**, so under `"local"` the record **stays deleted** on every device. To bring it back, return `{ data }`, which recreates the record.
+
+### Good to know
+
+- A device drops the echo of its own write. Fields only the server sets (for example a `serverTimestamp()`) do not reach the device that wrote them until another device changes the record.
+- If a push reached the server but its confirmation was lost, the retry is refused as out of date and your own write comes back as a conflict. Every decision still converges.
+- A record removed without a tombstone (from the console or a function, or by leaving the pull query) arrives with no `rev`. It is handled like a change on a collection without revisions. If the device writes that id again, the rules refuse it and the push-conflict path resets the revision.
+
 ## What happens after a decision
 
 - A remote change skipped because of `"local"` is **kept** in the database (the latest one per record). Once the server has confirmed every local write of that record, the kept change is applied. This handles the server's "echo" of your own write, with server-set fields, arriving before the push is confirmed.

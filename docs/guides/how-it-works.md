@@ -31,7 +31,7 @@ When you call `client.collections.todos.insert(todo)`:
 2. In that transaction it writes the row, appends an **outbox event** ("create todo X"), and marks the record as **dirty** (it has unpushed changes).
 3. The transaction commits. All three parts are saved together, or none is.
 4. Live queries in **every tab** re-run.
-5. If sync is running, the outbox is **pushed** to the backend. Only after the backend confirms is the event removed from the outbox.
+5. If sync is running, the outbox is **pushed** to the backend. Only after the backend confirms is the event removed from the outbox. On a collection with [revisions](conflict-resolution.md#exact-conflicts-with-revisions), each pushed write carries the record's next `rev`, and the confirmation stores it.
 
 Because the outbox is in the same database and the same transaction as the row, a crash or a closed tab never loses a write, and never pushes a write that was not saved locally.
 
@@ -47,6 +47,8 @@ The sync adapter **pulls** changes in batches. For each batch EzSync:
 If anything fails, nothing of the batch is kept, and the pull restarts from the last saved checkpoint. No change is skipped.
 
 If a pulled change hits a record that is **dirty** (it has local writes not pushed yet), that is a **conflict**. By default the local writes win. You can change this with a [conflict resolver](conflict-resolution.md).
+
+On a collection with [revisions](conflict-resolution.md#exact-conflicts-with-revisions), the change's `rev` decides first: a stale echo is dropped, and only a write from another device counts as a conflict.
 
 ## Many tabs, one database
 
@@ -64,14 +66,15 @@ This is invisible to your code: every tab can read, write and run live queries. 
 
 Everything that matters is stored in the local database next to your rows, in tables EzSync creates and upgrades itself:
 
-| Table                           | What it holds                                                      |
-| ------------------------------- | ------------------------------------------------------------------ |
-| `ez_sync_events`                | The **outbox**: local writes not yet confirmed by the backend      |
-| `ez_sync_dirty_records`         | Which records have unpushed local writes                           |
-| `ez_sync_applied_events`        | Event ids already applied, so a retried write is not applied twice |
-| `ez_sync_checkpoints`           | The pull checkpoint of each collection                             |
-| `ez_sync_skipped_remote_events` | Remote changes held back because of a conflict                     |
-| `ez_sync_meta`                  | The schema version of these tables                                 |
+| Table                           | What it holds                                                        |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `ez_sync_events`                | The **outbox**: local writes not yet confirmed by the backend        |
+| `ez_sync_dirty_records`         | Which records have unpushed local writes                             |
+| `ez_sync_applied_events`        | Event ids already applied, so a retried write is not applied twice   |
+| `ez_sync_checkpoints`           | The pull checkpoint of each collection                               |
+| `ez_sync_skipped_remote_events` | Remote changes held back because of a conflict                       |
+| `ez_sync_revisions`             | The last revision seen of each record, on collections with revisions |
+| `ez_sync_meta`                  | The schema version of these tables                                   |
 
 Do not write to these tables. Deleting the whole database (for example on sign-out) is safe: the next pull simply starts from scratch.
 

@@ -1,6 +1,7 @@
 import type {
   CollectionConfigMap,
   DirtyRecord,
+  RecordRevision,
   SkippedRemoteEvent,
 } from "@ez-kits/sync-client-core";
 import { DataSource, EntitySchema, type DataSourceOptions, type ValueTransformer } from "typeorm";
@@ -26,8 +27,9 @@ const bigintAsNumber: ValueTransformer = {
 };
 
 /**
- * Outbox, dirty-record, applied-event, checkpoint and skipped-event entities of Postgres storages. The adapter registers them and
- * creates and upgrades their tables itself; applications never declare or migrate them.
+ * Outbox, dirty-record, applied-event, checkpoint, skipped-event and revision entities of Postgres
+ * storages. The adapter registers them and creates their tables itself; applications never
+ * declare or migrate them.
  * `seq` is assigned on insert, so pending events follow commit order.
  */
 export const pgLocalChangeEntities = {
@@ -82,6 +84,15 @@ export const pgLocalChangeEntities = {
       collection: { type: "text", primary: true },
       recordId: { type: "text", primary: true },
       event: { type: "jsonb" },
+    },
+  }),
+  revisions: new EntitySchema<RecordRevision>({
+    name: "EzSyncRevision",
+    tableName: "ez_sync_revisions",
+    columns: {
+      collection: { type: "text", primary: true },
+      recordId: { type: "text", primary: true },
+      rev: { type: "bigint", transformer: bigintAsNumber },
     },
   }),
 };

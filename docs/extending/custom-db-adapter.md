@@ -237,6 +237,12 @@ CREATE TABLE IF NOT EXISTS app_sync_skipped_remote_events (
   recordId TEXT NOT NULL,
   event TEXT NOT NULL,
   PRIMARY KEY (collection, recordId)
+);
+CREATE TABLE IF NOT EXISTS app_sync_revisions (
+  collection TEXT NOT NULL,
+  recordId TEXT NOT NULL,
+  rev INTEGER NOT NULL,
+  PRIMARY KEY (collection, recordId)
 );`;
 
 /** WHERE clause for everything, one collection, or one record of a collection. */
@@ -391,6 +397,30 @@ export function createSqlLocalChangeStore(dbStorage: DBStorage): AtomicLocalChan
         );
       }
     },
+    async getRevision(key, tx) {
+      const rows = await all<{ rev: number }>(
+        tx,
+        "SELECT rev FROM app_sync_revisions WHERE collection = ? AND recordId = ?",
+        [key.collection, key.recordId],
+      );
+      return rows[0]?.rev;
+    },
+    async upsertRevision(entry, tx) {
+      await run(
+        tx,
+        `INSERT INTO app_sync_revisions (collection, recordId, rev) VALUES (?, ?, ?)
+         ON CONFLICT (collection, recordId) DO UPDATE SET rev = excluded.rev`,
+        [entry.collection, entry.recordId, entry.rev],
+      );
+    },
+    async removeRevisions(collection, tx) {
+      await run(
+        tx,
+        `DELETE FROM app_sync_revisions WHERE collection = ? AND recordId NOT IN
+           (SELECT recordId FROM app_sync_events WHERE collection = ?)`,
+        [collection, collection],
+      );
+    },
   };
 }
 ```
@@ -404,6 +434,7 @@ What each table is for:
 | `app_sync_applied_events`        | `appendEvents`                                              | `hasAppliedEvent` when a write is retried after a leader change           |
 | `app_sync_checkpoints`           | `saveCheckpoint` with each pulled batch                     | `getCheckpoint` when a pull starts                                        |
 | `app_sync_skipped_remote_events` | `upsertSkippedRemoteEvent` on a `"local"` conflict decision | applied when the record's last local write is acknowledged                |
+| `app_sync_revisions`             | `upsertRevision` on pull and acknowledgement                | `getRevision` when numbering a push and handling a pulled change          |
 
 ## Step 5: the adapter
 

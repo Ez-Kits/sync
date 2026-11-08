@@ -6,6 +6,17 @@
         ".write": "auth != null && auth.uid === $uid",
         ".indexOn": ["cursor"]
       }
+    },
+    "revisioned": {
+      "$runId": {
+        "$collectionId": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "$recordId": {
+            ".validate": "newData.child('rev').val() === (data.child('rev').exists() ? data.child('rev').val() + 1 : 1)"
+          }
+        }
+      }
     }
   }
 }

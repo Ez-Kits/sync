@@ -16,6 +16,8 @@ type ChangeBusEventUnion<C extends ChangeBusEventDataMap> = {
         data: C[N]["create"];
         /** Persisted local event id; used to ack after push. */
         eventId?: string;
+        /** Write counter of the record, on collections with revisions (see `SyncAdapter`). */
+        rev?: number;
       }
     | {
         type: "update";
@@ -23,6 +25,8 @@ type ChangeBusEventUnion<C extends ChangeBusEventDataMap> = {
         data: C[N]["update"];
         /** Persisted local event id; used to ack after push. */
         eventId?: string;
+        /** Write counter of the record, on collections with revisions (see `SyncAdapter`). */
+        rev?: number;
       }
     | {
         type: "delete";
@@ -32,6 +36,8 @@ type ChangeBusEventUnion<C extends ChangeBusEventDataMap> = {
         deletedAt?: number;
         /** Persisted local event id; used to ack after push. */
         eventId?: string;
+        /** Write counter of the record, on collections with revisions (see `SyncAdapter`). */
+        rev?: number;
       };
 }[keyof C];
 

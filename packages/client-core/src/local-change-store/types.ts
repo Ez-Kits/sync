@@ -40,6 +40,13 @@ export interface SkippedRemoteEvent {
   event: unknown;
 }
 
+/** The last revision seen of a record, on collections with revisions (see `SyncAdapter`). */
+export interface RecordRevision {
+  collection: string;
+  recordId: string;
+  rev: number;
+}
+
 /** What a local-change read covers: a collection by name, or one record of a collection. */
 export type LocalChangeScope = string | DirtyRecordKey;
 
@@ -51,16 +58,15 @@ export const APPLIED_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The outbox, dirty records and the sync state that must survive with them: pull
- * checkpoints and skipped remote events. Every method takes an optional
+ * checkpoints, skipped remote events and record revisions. Every method takes an optional
  * `transactionContext`: the `native` handle of a `DBAdapterTransactionContext`. With it the
  * call runs in that transaction; without it, on its own, after any open transaction ends.
  */
 export interface ILocalChangeStore<TTransactionContext = unknown> {
   /**
-   * Create the storage of every method when it is missing, and upgrade it when an
-   * older version of the library created it. The sync client calls it once the DB storage is
-   * ready and before any read, write or sync, in every context, so it must be idempotent and
-   * safe to run concurrently. Applications never run these migrations themselves.
+   * Create the storage of every method when it is missing. The sync client calls it once the
+   * DB storage is ready and before any read, write or sync, in every context, so it must be
+   * idempotent and safe to run concurrently.
    */
   initialize(): Promise<void>;
   /**
@@ -118,6 +124,18 @@ export interface ILocalChangeStore<TTransactionContext = unknown> {
     keys: DirtyRecordKey[],
     transactionContext?: TTransactionContext,
   ): Promise<void>;
+  /** The last revision seen of a record, `undefined` when none was. Outlives a local delete. */
+  getRevision(
+    key: DirtyRecordKey,
+    transactionContext?: TTransactionContext,
+  ): Promise<number | undefined>;
+  /** Insert or replace the revision of `entry`'s record. */
+  upsertRevision(entry: RecordRevision, transactionContext?: TTransactionContext): Promise<void>;
+  /**
+   * Forget a collection's revisions so a full re-pull applies its records again. Records with
+   * pending events keep theirs: their pushes are numbered from it.
+   */
+  removeRevisions(collection: string, transactionContext?: TTransactionContext): Promise<void>;
 }
 
 export interface AtomicLocalChangeStore<

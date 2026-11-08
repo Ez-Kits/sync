@@ -68,6 +68,7 @@ test("a sync client writes through the adapter, its outbox created by the adapte
     "ez_sync_dirty_records",
     "ez_sync_events",
     "ez_sync_meta",
+    "ez_sync_revisions",
     "ez_sync_skipped_remote_events",
     "todos",
   ]);

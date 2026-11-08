@@ -56,6 +56,11 @@ const checkpoints = sqliteTable("checkpoints", {
   collection: text("collection").primaryKey(),
   value: text("value").notNull(),
 });
+const revisions = sqliteTable("revisions", {
+  collection: text("collection").notNull(),
+  recordId: text("record_id").notNull(),
+  rev: integer("rev").notNull(),
+});
 const skippedRemoteEvents = sqliteTable("skipped_remote_events", {
   collection: text("collection").notNull(),
   recordId: text("record_id").notNull(),
@@ -248,7 +253,7 @@ describe("drizzle adapter", () => {
   test("local-change tables must persist every stored field", () => {
     createDrizzleLocalChangeStore({
       db,
-      tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents },
+      tables: { events, dirtyRecords, appliedEvents, checkpoints, skippedRemoteEvents, revisions },
       initialize,
     });
     createDrizzleLocalChangeStore({
@@ -276,6 +281,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints: numericCheckpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });
@@ -293,6 +299,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints,
         skippedRemoteEvents: textSkippedEvents,
+        revisions,
       },
       initialize,
     });
@@ -309,6 +316,7 @@ describe("drizzle adapter", () => {
         appliedEvents: textAppliedEvents,
         checkpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });
@@ -326,6 +334,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });
@@ -348,6 +357,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });
@@ -370,6 +380,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });
@@ -387,6 +398,7 @@ describe("drizzle adapter", () => {
         appliedEvents,
         checkpoints,
         skippedRemoteEvents,
+        revisions,
       },
       initialize,
     });

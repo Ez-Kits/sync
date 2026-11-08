@@ -114,6 +114,10 @@ Pulled records must contain the collection's primary key. If your nodes do not s
 
 Record ids must be valid RTDB keys: no `.`, `#`, `$`, `[`, `]` or `/`. UUIDs are fine.
 
+## Conflicts
+
+Set `revisionField` to detect conflicts exactly, without device clocks. Your security rules must enforce it: without them, devices can silently keep different data. See [revisions](conflict-resolution.md#exact-conflicts-with-revisions).
+
 ## Security rules and errors
 
 | Error                                                  | EzSync does                                               |

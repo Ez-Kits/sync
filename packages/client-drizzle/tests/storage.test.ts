@@ -315,4 +315,13 @@ test("predefined checkpoint and skipped-event tables are keyed by collection, th
       ["collection", "recordId"],
     ]);
   }
+  for (const config of [
+    getSqliteTableConfig(sqliteLocalChangeTables.revisions),
+    getPgTableConfig(pgLocalChangeTables.revisions),
+  ]) {
+    expect(config.name).toBe("ez_sync_revisions");
+    expect(config.primaryKeys.map((key) => key.columns.map((column: any) => column.name))).toEqual([
+      ["collection", "recordId"],
+    ]);
+  }
 });

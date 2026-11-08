@@ -6,6 +6,7 @@ import {
   type LocalChangeScope,
   type SkippedRemoteEvent,
   type PendingEventKey,
+  type RecordRevision,
   type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
 import {
@@ -15,6 +16,7 @@ import {
   getColumns,
   inArray,
   lt,
+  notInArray,
   type Column,
   type InferInsertModel,
   type Table,
@@ -71,18 +73,27 @@ export type DrizzleSkippedRemoteEventTable = Table & {
   event: Column;
 };
 
+/** Last seen revisions (`RecordRevision`), keyed by `collection` and `recordId`. */
+export type DrizzleRevisionTable = Table & {
+  collection: Column;
+  recordId: Column;
+  rev: Column;
+};
+
 export interface DrizzleLocalChangeStoreTables<
   TEvents extends DrizzleEventTable,
   TDirtyRecords extends DrizzleDirtyRecordTable,
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
+  TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 > {
   events: TEvents;
   dirtyRecords: TDirtyRecords;
   appliedEvents: TAppliedEvents;
   checkpoints: TCheckpoints;
   skippedRemoteEvents: TSkippedRemoteEvents;
+  revisions: TRevisions;
 }
 
 export interface DrizzleLocalChangeStoreConfig<
@@ -92,6 +103,7 @@ export interface DrizzleLocalChangeStoreConfig<
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
+  TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 > {
   db: TDb;
   tables: DrizzleLocalChangeStoreTables<
@@ -99,11 +111,11 @@ export interface DrizzleLocalChangeStoreConfig<
     TDirtyRecords,
     TAppliedEvents,
     TCheckpoints,
-    TSkippedRemoteEvents
+    TSkippedRemoteEvents,
+    TRevisions
   >;
   /**
-   * Create `tables` when missing and upgrade older versions of them; must be idempotent and
-   * safe to run concurrently (see `ILocalChangeStore.initialize`).
+   * Create `tables` when missing; must be idempotent and safe to run concurrently (see `ILocalChangeStore.initialize`).
    */
   initialize: () => Promise<void>;
 }
@@ -115,13 +127,16 @@ export type DrizzleSchemaTypeCheck<
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
+  TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 > =
   StoredChangeBusEvent extends InferInsertModel<TEvents>
     ? DirtyRecord extends InferInsertModel<TDirtyRecords>
       ? DrizzleAppliedEvent extends InferInsertModel<TAppliedEvents>
         ? DrizzleCheckpoint extends InferInsertModel<TCheckpoints>
           ? SkippedRemoteEvent extends InferInsertModel<TSkippedRemoteEvents>
-            ? []
+            ? RecordRevision extends InferInsertModel<TRevisions>
+              ? []
+              : [schemaError: never]
             : [schemaError: never]
           : [schemaError: never]
         : [schemaError: never]
@@ -139,6 +154,7 @@ export function createDrizzleLocalChangeStore<
   TAppliedEvents extends DrizzleAppliedEventTable = DrizzleAppliedEventTable,
   TCheckpoints extends DrizzleCheckpointTable = DrizzleCheckpointTable,
   TSkippedRemoteEvents extends DrizzleSkippedRemoteEventTable = DrizzleSkippedRemoteEventTable,
+  TRevisions extends DrizzleRevisionTable = DrizzleRevisionTable,
 >(
   config: DrizzleLocalChangeStoreConfig<
     TDb,
@@ -146,7 +162,8 @@ export function createDrizzleLocalChangeStore<
     TDirtyRecords,
     TAppliedEvents,
     TCheckpoints,
-    TSkippedRemoteEvents
+    TSkippedRemoteEvents,
+    TRevisions
   >,
   ...typeCheck: DrizzleSchemaTypeCheck<
     TEvents,
@@ -163,11 +180,13 @@ export function createDrizzleLocalChangeStore<
   const applied = tables.appliedEvents;
   const checkpoints = tables.checkpoints;
   const skipped = tables.skippedRemoteEvents;
+  const revisions = tables.revisions;
   const eventColumns = getColumns(events);
   const dirtyColumns = getColumns(dirty);
   const appliedColumns = getColumns(applied);
   const checkpointColumns = getColumns(checkpoints);
   const skippedColumns = getColumns(skipped);
+  const revisionColumns = getColumns(revisions);
 
   const dbFor = (transactionContext?: unknown): any => transactionContext ?? db;
   const eventColumn = (key: string) => eventColumns[key as keyof typeof eventColumns] as any;
@@ -176,6 +195,8 @@ export function createDrizzleLocalChangeStore<
   const checkpointColumn = (key: string) =>
     checkpointColumns[key as keyof typeof checkpointColumns] as any;
   const skippedColumn = (key: string) => skippedColumns[key as keyof typeof skippedColumns] as any;
+  const revisionColumn = (key: string) =>
+    revisionColumns[key as keyof typeof revisionColumns] as any;
   /** Insert `values`, or update `set` on the row with the same `target` key. */
   const upsert = async (
     transactionContext: unknown,
@@ -326,6 +347,37 @@ export function createDrizzleLocalChangeStore<
       for (const key of keys) {
         await dbFor(transactionContext).delete(skipped).where(scopeWhere(skippedColumn, key));
       }
+    },
+    async getRevision(key: DirtyRecordKey, transactionContext) {
+      const rows = await dbFor(transactionContext)
+        .select({ rev: revisionColumn("rev") })
+        .from(revisions)
+        .where(scopeWhere(revisionColumn, key));
+      return rows[0]?.rev as number | undefined;
+    },
+    async upsertRevision({ collection, recordId, rev }: RecordRevision, transactionContext) {
+      await upsert(
+        transactionContext,
+        revisions,
+        { collection, recordId, rev },
+        [revisionColumn("collection"), revisionColumn("recordId")],
+        { rev },
+      );
+    },
+    async removeRevisions(collection: string, transactionContext) {
+      const database = dbFor(transactionContext);
+      await database.delete(revisions).where(
+        and(
+          eq(revisionColumn("collection"), collection),
+          notInArray(
+            revisionColumn("recordId"),
+            database
+              .select({ recordId: eventColumn("recordId") })
+              .from(events)
+              .where(eq(eventColumn("collection"), collection)),
+          ),
+        ),
+      );
     },
   };
 }

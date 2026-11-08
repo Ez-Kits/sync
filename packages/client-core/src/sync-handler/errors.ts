@@ -1,3 +1,5 @@
+import type { ChangeBusEvent } from "../change-bus";
+
 /**
  * The provider refused the pushed events as sent (security rules, validation): sending them
  * again meets the same refusal until something changes. Throw it, or any error with
@@ -15,4 +17,24 @@ export class PushRejectedError extends Error {
 /** Whether a push failure is permanent, so core isolates and parks the refused events. */
 export function isPermanentPushError(error: unknown): boolean {
   return (error as { permanent?: unknown } | null | undefined)?.permanent === true;
+}
+
+/**
+ * A push was refused because another device wrote the records first, on collections with
+ * revisions (see `SyncAdapter.revisionedCollections`). Throw it from `SyncAdapter.push`; core
+ * does not park it: each of `events` goes to the conflict resolver, the record takes its `rev`
+ * and what is left in the outbox is pushed again.
+ */
+export class PushConflictError extends Error {
+  override readonly name = "PushConflictError";
+  /** The current server state of the conflicting records, as pulled change events with `rev`. */
+  readonly events: ChangeBusEvent<any>[];
+  constructor(
+    events: ChangeBusEvent<any>[],
+    message = "Another device wrote these records first.",
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.events = events;
+  }
 }

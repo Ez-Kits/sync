@@ -15,8 +15,6 @@ import { createDrizzlePgDBAdapter } from "../src/pg";
 import { createDrizzleSqliteDBAdapter } from "../src/sqlite";
 
 const run = (sql: string) => ({ sql, params: [], method: "run" as const });
-const rowsOf = async (storage: DBStorage, sql: string) =>
-  (await storage.exec({ sql, params: [], method: "all", rowMode: "object" })).rows;
 const TODOS = "CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT);";
 
 const sqliteTodos = sqliteTable("todos", { id: text("id").primaryKey(), title: text("title") });
@@ -108,37 +106,41 @@ const acknowledge = async ({ events, commitChanges }: any) => {
 const neverAcknowledge = () => new Promise<void>(() => {});
 
 for (const dialect of dialects) {
-  test(`${dialect.name}: initialize upgrades version 3 tables with the checkpoint and skipped-event tables`, async () => {
+  test(`${dialect.name}: revisions are kept per record and replaced`, async () => {
     const dbStorage = dialect.storage();
-    const { localChangeStore } = dialect.adapter(dbStorage);
-    await localChangeStore.initialize();
-    // Back to version 3: no checkpoint or skipped-event table, one pending event.
-    await localChangeStore.appendEvents([event("pending", 1)]);
-    await dbStorage.exec(run("DROP TABLE ez_sync_checkpoints"));
-    await dbStorage.exec(run("DROP TABLE ez_sync_skipped_remote_events"));
-    await dbStorage.exec(run("UPDATE ez_sync_meta SET value = 3 WHERE key = 'schema_version'"));
+    const { localChangeStore: store } = dialect.adapter(dbStorage);
+    await store.initialize();
+    const key = { collection: "todos", recordId: "a" };
+    expect(await store.getRevision(key)).toBeUndefined();
+    await store.upsertRevision({ ...key, rev: 2 });
+    await store.upsertRevision({ collection: "users", recordId: "a", rev: 9 });
+    await store.upsertRevision({ ...key, rev: 3 });
+    expect(await store.getRevision(key)).toBe(3);
+    expect(await store.getRevision({ collection: "users", recordId: "a" })).toBe(9);
+    expect(await store.getRevision({ collection: "todos", recordId: "b" })).toBeUndefined();
+    await dbStorage.close();
+  }, 30_000);
 
-    // Several contexts initialize together; the transactions serialize on the leader.
-    await Promise.all([
-      dialect.adapter(dbStorage).localChangeStore.initialize(),
-      dialect.adapter(dbStorage).localChangeStore.initialize(),
+  test(`${dialect.name}: removing a collection's revisions keeps the records with pending events`, async () => {
+    const dbStorage = dialect.storage();
+    const { localChangeStore: store } = dialect.adapter(dbStorage);
+    await store.initialize();
+    const todo = (recordId: string) => ({ collection: "todos", recordId });
+    const user = { collection: "users", recordId: "a" };
+    await store.upsertRevision({ ...todo("a"), rev: 1 });
+    await store.upsertRevision({ ...todo("b"), rev: 2 });
+    await store.upsertRevision({ ...user, rev: 3 });
+    const pending = { type: "update" as const, data: { id: "x" }, createdAt: 1 };
+    await store.appendEvents([
+      { id: "e1", ...todo("b"), ...pending },
+      // Pending in another collection: does not keep `todos`' record of the same id.
+      { id: "e2", ...user, ...pending },
     ]);
-    expect(await rowsOf(dbStorage, "SELECT key, value FROM ez_sync_meta")).toEqual([
-      { key: "schema_version", value: 4 },
-    ]);
-    expect((await localChangeStore.getPendingEvents()).map(({ id }) => id)).toEqual(["pending"]);
-    await localChangeStore.saveCheckpoint("todos", "c1");
-    expect(await localChangeStore.getCheckpoint("todos")).toBe("c1");
-    const skipped = { collection: "todos", recordId: "a", event: { type: "delete", id: "a" } };
-    await localChangeStore.upsertSkippedRemoteEvent(skipped);
-    expect(await localChangeStore.getSkippedRemoteEvents()).toEqual([skipped]);
 
-    // A later initialize changes nothing.
-    const transaction = vi.spyOn(dbStorage, "transaction");
-    await dialect.adapter(dbStorage).localChangeStore.initialize();
-    expect(transaction).toHaveBeenCalledOnce();
-    expect(await localChangeStore.getCheckpoint("todos")).toBe("c1");
-    expect(await localChangeStore.getSkippedRemoteEvents()).toEqual([skipped]);
+    await store.removeRevisions("todos");
+    expect(await store.getRevision(todo("a"))).toBeUndefined();
+    expect(await store.getRevision(todo("b"))).toBe(2);
+    expect(await store.getRevision(user)).toBe(3);
     await dbStorage.close();
   }, 30_000);
 

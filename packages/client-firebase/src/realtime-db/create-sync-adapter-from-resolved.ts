@@ -1,8 +1,9 @@
-import type {
-  ChangeBusEvent,
-  ChangeBusEventDataMap,
-  CheckpointSerializer,
-  SyncAdapter,
+import {
+  PushConflictError,
+  type ChangeBusEvent,
+  type ChangeBusEventDataMap,
+  type CheckpointSerializer,
+  type SyncAdapter,
 } from "@ez-kits/sync-client-core";
 import {
   onChildAdded,
@@ -17,12 +18,19 @@ import {
   type Query,
 } from "firebase/database";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
-import { realtimeDBPushError, rejectedPush } from "../shared/push-error.ts";
+import {
+  isRealtimeDBPermissionDenied,
+  realtimeDBPushError,
+  rejectedPush,
+} from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedRealtimeDBSyncAdapterCollectionConfig } from "./types.ts";
 
 /** Target for `onChild*` listeners (collection root or a narrowed RTDB `query`). */
 type RealtimeChildListenTarget = ReturnType<typeof ref> | Query;
+
+/** How a child reached the listeners. */
+type ChildChangeKind = "added" | "changed" | "removed";
 
 function defaultIsDeleted(data: unknown): boolean {
   return (
@@ -50,6 +58,64 @@ function recordPath(collectionPath: string, recordId: string): string {
   return `${collectionPath}/${recordId}`;
 }
 
+function isFieldMap(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A child's value without its revision field, and the revision held there. */
+function splitRevision(
+  value: unknown,
+  revisionField: string | undefined,
+): { raw: unknown; rev: number | undefined } {
+  if (revisionField === undefined || !isFieldMap(value)) return { raw: value, rev: undefined };
+  const { [revisionField]: revisionValue, ...raw } = value;
+  return { raw, rev: typeof revisionValue === "number" ? revisionValue : undefined };
+}
+
+/** One child as a pulled change event, by how it changed. */
+function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<C>, TCheckpoint>(
+  collectionConfig: ResolvedRealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>,
+  snapshot: DataSnapshot,
+  kind: ChildChangeKind,
+): ChangeBusEvent<C, N> {
+  const collectionName = collectionConfig.collectionName;
+  const { raw, rev } = splitRevision(snapshot.val(), collectionConfig.revisionField);
+  // A removed child's value is its last known state, not a new revision.
+  const revision = rev === undefined || kind === "removed" ? {} : { rev };
+  const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
+  if (kind === "removed" || isDeleted(raw, { snapshot })) {
+    return {
+      type: "delete",
+      collection: collectionName,
+      id: collectionConfig.deserializeDeleteId
+        ? collectionConfig.deserializeDeleteId({ snapshot })
+        : (snapshot.key as C[N]["delete"]),
+      deletedAt: collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
+      ...revision,
+    } as unknown as ChangeBusEvent<C, N>;
+  }
+  if (kind === "added") {
+    const data = collectionConfig.deserializeCreate
+      ? collectionConfig.deserializeCreate(raw, { snapshot })
+      : (raw as C[N]["create"]);
+    return {
+      type: "create",
+      collection: collectionName,
+      data,
+      ...revision,
+    } as unknown as ChangeBusEvent<C, N>;
+  }
+  const data = collectionConfig.deserializeUpdate
+    ? collectionConfig.deserializeUpdate(raw, { snapshot })
+    : (raw as C[N]["update"]);
+  return {
+    type: "update",
+    collection: collectionName,
+    data,
+    ...revision,
+  } as unknown as ChangeBusEvent<C, N>;
+}
+
 /**
  * The net write to one record: replace the whole node, or merge fields into it
  * (`path/field` keys, matching `update(nodeRef, fields)`).
@@ -63,14 +129,14 @@ interface PendingUpdate<TEvent> {
   writes: Map<string, RecordWrite>;
   /** Strict ancestors of the record paths in {@link writes}. */
   ancestors: Set<string>;
+  /** The revision written, by record path, on collections with revisions. */
+  revisions: Map<string, number>;
   events: TEvent[];
 }
 
 /** Creates replace the record; updates and deletes merge fields, and non-objects replace it. */
 function recordWrite(payload: unknown, merge: boolean): RecordWrite {
-  if (merge && typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-    return { replace: false, fields: { ...(payload as Record<string, unknown>) } };
-  }
+  if (merge && isFieldMap(payload)) return { replace: false, fields: { ...payload } };
   return { replace: true, value: payload };
 }
 
@@ -138,7 +204,7 @@ function toMultipathUpdates(writes: Map<string, RecordWrite>): Record<string, un
 }
 
 function createPendingUpdate<TEvent>(): PendingUpdate<TEvent> {
-  return { writes: new Map(), ancestors: new Set(), events: [] };
+  return { writes: new Map(), ancestors: new Set(), revisions: new Map(), events: [] };
 }
 
 async function writeUpdate(db: Database, updates: Record<string, unknown>): Promise<void> {
@@ -166,10 +232,18 @@ export function createRealtimeDBSyncAdapterFromResolved<
   collections: readonly ResolvedRealtimeDBSyncAdapterCollectionConfig<C, N, TCheckpoint>[],
   common: { checkpointSerializer?: CheckpointSerializer<TCheckpoint> } = {},
 ): SyncAdapter<C, N, TCheckpoint> {
+  // The revision being written, by record path. The SDK raises child events for a write as soon
+  // as it is made, and again if it is refused: until the write settles, a child event of its
+  // record is this device's own unconfirmed state, unless it holds a newer revision.
+  const writing = new Map<string, number>();
+
   return {
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
     checkpointSerializer: common.checkpointSerializer,
+    revisionedCollections: collections
+      .filter(({ revisionField }) => revisionField !== undefined)
+      .map(({ collectionName }) => collectionName),
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       let stopped = false;
@@ -181,7 +255,6 @@ export function createRealtimeDBSyncAdapterFromResolved<
         const baseRef = ref(db, collectionPath);
         const previousFromStorage = checkpointMap?.[collectionName];
         let previousCheckpoint: TCheckpoint | undefined = previousFromStorage;
-        const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
 
         const listenTarget: RealtimeChildListenTarget =
           collectionConfig.buildPullQuery?.({
@@ -198,29 +271,6 @@ export function createRealtimeDBSyncAdapterFromResolved<
             }) ?? collectionConfig.createCheckpoint();
           previousCheckpoint = nextCheckpoint;
           return nextCheckpoint;
-        };
-
-        const deleteEvent = (raw: unknown, snapshot: DataSnapshot): ChangeBusEvent<C, N> =>
-          ({
-            type: "delete",
-            collection: collectionName,
-            id: collectionConfig.deserializeDeleteId
-              ? collectionConfig.deserializeDeleteId({ snapshot })
-              : (snapshot.key as C[N]["delete"]),
-            deletedAt: collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw),
-          }) as unknown as ChangeBusEvent<C, N>;
-
-        /** A child as it arrives: a create, or a delete when it is a tombstone. */
-        const addedEvent = (snapshot: DataSnapshot): ChangeBusEvent<C, N> => {
-          const raw = snapshot.val();
-          if (isDeleted(raw, { snapshot })) return deleteEvent(raw, snapshot);
-          const data = collectionConfig.deserializeCreate
-            ? collectionConfig.deserializeCreate(raw, { snapshot })
-            : (raw as C[N]["create"]);
-          return { type: "create", collection: collectionName, data } as unknown as ChangeBusEvent<
-            C,
-            N
-          >;
         };
 
         // The SDK raises the child events of one server message in a single loop, so events
@@ -244,40 +294,30 @@ export function createRealtimeDBSyncAdapterFromResolved<
           pending.push(event);
           pendingCheckpoint = nextCp(snapshot);
         };
+        const queueChild = (kind: ChildChangeKind) => (snapshot: DataSnapshot) => {
+          const writingRev = writing.get(recordPath(collectionPath, snapshot.key as string));
+          if (writingRev !== undefined) {
+            const { rev } = splitRevision(snapshot.val(), collectionConfig.revisionField);
+            if (rev === undefined || rev <= writingRev) return;
+          }
+          queue(toChangeEvent(collectionConfig, snapshot, kind), snapshot);
+        };
 
         const listen = () => {
           if (stopped) return;
-          const unsubscribeAdded = onChildAdded(
-            listenTarget,
-            (snapshot) => queue(addedEvent(snapshot), snapshot),
-            (error: Error) => pullOptions.onError?.(error),
+          const unsubscribeAdded = onChildAdded(listenTarget, queueChild("added"), (error: Error) =>
+            pullOptions.onError?.(error),
           );
 
           const unsubscribeChanged = onChildChanged(
             listenTarget,
-            (snapshot) => {
-              const raw = snapshot.val();
-              if (isDeleted(raw, { snapshot })) {
-                queue(deleteEvent(raw, snapshot), snapshot);
-                return;
-              }
-              const data = collectionConfig.deserializeUpdate
-                ? collectionConfig.deserializeUpdate(raw, { snapshot })
-                : (raw as C[N]["update"]);
-              queue(
-                { type: "update", collection: collectionName, data } as unknown as ChangeBusEvent<
-                  C,
-                  N
-                >,
-                snapshot,
-              );
-            },
+            queueChild("changed"),
             (error: Error) => pullOptions.onError?.(error),
           );
 
           const unsubscribeRemoved = onChildRemoved(
             listenTarget,
-            (snapshot) => queue(deleteEvent(snapshot.val(), snapshot), snapshot),
+            queueChild("removed"),
             (error: Error) => pullOptions.onError?.(error),
           );
 
@@ -332,7 +372,7 @@ export function createRealtimeDBSyncAdapterFromResolved<
             if (stopped) return;
             const changes: ChangeBusEvent<C, N>[] = [];
             snapshot.forEach((child) => {
-              changes.push(addedEvent(child));
+              changes.push(toChangeEvent(collectionConfig, child, "added"));
             });
             commitChanges({ changes, checkpoint: {}, preview: true });
             pullOptions.onPreviewed?.({
@@ -357,8 +397,39 @@ export function createRealtimeDBSyncAdapterFromResolved<
         collections.map((collectionConfig) => [collectionConfig.collectionName, collectionConfig]),
       );
 
+      /**
+       * After rules refused an update: a `PushConflictError` with the server state of its
+       * records another device wrote first (their revision is not the one this push built on).
+       */
+      const findPushConflict = async (updateEvents: ChangeBusEvent<C, N>[]) => {
+        const serverEvents = await Promise.all(
+          updateEvents.map(async (event) => {
+            const collectionConfig = collectionByName.get(event.collection as N)!;
+            const { collectionPath, revisionField } = collectionConfig;
+            if (revisionField === undefined) return undefined;
+            const snapshot = await get(
+              ref(db, recordPath(collectionPath, collectionConfig.resolveRemoteId(event))),
+            );
+            const serverRev = splitRevision(snapshot.val(), revisionField).rev ?? 0;
+            if (serverRev === event.rev! - 1) return undefined;
+            return {
+              ...toChangeEvent(
+                collectionConfig,
+                snapshot,
+                snapshot.exists() ? "changed" : "removed",
+              ),
+              rev: serverRev,
+            };
+          }),
+        );
+        const conflicts = serverEvents.filter((event) => event !== undefined);
+        return conflicts.length > 0 ? new PushConflictError(conflicts) : undefined;
+      };
+
       // Events are coalesced per record, in outbox order, into as few multipath updates as
-      // possible: one update must not hold a path and one of its descendants.
+      // possible: one update must not hold a path and one of its descendants. Security rules
+      // check an update against the data before it, and each revision must follow the last, so
+      // a record with revisions is written once per update instead of coalesced.
       const pendingUpdates: PendingUpdate<ChangeBusEvent<C, N>>[] = [];
       let current = createPendingUpdate<ChangeBusEvent<C, N>>();
 
@@ -366,8 +437,14 @@ export function createRealtimeDBSyncAdapterFromResolved<
         const collectionConfig = collectionByName.get(event.collection as N);
         if (!collectionConfig) continue;
 
+        const { collectionPath, revisionField } = collectionConfig;
         const recordId = collectionConfig.resolveRemoteId(event as ChangeBusEvent<C, N>);
-        const path = recordPath(collectionConfig.collectionPath, recordId);
+        const path = recordPath(collectionPath, recordId);
+        // A value that cannot hold a field goes without a revision, for the rules to refuse.
+        const withRevision = (payload: unknown): unknown =>
+          revisionField !== undefined && isFieldMap(payload)
+            ? { ...payload, [revisionField]: event.rev }
+            : payload;
         let write: RecordWrite;
 
         if (event.type === "delete") {
@@ -378,34 +455,51 @@ export function createRealtimeDBSyncAdapterFromResolved<
                 deleted: true,
                 deletedAt,
               };
-          write = recordWrite(payload, true);
+          write = recordWrite(withRevision(payload), true);
         } else if (event.type === "create") {
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : event.data;
-          write = recordWrite(payload, false);
+          write = recordWrite(withRevision(payload), false);
         } else {
           const payload = collectionConfig.serializeUpdate
             ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
             : event.data;
-          write = recordWrite(payload, true);
+          write = recordWrite(withRevision(payload), true);
         }
 
-        if (!addRecordWrite(current, path, write)) {
+        const revisionedAgain = revisionField !== undefined && current.writes.has(path);
+        if (revisionedAgain || !addRecordWrite(current, path, write)) {
           pendingUpdates.push(current);
           current = createPendingUpdate();
           addRecordWrite(current, path, write);
         }
+        if (revisionField !== undefined) current.revisions.set(path, event.rev!);
         current.events.push(event as ChangeBusEvent<C, N>);
       }
       if (current.events.length > 0) pendingUpdates.push(current);
 
       // Updates are written in order, and each is acknowledged once written, so a failure
       // leaves only the remaining events in the outbox. An update is atomic: when one write
-      // is refused for good, core narrows the push down to it.
+      // is refused for good, core narrows the push down to it. An update refused because
+      // another device wrote one of its records first goes to conflict resolution.
       for (const pending of pendingUpdates) {
         const updates = toMultipathUpdates(pending.writes);
-        if (Object.keys(updates).length > 0) await writeUpdate(db, updates);
+        if (Object.keys(updates).length > 0) {
+          for (const [path, rev] of pending.revisions) writing.set(path, rev);
+          try {
+            await writeUpdate(db, updates).finally(() => {
+              for (const path of pending.revisions.keys()) writing.delete(path);
+            });
+          } catch (error) {
+            if (isRealtimeDBPermissionDenied(error)) {
+              // Unreadable records leave the refusal standing; its parked retry looks again.
+              const conflict = await findPushConflict(pending.events).catch(() => undefined);
+              if (conflict) throw conflict;
+            }
+            throw error;
+          }
+        }
         await commitChanges({ events: pending.events });
       }
     },

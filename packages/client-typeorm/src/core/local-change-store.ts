@@ -4,6 +4,7 @@ import {
   type DirtyRecord,
   type DirtyRecordKey,
   type LocalChangeScope,
+  type RecordRevision,
   type SkippedRemoteEvent,
   type StoredChangeBusEvent,
 } from "@ez-kits/sync-client-core";
@@ -13,7 +14,6 @@ import {
   Table,
   type DataSource,
   type EntityManager,
-  type EntityMetadata,
   type QueryDeepPartialEntity,
   type QueryRunner,
 } from "typeorm";
@@ -38,8 +38,8 @@ export interface TypeOrmCheckpointRow {
 }
 
 /**
- * The predefined outbox, dirty-record, applied-event, checkpoint and skipped-event entities
- * of one dialect.
+ * The predefined outbox, dirty-record, applied-event, checkpoint, skipped-event and revision
+ * entities of one dialect.
  */
 export interface TypeOrmLocalChangeEntities {
   /** `seq` must be a generated primary key and `id` unique. */
@@ -51,59 +51,26 @@ export interface TypeOrmLocalChangeEntities {
   readonly checkpoints: EntitySchema<TypeOrmCheckpointRow>;
   /** `collection` and `recordId` must be the primary key; `event` a JSON column. */
   readonly skippedRemoteEvents: EntitySchema<SkippedRemoteEvent>;
+  /** `collection` and `recordId` must be the primary key. */
+  readonly revisions: EntitySchema<RecordRevision>;
 }
 
 /**
- * Version of the outbox tables the store reads and writes; 2 added the `seq` column, 3 the
- * `ez_sync_applied_events` table, 4 the `ez_sync_checkpoints` and
- * `ez_sync_skipped_remote_events` tables.
+ * Version of the outbox tables the store reads and writes. Released versions stopped at 4;
+ * 5 added the `ez_sync_revisions` table.
  */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const EVENT_FIELDS = ["id", "type", "collection", "data", "recordId", "createdAt"] as const;
 
 const scopeWhere = (scope: LocalChangeScope | undefined) =>
   scope === undefined ? {} : { where: typeof scope === "string" ? { collection: scope } : scope };
 
-async function readSchemaVersion(queryRunner: QueryRunner, events: EntityMetadata) {
+async function readSchemaVersion(queryRunner: QueryRunner) {
   const rows: Array<{ value: number | string }> = await queryRunner.query(
     "SELECT value FROM ez_sync_meta WHERE key = 'schema_version'",
   );
-  if (rows[0] !== undefined) return Number(rows[0].value);
-  // Version 1 kept no meta table; its events table is the only trace of it.
-  return (await queryRunner.hasTable(events.tablePath)) ? 1 : 0;
-}
-
-/**
- * Rebuild a version 1 events table (keyed by `id`, no `seq`) with the current metadata,
- * numbering its rows in their old `createdAt, id` order.
- */
-async function upgradeEventsFromV1(
-  db: DataSource,
-  queryRunner: QueryRunner,
-  events: EntityMetadata,
-) {
-  const escape = (name: string) => db.driver.escape(name);
-  const table = events.tablePath.split(".").map(escape).join(".");
-  const column = (property: string) =>
-    escape(events.findColumnWithPropertyName(property)!.databaseName);
-  const fields = EVENT_FIELDS.map(column).join(", ");
-  const seq = column("seq");
-  await queryRunner.query(`CREATE TEMP TABLE ez_sync_events_v1 AS SELECT * FROM ${table}`);
-  await queryRunner.query(`DROP TABLE ${table}`);
-  await queryRunner.createTable(Table.create(events, db.driver), false, true, true);
-  await queryRunner.query(
-    `INSERT INTO ${table} (${seq}, ${fields})
-     SELECT row_number() OVER (ORDER BY ${column("createdAt")}, ${column("id")}), ${fields}
-     FROM ez_sync_events_v1`,
-  );
-  if (db.options.type === "postgres") {
-    // The copy set `seq` itself, so the sequence restarts after the copied rows.
-    await queryRunner.query(
-      `SELECT setval(pg_get_serial_sequence('${events.tablePath}', '${events.findColumnWithPropertyName("seq")!.databaseName}'), COALESCE(MAX(${seq}), 0) + 1, false) FROM ${table}`,
-    );
-  }
-  await queryRunner.query("DROP TABLE ez_sync_events_v1");
+  return Number(rows[0]?.value ?? 0);
 }
 
 /**
@@ -121,31 +88,27 @@ export function createTypeOrmLocalChangeStore(
   const appliedEventTarget = entities.appliedEvents;
   const checkpointTarget = entities.checkpoints;
   const skippedEventTarget = entities.skippedRemoteEvents;
+  const revisionTarget = entities.revisions;
 
-  // Open the data source, then create or upgrade the tables (with their keys) in one
-  // transaction, so contexts sharing a storage cannot both do it. Missing tables are
-  // created, which also upgrades version 2 (no applied-event table) and version 3 (no
-  // checkpoint or skipped-event table).
+  // Open the data source, then create the missing tables (with their keys) in one
+  // transaction, so contexts sharing a storage cannot both do it.
   async function initialize() {
     if (!db.isInitialized) await db.initialize();
     await db.transaction(async (manager) => {
       const queryRunner = manager.queryRunner as QueryRunner;
-      const events = db.getMetadata(eventTarget);
       await queryRunner.query(
         "CREATE TABLE IF NOT EXISTS ez_sync_meta (key TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL)",
       );
-      const version = await readSchemaVersion(queryRunner, events);
-      if (version >= SCHEMA_VERSION) return;
-      if (version === 1) await upgradeEventsFromV1(db, queryRunner, events);
+      if ((await readSchemaVersion(queryRunner)) >= SCHEMA_VERSION) return;
       for (const target of [
         eventTarget,
         dirtyRecordTarget,
         appliedEventTarget,
         checkpointTarget,
         skippedEventTarget,
+        revisionTarget,
       ]) {
         const metadata = db.getMetadata(target);
-        if (await queryRunner.hasTable(metadata.tablePath)) continue;
         await queryRunner.createTable(Table.create(metadata, db.driver), true, true, true);
       }
       await queryRunner.query(
@@ -251,6 +214,32 @@ export function createTypeOrmLocalChangeStore(
       const repository = managerFor(transactionContext).getRepository(skippedEventTarget);
       for (const { collection, recordId } of keys)
         await repository.delete({ collection, recordId });
+    },
+    async getRevision({ collection, recordId }: DirtyRecordKey, transactionContext) {
+      const row = await managerFor(transactionContext)
+        .getRepository(revisionTarget)
+        .findOneBy({ collection, recordId });
+      return row?.rev;
+    },
+    async upsertRevision({ collection, recordId, rev }: RecordRevision, transactionContext) {
+      await managerFor(transactionContext)
+        .getRepository(revisionTarget)
+        .upsert({ collection, recordId, rev }, ["collection", "recordId"]);
+    },
+    async removeRevisions(collection: string, transactionContext) {
+      const manager = managerFor(transactionContext);
+      const pendingRecordIds = manager
+        .getRepository(eventTarget)
+        .createQueryBuilder("event")
+        .select("event.recordId")
+        .where("event.collection = :collection")
+        .getQuery();
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(revisionTarget)
+        .where(`collection = :collection AND recordId NOT IN (${pendingRecordIds})`, { collection })
+        .execute();
     },
   };
 }

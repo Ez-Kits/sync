@@ -40,6 +40,11 @@ export function rejectedPush(provider: string, error: unknown): PushRejectedErro
   return new PushRejectedError(`${provider} rejected the write${reason}.`, { cause: error });
 }
 
+/** Whether Firestore security rules refused a write. */
+export function isFirestorePermissionDenied(error: unknown): boolean {
+  return errorCode(error) === "permission-denied";
+}
+
 /** A Firestore write failure, as a `PushRejectedError` when it is permanent. */
 export function firestorePushError(error: unknown): unknown {
   const code = errorCode(error);
@@ -47,6 +52,11 @@ export function firestorePushError(error: unknown): unknown {
     return rejectedPush("Firestore", error);
   }
   return error;
+}
+
+/** Whether Realtime Database rules refused a write, given its `PushRejectedError`. */
+export function isRealtimeDBPermissionDenied(error: unknown): boolean {
+  return error instanceof PushRejectedError && errorCode(error.cause) === "PERMISSION_DENIED";
 }
 
 /** A Realtime Database write failure, as a `PushRejectedError` when it is permanent. */

@@ -1,13 +1,15 @@
-import type {
-  ChangeBusEvent,
-  ChangeBusEventDataMap,
-  CheckpointSerializer,
-  SyncAdapter,
+import {
+  PushConflictError,
+  type ChangeBusEvent,
+  type ChangeBusEventDataMap,
+  type CheckpointSerializer,
+  type SyncAdapter,
 } from "@ez-kits/sync-client-core";
 import {
   doc,
   collection as getCollectionRef,
   getCountFromServer,
+  getDocFromServer,
   getDocsFromServer,
   onSnapshot,
   query,
@@ -19,10 +21,9 @@ import {
   type Query,
   type QueryConstraint,
   type QueryDocumentSnapshot,
-  type WriteBatch,
 } from "firebase/firestore";
 import { checkpointMapForCollection } from "../shared/checkpoint.ts";
-import { firestorePushError } from "../shared/push-error.ts";
+import { firestorePushError, isFirestorePermissionDenied } from "../shared/push-error.ts";
 import type { CollectionKey } from "../shared/types.ts";
 import type { ResolvedFirestoreSyncAdapterCollectionConfig } from "./types.ts";
 
@@ -50,6 +51,11 @@ function deletedAtFrom(value: unknown): number {
   return Date.now();
 }
 
+/** The revision in a document's field; anything but a number is no revision. */
+function revisionFrom(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
 function buildPullSource(
   collectionRef: CollectionReference<DocumentData>,
   constraints: QueryConstraint[],
@@ -65,7 +71,11 @@ function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<
   kind: DocumentChangeType,
 ): ChangeBusEvent<C, N> {
   const collectionName = collectionConfig.collectionName;
-  const raw = getSnapshotData(snapshot);
+  const { [collectionConfig.revisionField ?? ""]: revisionValue, ...raw } =
+    getSnapshotData(snapshot);
+  // A removed document's data is its last known state, not a new revision.
+  const rev = kind === "removed" ? undefined : revisionFrom(revisionValue);
+  const revision = rev === undefined ? {} : { rev };
   const isDeleted = collectionConfig.isDeleted ?? defaultIsDeleted;
   if (kind === "removed" || isDeleted(raw, { snapshot })) {
     const id = collectionConfig.deserializeDeleteId
@@ -77,18 +87,29 @@ function toChangeEvent<C extends ChangeBusEventDataMap, N extends CollectionKey<
       id,
       deletedAt:
         collectionConfig.resolveDeletedAt?.(raw, { snapshot }) ?? deletedAtFrom(raw.deletedAt),
+      ...revision,
     } as unknown as ChangeBusEvent<C, N>;
   }
   if (kind === "added") {
     const data = collectionConfig.deserializeCreate
       ? collectionConfig.deserializeCreate(raw, { snapshot })
       : (raw as C[N]["create"]);
-    return { type: "create", collection: collectionName, data } as unknown as ChangeBusEvent<C, N>;
+    return {
+      type: "create",
+      collection: collectionName,
+      data,
+      ...revision,
+    } as unknown as ChangeBusEvent<C, N>;
   }
   const data = collectionConfig.deserializeUpdate
     ? collectionConfig.deserializeUpdate(raw, { snapshot })
     : (raw as C[N]["update"]);
-  return { type: "update", collection: collectionName, data } as unknown as ChangeBusEvent<C, N>;
+  return {
+    type: "update",
+    collection: collectionName,
+    data,
+    ...revision,
+  } as unknown as ChangeBusEvent<C, N>;
 }
 
 export function createFirestoreSyncAdapterFromResolved<
@@ -107,6 +128,9 @@ export function createFirestoreSyncAdapterFromResolved<
     // Core only hands this adapter the outbox of these, so nothing it skips piles up.
     collections: collections.map(({ collectionName }) => collectionName),
     checkpointSerializer: common.checkpointSerializer,
+    revisionedCollections: collections
+      .filter(({ revisionField }) => revisionField !== undefined)
+      .map(({ collectionName }) => collectionName),
     pull: (pullOptions) => {
       const { commitChanges, checkpoint: checkpointMap } = pullOptions;
       let stopped = false;
@@ -148,6 +172,12 @@ export function createFirestoreSyncAdapterFromResolved<
               (snapshot) => {
                 const changes = snapshot
                   .docChanges()
+                  // This device's unconfirmed writes: they already carry their new revision.
+                  .filter(
+                    ({ doc: changed }) =>
+                      collectionConfig.revisionField === undefined ||
+                      !changed.metadata.hasPendingWrites,
+                  )
                   .map((change) => toEvent(change.doc, change.type));
                 if (changes.length > 0) {
                   const nextCheckpoint =
@@ -207,9 +237,16 @@ export function createFirestoreSyncAdapterFromResolved<
       );
 
       // Each event is one write. Writes to one document, in a batch or across batches committed
-      // in order, apply in event order, so events need no coalescing.
-      const batches: Array<{ batch: WriteBatch; events: ChangeBusEvent<C, N>[] }> = [];
-      let current = { batch: writeBatch(db), events: [] as ChangeBusEvent<C, N>[] };
+      // in order, apply in event order, so events need no coalescing. Security rules check every
+      // write of a batch against the document before the batch, so one with a revision goes in a
+      // batch without another write to its document.
+      const newBatch = () => ({
+        batch: writeBatch(db),
+        events: [] as ChangeBusEvent<C, N>[],
+        revisionedDocuments: new Set<string>(),
+      });
+      const batches: Array<ReturnType<typeof newBatch>> = [];
+      let current = newBatch();
 
       const enqueueSet = (
         event: ChangeBusEvent<C, N>,
@@ -218,9 +255,14 @@ export function createFirestoreSyncAdapterFromResolved<
         payload: DocumentData,
         options?: { merge: boolean },
       ) => {
-        if (current.events.length >= FIRESTORE_BATCH_LIMIT) {
+        const revisioned = collectionByName.get(event.collection as N)!.revisionField !== undefined;
+        const documentKey = `${documentPath}/${documentId}`;
+        if (
+          current.events.length >= FIRESTORE_BATCH_LIMIT ||
+          current.revisionedDocuments.has(documentKey)
+        ) {
           batches.push(current);
-          current = { batch: writeBatch(db), events: [] };
+          current = newBatch();
         }
         try {
           // An invalid path or value throws `invalid-argument` here, before any commit.
@@ -234,6 +276,37 @@ export function createFirestoreSyncAdapterFromResolved<
           throw firestorePushError(error);
         }
         current.events.push(event);
+        if (revisioned) current.revisionedDocuments.add(documentKey);
+      };
+
+      /**
+       * After rules refused a batch: a `PushConflictError` with the server state of its documents
+       * another device wrote first (their revision is not the one this push built on).
+       */
+      const findPushConflict = async (batchEvents: ChangeBusEvent<C, N>[]) => {
+        const serverEvents = await Promise.all(
+          batchEvents.map(async (event) => {
+            const collectionConfig = collectionByName.get(event.collection as N)!;
+            const { collectionPath, revisionField } = collectionConfig;
+            if (revisionField === undefined) return undefined;
+            const snapshot = await getDocFromServer(
+              doc(db, collectionPath, collectionConfig.resolveRemoteId(event)),
+            );
+            const exists = snapshot.exists();
+            const serverRev = exists ? (revisionFrom(snapshot.get(revisionField)) ?? 0) : 0;
+            if (serverRev === event.rev! - 1) return undefined;
+            return {
+              ...toChangeEvent(
+                collectionConfig,
+                snapshot as QueryDocumentSnapshot<DocumentData>,
+                exists ? "modified" : "removed",
+              ),
+              rev: serverRev,
+            };
+          }),
+        );
+        const conflicts = serverEvents.filter((event) => event !== undefined);
+        return conflicts.length > 0 ? new PushConflictError(conflicts) : undefined;
       };
 
       for (const rawEvent of events) {
@@ -241,8 +314,10 @@ export function createFirestoreSyncAdapterFromResolved<
         if (!collectionConfig) continue;
         const event = rawEvent as ChangeBusEvent<C, N>;
 
-        const { collectionPath } = collectionConfig;
+        const { collectionPath, revisionField } = collectionConfig;
         const id = collectionConfig.resolveRemoteId(event);
+        const withRevision = (payload: DocumentData): DocumentData =>
+          revisionField === undefined ? payload : { ...payload, [revisionField]: event.rev };
 
         if (event.type === "delete") {
           const deletedAt = event.deletedAt ?? Date.now();
@@ -252,7 +327,7 @@ export function createFirestoreSyncAdapterFromResolved<
                 deleted: true,
                 deletedAt,
               } satisfies DocumentData);
-          enqueueSet(event, collectionPath, id, payload, { merge: true });
+          enqueueSet(event, collectionPath, id, withRevision(payload), { merge: true });
           continue;
         }
 
@@ -260,24 +335,31 @@ export function createFirestoreSyncAdapterFromResolved<
           const payload = collectionConfig.serializeCreate
             ? collectionConfig.serializeCreate(event.data as C[N]["create"])
             : (event.data as DocumentData);
-          enqueueSet(event, collectionPath, id, payload);
+          enqueueSet(event, collectionPath, id, withRevision(payload));
           continue;
         }
 
         const payload = collectionConfig.serializeUpdate
           ? collectionConfig.serializeUpdate(event.data as C[N]["update"])
           : (event.data as DocumentData);
-        enqueueSet(event, collectionPath, id, payload, { merge: true });
+        enqueueSet(event, collectionPath, id, withRevision(payload), { merge: true });
       }
       if (current.events.length > 0) batches.push(current);
 
       // Batches commit in order, and each is acknowledged before the next commits, so a
       // failed batch leaves only its own and later events in the outbox. A batch is atomic:
-      // when one write is refused for good, core narrows the push down to it.
+      // when one write is refused for good, core narrows the push down to it. A batch refused
+      // because another device wrote one of its documents first goes to conflict resolution.
       for (const { batch, events: batchEvents } of batches) {
         try {
           await batch.commit();
         } catch (error) {
+          if (isFirestorePermissionDenied(error)) {
+            const conflict = await findPushConflict(batchEvents).catch((readError: unknown) => {
+              throw firestorePushError(readError);
+            });
+            if (conflict) throw conflict;
+          }
           throw firestorePushError(error);
         }
         await commitChanges({ events: batchEvents });
