@@ -118,3 +118,22 @@ test("a todo reaches another device through the Firestore emulator", async ({ br
   await first.close();
   await second.close();
 });
+
+test("falls back to IndexedDB where OPFS is refused, and keeps the data", async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    navigator.storage.getDirectory = () =>
+      Promise.reject(new DOMException("denied", "SecurityError"));
+  });
+  const page = await openTab(context);
+  await expect(page.getByTestId("local-storage")).toHaveText(/IndexedDB/);
+  await addTodo(page, "kept in indexeddb");
+  await page.reload();
+  await expect(page.getByText("kept in indexeddb")).toBeVisible();
+  await context.close();
+});
+
+test("uses OPFS where the browser offers it", async ({ context }) => {
+  const page = await openTab(context);
+  await expect(page.getByTestId("local-storage")).toHaveText(/OPFS/);
+});

@@ -4,6 +4,9 @@ import { defineConfig } from "vite-plus";
 const proxy = { "/google.firestore.v1.Firestore": "http://127.0.0.1:8085" };
 
 export default defineConfig({
+  // wa-sqlite finds its .wasm files next to its modules, and its worker code splits into chunks.
+  optimizeDeps: { exclude: ["@journeyapps/wa-sqlite"] },
+  worker: { format: "es" },
   server: {
     proxy,
     // Opening the dev server from a phone through `cloudflared tunnel --url`.

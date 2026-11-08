@@ -1,11 +1,12 @@
 import type { PullState, SyncStatusEvent } from "@ez-kits/sync-client-core";
 import { useEffect, useState } from "react";
+import { todoVfs } from "./db/vfs.ts";
 import { useSyncClient } from "./sync.ts";
 
 /** How many status changes the panel keeps. */
 const STATUS_HISTORY_LIMIT = 20;
 
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
@@ -85,6 +86,11 @@ export function SyncInfo() {
         <Field name="Since" value={formatTime(current?.changedAt)} />
         <Field name="Role" value={role} />
         <Field name="Browser" value={isOnline ? "online" : "offline"} />
+        <Field
+          name="Local database"
+          testId="local-storage"
+          value={`wa-sqlite on ${todoVfs === "opfs" ? "OPFS" : "IndexedDB (OPFS refused)"}`}
+        />
         <Field name="Backend" value={`Firestore emulator at ${location.host}`} />
       </dl>
 

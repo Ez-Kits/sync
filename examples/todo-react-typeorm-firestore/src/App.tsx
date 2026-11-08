@@ -9,7 +9,7 @@ import {
 import { Like } from "typeorm";
 import { Todo } from "./db/schema.ts";
 import { ACCOUNTS, useAccount, type Account } from "./account.ts";
-import { SyncInfo } from "./SyncInfo.tsx";
+import { describeError, SyncInfo } from "./SyncInfo.tsx";
 import { SyncClientProvider, useLiveQuery, useSyncClient } from "./sync.ts";
 
 /** Bound the rendered window even when the local database contains many rows. */
@@ -102,7 +102,7 @@ function TodoApp({
         <p className="brand">EzSync</p>
         <h1>Todos</h1>
         <AccountSwitcher account={account} onChange={onAccountChange} />
-        <p className="lede">Local-first tasks with sql.js, TypeORM, and Firestore sync.</p>
+        <p className="lede">Local-first tasks with wa-sqlite, TypeORM, and Firestore sync.</p>
         <p className="lede" data-testid="storage-role">
           {role === "leader"
             ? "This tab holds the local database"
@@ -224,11 +224,11 @@ function AccountSwitcher({
 }
 
 /** Shown instead of the app when an account's database cannot open. */
-class DatabaseErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  override state = { failed: false };
+class DatabaseErrorBoundary extends Component<{ children: ReactNode }, { error?: unknown }> {
+  override state: { error?: unknown } = {};
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
   }
 
   override componentDidCatch(error: unknown) {
@@ -236,12 +236,15 @@ class DatabaseErrorBoundary extends Component<{ children: ReactNode }, { failed:
   }
 
   override render() {
-    if (!this.state.failed) return this.props.children;
+    if (this.state.error === undefined) return this.props.children;
     return (
       <main className="app">
         <p className="empty">
           Unable to open your local data. Your saved data was not replaced. Reload the app, and
           consult recovery instructions before clearing browser storage.
+        </p>
+        <p className="sync-error" data-testid="database-error">
+          {describeError(this.state.error)}
         </p>
       </main>
     );
