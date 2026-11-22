@@ -59,7 +59,10 @@ export interface SocketLog {
  * A `WebSocket` whose upgrade goes through the app's Worker. A refused upgrade fails like a
  * browser socket: `error`, then `close` with 1006.
  */
-export function workerSocket(log: SocketLog): WebSocketConstructor {
+export function workerSocket(
+  log: SocketLog,
+  beforeOpen: () => Promise<void> = async () => {},
+): WebSocketConstructor {
   return class {
     private ws: WebSocket | undefined;
     private listeners = new Map<string, ((event: any) => void)[]>();
@@ -70,7 +73,7 @@ export function workerSocket(log: SocketLog): WebSocketConstructor {
         .fetch(url, {
           headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": protocols.join(", ") },
         })
-        .then((response) => {
+        .then(async (response) => {
           const ws = response.webSocket;
           if (!ws || this.closed) {
             this.emit("error", {});
@@ -79,6 +82,7 @@ export function workerSocket(log: SocketLog): WebSocketConstructor {
           }
           ws.accept();
           this.ws = ws;
+          await beforeOpen();
           ws.addEventListener("message", (event) => {
             if (event.data !== PONG) {
               const message = JSON.parse(event.data as string);
@@ -202,6 +206,8 @@ export interface DeviceOptions {
   store?: ReturnType<typeof atomicMemoryStore>;
   db?: ReturnType<typeof memoryDb>;
   WebSocket?: WebSocketConstructor;
+  /** Runs once a socket is accepted, before the client sees it open (and sends its pull). */
+  beforeOpen?: () => Promise<void>;
   extra?: Record<string, unknown>;
 }
 
@@ -213,6 +219,7 @@ export function device({
   store,
   db = memoryDb(store),
   WebSocket,
+  beforeOpen,
   extra,
 }: DeviceOptions) {
   const auth = { token: token(user) };
@@ -231,7 +238,7 @@ export function device({
     collections,
     getToken,
     fetch: loggingFetch(sockets),
-    WebSocket: mode === "http" ? NoSocket : (WebSocket ?? workerSocket(sockets)),
+    WebSocket: mode === "http" ? NoSocket : (WebSocket ?? workerSocket(sockets, beforeOpen)),
     pollIntervalMs: 50,
   });
   const onSyncStatus = vi.fn();

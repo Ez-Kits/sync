@@ -339,7 +339,13 @@ export function createDurableObjectSyncAdapter<const C extends CollectionConfigM
             break;
           case "unauthenticated":
             connection.authed = false;
-            refreshToken().catch(fail);
+            // The server drops the message it answers this way. A pull still in flight was that
+            // message (an earlier one would have been answered first), so ask again after `auth`.
+            refreshToken()
+              .then(() => {
+                if (paging && !done) sendPull();
+              })
+              .catch(fail);
             break;
           // shortcut: `reset-required` is reserved and not sent yet; handle it with compaction.
         }

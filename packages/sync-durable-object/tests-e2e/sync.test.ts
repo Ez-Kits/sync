@@ -301,41 +301,69 @@ describe.each<Mode>(["socket", "http"])("over %s", (mode) => {
 });
 
 describe("tokens", () => {
+  /** Expire the token of every open socket of `user`'s object now, without waiting for the clock. */
+  const expireSockets = (user: string) =>
+    runInDurableObject(env.E2E_SYNC.getByName(user), (_instance, state) => {
+      for (const ws of state.getWebSockets()) {
+        ws.serializeAttachment({ ...ws.deserializeAttachment(), expiresAt: 0 });
+      }
+    });
+
+  // A wider timeout only as margin: each test waits on events, plus core's first retries.
   test("an expired token is refreshed with an auth message on the open socket", async () => {
     const user = uniqueUser();
-    const a = device({ user });
-    devices.push(a);
-    a.auth.token = token(user, Date.now() + 300);
-    a.client.startSync();
+    const a = start({ user });
     await caughtUp(a);
-    a.auth.token = token(user);
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await expireSockets(user);
 
+    // The push is answered `unauthenticated`; the client sends `auth` and core retries it.
     await a.client.collections.todos.insert({ id: "fresh", title: "after expiry" });
-    await a.client.waitForPushed();
+    await a.client.waitForPushed({ timeoutMs: 10_000 });
     expect(a.sockets.received).toContainEqual({ type: "unauthenticated" });
     expect(a.sockets.sent).toContainEqual({ type: "auth", token: a.auth.token });
     expect(a.sockets.opened).toBe(1);
     expect(a.sockets.closes).toEqual([]);
     expect((await serverChanges(user)).map(({ id }) => id)).toEqual(["fresh"]);
-  });
+  }, 15_000);
+
+  test("a pull that arrives after the token expired is sent again after the refresh", async () => {
+    const user = uniqueUser();
+    await httpPush(user, [
+      {
+        eventId: "s",
+        collection: "todos",
+        type: "create",
+        id: "s",
+        data: { title: "seed" },
+        rev: 1,
+      },
+    ]);
+    // The first pull reaches the object with the socket's token already expired.
+    const a = start({ user, beforeOpen: () => expireSockets(user) });
+    await caughtUp(a);
+    expect(a.sockets.received).toContainEqual({ type: "unauthenticated" });
+    expect(a.sockets.sent.filter((message) => message.type === "pull")).toHaveLength(2);
+    expect(a.sockets.opened).toBe(1);
+    expect(a.sockets.closes).toEqual([]);
+    expect(a.rows("todos").s).toMatchObject({ title: "seed" });
+  }, 15_000);
 
   test("an invalid refresh closes the socket with 4001, and a valid token recovers", async () => {
     const user = uniqueUser();
-    const a = device({ user });
-    devices.push(a);
-    a.auth.token = token(user, Date.now() + 300);
-    a.client.startSync();
+    const a = start({ user });
     await caughtUp(a);
-    a.auth.token = `${user}:0`;
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // Tokens are invalid until the socket closes with 4001, then valid again.
+    a.getToken.mockImplementation(() =>
+      a.sockets.closes.includes(4001) ? token(user) : `${user}:0`,
+    );
+    await expireSockets(user);
 
     await a.client.collections.todos.insert({ id: "late", title: "pushed after recovery" });
-    await vi.waitFor(() => expect(a.sockets.closes).toContain(4001), WAIT);
-    a.auth.token = token(user);
     await a.client.waitForPushed({ timeoutMs: 10_000 });
+    expect(a.sockets.sent).toContainEqual({ type: "auth", token: `${user}:0` });
+    expect(a.sockets.closes).toContain(4001);
     expect((await serverChanges(user)).map(({ id }) => id)).toEqual(["late"]);
-  });
+  }, 15_000);
 });
 
 test("a socket client and a polling client sync with each other", async () => {

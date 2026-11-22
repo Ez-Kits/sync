@@ -399,6 +399,26 @@ test("an expired token on the socket is refreshed with an auth message; pushes u
   expect(server.pushes.at(-1)!.via).toBe("socket");
 });
 
+test("a pull dropped for an expired token is sent again after the refresh", async () => {
+  const { server, auth, pull } = setup();
+  server.tokens = new Set(["t2"]);
+  // The socket opens with t1, which the server no longer accepts.
+  const stream = pull();
+  auth.token = "t2";
+  await flush();
+  const sent = stream
+    .socket()
+    .sent.filter((message: { type: string }) => message.type !== "preview");
+  expect(sent).toEqual([
+    { type: "pull", checkpoints: { todos: null, pairs: null, notes: null } },
+    { type: "auth", token: "t2" },
+    { type: "pull", checkpoints: { todos: null, pairs: null, notes: null } },
+  ]);
+  expect(stream.onCaughtUp).toHaveBeenCalledOnce();
+  expect(stream.onError).not.toHaveBeenCalled();
+  await stream.stop();
+});
+
 test("an expired token over HTTP is refreshed and the push retried", async () => {
   const { server, auth, getToken, push } = setup();
   server.tokens = new Set(["t2"]);
