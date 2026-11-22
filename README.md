@@ -18,7 +18,7 @@ You pick each piece separately: the local database engine, the ORM you query it 
 ```
 your app ── collections, live queries
    │
-sync client ─────────────► sync adapter ──► your backend (Firestore, Realtime Database, ...)
+sync client ─────────────► sync adapter ──► your backend (Firestore, Realtime Database, Durable Objects, ...)
    │
 DB adapter (Drizzle, TypeORM)
    │
@@ -48,6 +48,7 @@ client.startSync();
 | `@ez-kits/sync-client-storage-wa-sqlite`   | wa-sqlite in a worker, persisted to OPFS or IndexedDB, your choice        |
 | `@ez-kits/sync-client-storage-pglite`      | Postgres (PGlite) in a worker, persisted to IndexedDB                     |
 | `@ez-kits/sync-client-firebase`            | Sync adapters for Cloud Firestore and the Firebase Realtime Database      |
+| `@ez-kits/sync-durable-object`             | Your own sync server on Cloudflare Durable Objects, and its adapter       |
 | `@ez-kits/sync-client-conflict-resolution` | Ready-made conflict policies: last write wins, field merge, and others    |
 
 A typical app installs the core, one DB adapter, one storage engine and one sync adapter. Your app configures authentication and security rules for its backend; EzSync does not manage them.

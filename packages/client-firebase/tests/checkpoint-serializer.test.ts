@@ -3,6 +3,8 @@ import {
   createFirestoreCollectionSyncAdapter,
   createFirestoreSyncAdapter,
 } from "../src/sync-firestore.ts";
+import { createFirestoreSyncAdapterFromResolved } from "../src/firestore/create-sync-adapter-from-resolved.ts";
+import { createRealtimeDBSyncAdapterFromResolved } from "../src/realtime-db/create-sync-adapter-from-resolved.ts";
 import {
   createRealtimeDBCollectionSyncAdapter,
   createRealtimeDBSyncAdapter,
@@ -14,6 +16,7 @@ const db = {} as never;
 const resolveRemoteId = () => "id";
 
 test("firestore adapters leave checkpoints to the client's JSON unless given a serializer", () => {
+  expect(createFirestoreSyncAdapterFromResolved(db, []).checkpointSerializer).toBeUndefined();
   expect(createFirestoreSyncAdapter({ db, collections: [] }).checkpointSerializer).toBeUndefined();
   expect(
     createFirestoreSyncAdapter({ db, collections: [], checkpointSerializer: custom })
@@ -33,6 +36,7 @@ test("firestore adapters leave checkpoints to the client's JSON unless given a s
 });
 
 test("realtime database adapters leave checkpoints to the client's JSON unless given a serializer", () => {
+  expect(createRealtimeDBSyncAdapterFromResolved(db, []).checkpointSerializer).toBeUndefined();
   expect(createRealtimeDBSyncAdapter({ db, collections: [] }).checkpointSerializer).toBeUndefined();
   expect(
     createRealtimeDBSyncAdapter({ db, collections: [], checkpointSerializer: custom })

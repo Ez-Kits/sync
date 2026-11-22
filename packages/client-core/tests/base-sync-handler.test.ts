@@ -34,6 +34,14 @@ function fixture(overrides: Record<string, unknown> = {}) {
     apply(event: any, target?: any) {
       return this.applyAnyCollectionEvent(event, target);
     }
+    applyToConfiguredDb(event: any) {
+      return this.applyEvent(event.collection, event);
+    }
+    commit(changes: any[], checkpoint: any) {
+      return this.commitPulledChanges(changes, checkpoint, (event, tx) =>
+        this.applyAnyCollectionEvent(event, tx),
+      );
+    }
     resolve(event: any, native?: unknown) {
       return this.resolveRemoteEvent(event, { operations: this.config.db, native });
     }
@@ -75,6 +83,16 @@ test("base handler applies deletes, upserts existing and absent rows, and insert
   expect(db.insert).toHaveBeenCalledWith("todos", { title: "no id" });
   await handler.apply({ type: "create", collection: "missing", data: { id: 3 } });
   expect(db.insert).toHaveBeenCalledTimes(2);
+});
+
+test("base handler applies to the configured db and commits a pull without options", async () => {
+  const { handler, db, checkpointStorage } = fixture();
+  await handler.applyToConfiguredDb({ type: "delete", collection: "todos", id: 1 });
+  expect(db.delete).toHaveBeenCalledWith("todos", 1);
+  const changes = [{ type: "update", collection: "todos", data: { id: 1, title: "pulled" } }];
+  await expect(handler.commit(changes, { todos: 5 })).resolves.toBe(false);
+  expect(db.update).toHaveBeenCalledWith("todos", { id: 1, title: "pulled" });
+  expect(checkpointStorage.saveCheckpoint).toHaveBeenCalled();
 });
 
 test("base handler propagates fallback reads and inserts only for an explicit absent result", async () => {

@@ -1,0 +1,16 @@
+// Test-only Worker for the workerd tests; apps deploy their own Worker.
+{
+  "name": "ezsync-durable-object-test",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // drizzle-kit's migrations import their SQL files as text.
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "TEST_SYNC", "class_name": "TestSyncObject" },
+      { "name": "PLAIN_SYNC", "class_name": "PlainSyncObject" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestSyncObject", "PlainSyncObject"] }],
+}

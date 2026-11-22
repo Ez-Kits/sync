@@ -24,6 +24,7 @@
     "packages/client-storage-sqljs": {},
     "packages/client-storage-wa-sqlite": {},
     "packages/client-conflict-resolution": {},
-    "packages/client-firebase": {}
+    "packages/client-firebase": {},
+    "packages/sync-durable-object": {}
   }
 }

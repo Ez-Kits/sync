@@ -10,7 +10,7 @@ application
    ▼
 sync client           (@ez-kits/sync-client-core)
    │  change bus · pull and push · tab channel
-   ├──────────────►  sync adapter (Firestore, Realtime Database, your own)
+   ├──────────────►  sync adapter (Firestore, Realtime Database, Durable Objects, your own)
    ▼
 DB adapter            (Drizzle, TypeORM)
    │  CRUD for collections · the local-change store (outbox, checkpoints, ...)
@@ -89,6 +89,6 @@ Do not write to these tables. Deleting the whole database (for example on sign-o
 
 - Pushes run **one at a time**, so the order is kept.
 - A slow transaction blocks the database for **every tab** until it ends (it is rolled back after 10 seconds of inactivity by default).
-- A push can be **sent twice** (for example after a network error once the server already saved it). Backends must accept the same write twice. The Firebase adapters do.
+- A push can be **sent twice** (for example after a network error once the server already saved it). Backends must accept the same write twice. The Firebase adapters and the Durable Object server do.
 
 For the full reasoning behind each decision, see the [architecture decisions](../../architecture.md).

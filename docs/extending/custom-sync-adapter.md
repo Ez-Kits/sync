@@ -55,6 +55,7 @@ EzSync calls `push` with pending outbox events, oldest first, **one push at a ti
 | Option          | What it is                                                                                                     |
 | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | `events`        | The local writes to send, in commit order. Each has an `eventId`, unique per write.                            |
+| `clientId`      | This database's random id, shared by its tabs and new after storage is wiped. Lets a server spot its resends.  |
 | `commitChanges` | `await commitChanges({ events })` for events the backend **durably saved**. That removes them from the outbox. |
 
 Rules:
@@ -333,4 +334,4 @@ A collection can carry its own adapter (`defineDrizzleCollection({ ..., syncAdap
 - [ ] Errors never include record data in their messages (they end up in logs and sync status).
 - [ ] Round trip with two clients on two databases: a write in one appears in the other, including updates and deletes.
 
-The Firestore adapter (`packages/client-firebase/src/firestore/create-sync-adapter-from-resolved.ts`) is a complete real-world example, with batching and error classification.
+The Firestore adapter (`packages/client-firebase/src/firestore/create-sync-adapter-from-resolved.ts`) is a complete real-world example, with batching and error classification. For an adapter that talks to a server you write, with revisions, a WebSocket and an HTTP fallback, see `packages/sync-durable-object/src/client/adapter.ts` and the [Durable Objects guide](../guides/durable-objects.md).
