@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/Ez-Kits/sync/compare/sync-client-react-v0.3.0...sync-client-react-v0.3.1) (2026-11-23)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @ez-kits/sync-client-core bumped to 0.4.1
+
 ## [0.3.0](https://github.com/Ez-Kits/sync/compare/sync-client-react-v0.2.0...sync-client-react-v0.3.0) (2026-11-08)
 
 
