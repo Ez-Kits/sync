@@ -1,6 +1,6 @@
 {
   "name": "@ez-kits/sync-durable-object",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Sync EzSync data with a Cloudflare Durable Object per scope",
   "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/sync-durable-object#readme",
   "bugs": {
