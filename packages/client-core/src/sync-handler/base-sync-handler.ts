@@ -14,6 +14,7 @@ import type {
 import { LeaderChangedError } from "../db-storage/errors";
 import type { RecordKey, ILocalChangeStore } from "../local-change-store";
 import { isPermanentPushError, PushConflictError } from "./errors";
+import { readClientId } from "./client-id";
 import { ParkedPushes } from "./parked-pushes";
 import { retryPull, type PullStream, type PullSubscribe } from "./pull-retry";
 import { recordKeyString, toPushEvent } from "./record-events";
@@ -543,9 +544,11 @@ export abstract class BaseSyncHandler<
     const acknowledgements: Promise<void>[] = [];
     let pushError: { error: unknown } | undefined;
     const numbered = await this.numberEvents(syncAdapter, events);
+    const clientId = await readClientId(this.config.localChangeStore);
     try {
       await syncAdapter.push({
         events: numbered,
+        clientId,
         commitChanges: ({ events: committedEvents }) => {
           const acknowledgement = this.ackPushedEvents(committedEvents);
           // Observed below, even when the adapter neither awaits it nor finishes pushing.

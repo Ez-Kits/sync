@@ -257,3 +257,22 @@ test("local-only mutations of a batch leave no pending event", async () => {
   expect((await store.getPendingEvents()).map((e: any) => e.id)).toEqual(["e1"]);
   expect(await store.hasAppliedEvent("e2")).toBe(true);
 });
+
+test("a batch without options leaves every mutation pending", async () => {
+  const db = makeDb();
+  const store = atomicMemoryStore();
+  await executeLocalMutations(db, store, (writer) =>
+    writer.apply([
+      {
+        createdAt: 1,
+        type: "create",
+        collection: "notes",
+        id: "1",
+        recordId: "1",
+        eventId: "e1",
+        data: { id: "1" },
+      },
+    ]),
+  );
+  expect((await store.getPendingEvents()).map((e: any) => e.id)).toEqual(["e1"]);
+});

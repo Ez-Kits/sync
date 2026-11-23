@@ -21,13 +21,13 @@ Doing the background copying correctly is hard. What if the user closes the tab 
 
 You will meet these names everywhere in the docs and the API.
 
-| Word             | What it is                                                                                                | Example                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| **Collection**   | A kind of record your app syncs, backed by one table. You give it a name and a primary key.               | `todos`, `projects`                             |
-| **DB storage**   | The local database engine, and the code that shares it between tabs.                                      | sql.js, SQLite WASM, PGlite                     |
-| **DB adapter**   | The bridge between the DB storage and your ORM. It gives you a typed query builder and stores the outbox. | Drizzle adapter, TypeORM adapter                |
-| **Sync adapter** | The bridge between EzSync and your backend. It pushes local changes and pulls remote ones.                | Firestore, Realtime Database, your own REST API |
-| **Sync client**  | The object your app talks to. It ties the other four together.                                            | `client.collections.todos.insert(...)`          |
+| Word             | What it is                                                                                                | Example                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Collection**   | A kind of record your app syncs, backed by one table. You give it a name and a primary key.               | `todos`, `projects`                                              |
+| **DB storage**   | The local database engine, and the code that shares it between tabs.                                      | sql.js, SQLite WASM, PGlite                                      |
+| **DB adapter**   | The bridge between the DB storage and your ORM. It gives you a typed query builder and stores the outbox. | Drizzle adapter, TypeORM adapter                                 |
+| **Sync adapter** | The bridge between EzSync and your backend. It pushes local changes and pulls remote ones.                | Firestore, Realtime Database, Durable Objects, your own REST API |
+| **Sync client**  | The object your app talks to. It ties the other four together.                                            | `client.collections.todos.insert(...)`                           |
 
 How they stack up:
 
@@ -48,7 +48,7 @@ You choose each piece separately. Any DB adapter works with any DB storage of th
 
 ## What EzSync does not do
 
-- It does not run your backend. You bring Firestore, the Realtime Database or your own server.
+- It does not run your backend. You bring Firestore, the Realtime Database, a Cloudflare Worker with `@ez-kits/sync-durable-object`, or your own server.
 - It does not manage sign-in or security rules. Your app configures authentication and rules for its backend.
 - It does not create **your** tables. You write their `CREATE TABLE` statements (EzSync creates only its own internal tables). See [Your database schema](../guides/database-schema.md).
 

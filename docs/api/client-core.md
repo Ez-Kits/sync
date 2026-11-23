@@ -409,7 +409,7 @@ interface AtomicLocalChangeStore<TTx = unknown> extends ILocalChangeStore<TTx> {
 
 ## Sync adapter contract
 
-Implemented by `@ez-kits/sync-client-firebase`. Implement it yourself for another backend: see [Custom sync adapter](../extending/custom-sync-adapter.md).
+Implemented by `@ez-kits/sync-client-firebase` and `@ez-kits/sync-durable-object`. Implement it yourself for another backend: see [Custom sync adapter](../extending/custom-sync-adapter.md).
 
 ```ts
 interface SyncAdapter<C, N, TCheckpoint> {
@@ -434,10 +434,12 @@ interface PullOptions<C, N, TCheckpoint> {
 
 interface PushOptions<C, N> {
   events: ChangeBusEvent<C, N>[]; // in commit order
+  clientId?: string; // this database's random id: shared by its tabs, new after storage is wiped
   commitChanges(options: { events: ChangeBusEvent<C, N>[] }): Promise<void>; // acknowledge accepted events
 }
 ```
 
+- `clientId` is created on the first push and kept in the local change store's checkpoints under `ez_sync:client_id`, so no collection may use that name.
 - `pull` opens a stream of remote changes starting at `checkpoint`. It returns a cleanup function that stops every listener.
 - Batches of more than `PULL_COMMIT_CHUNK_SIZE` (200) changes commit in chunks, each in its own transaction, yielding to the event loop between them; only the last saves the checkpoint.
 - `onCaughtUp`, `onPreviewed` and `onCount` take effect once the batches delivered before them have committed. An adapter that can't tell when it is caught up calls `onCaughtUp` after its first batch; one that never calls it never reports `caughtUp`.

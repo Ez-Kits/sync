@@ -16,7 +16,7 @@ You install EzSync as a few small packages. A typical app needs **four**: the co
 | The core (always)                 | `@ez-kits/sync-client-core`                                                                                                                                                                                                                                                    |
 | An ORM bridge (a **DB adapter**)  | `@ez-kits/sync-client-drizzle-adapter` + `drizzle-orm` **or** `@ez-kits/sync-client-typeorm-adapter` + `typeorm`                                                                                                                                                               |
 | A database (a **storage engine**) | `@ez-kits/sync-client-storage-sqljs` + `sql.js` **or** `@ez-kits/sync-client-storage-sqlite-wasm` + `@sqlite.org/sqlite-wasm` **or** `@ez-kits/sync-client-storage-wa-sqlite` + `@journeyapps/wa-sqlite` **or** `@ez-kits/sync-client-storage-pglite` + `@electric-sql/pglite` |
-| A backend (a **sync adapter**)    | `@ez-kits/sync-client-firebase` + `firebase`, or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                                                                                                                       |
+| A backend (a **sync adapter**)    | `@ez-kits/sync-client-firebase` + `firebase`, **or** `@ez-kits/sync-durable-object` (your own [Cloudflare server](../guides/durable-objects.md)), or [your own](../extending/custom-sync-adapter.md), or none for local-only                                                   |
 | Optional extras                   | `@ez-kits/sync-client-react` (React hooks), `@ez-kits/sync-client-conflict-resolution` (conflict policies)                                                                                                                                                                     |
 
 Not sure? Use the **recommended starter stack**. It is what the quick start uses:
@@ -50,16 +50,17 @@ npm install -D @types/sql.js
 
 ### Version notes
 
-| Peer dependency           | Version EzSync is built and tested against                               |
-| ------------------------- | ------------------------------------------------------------------------ |
-| `drizzle-orm`             | `1.0.0-rc.5` (the 1.0 line with `defineRelations`; 0.x is not supported) |
-| `typeorm`                 | `^0.3.28`                                                                |
-| `sql.js`                  | `^1.14.1`                                                                |
-| `@sqlite.org/sqlite-wasm` | `3.54.1-build1`                                                          |
-| `@journeyapps/wa-sqlite`  | `^2.0.10`                                                                |
-| `@electric-sql/pglite`    | `^0.3.16`                                                                |
-| `firebase`                | `^12.12.1`                                                               |
-| `react`                   | `^19.2`                                                                  |
+| Peer dependency           | Version EzSync is built and tested against                                |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `drizzle-orm`             | `1.0.0-rc.5` (the 1.0 line with `defineRelations`; 0.x is not supported)  |
+| `typeorm`                 | `^0.3.28`                                                                 |
+| `sql.js`                  | `^1.14.1`                                                                 |
+| `@sqlite.org/sqlite-wasm` | `3.54.1-build1`                                                           |
+| `@journeyapps/wa-sqlite`  | `^2.0.10`                                                                 |
+| `@electric-sql/pglite`    | `^0.3.16`                                                                 |
+| `firebase`                | `^12.12.1`                                                                |
+| `drizzle-kit`             | `1.0.0-rc.5` (with `@ez-kits/sync-durable-object`, same as `drizzle-orm`) |
+| `react`                   | `^19.2`                                                                   |
 
 ### Extra setup for TypeORM
 

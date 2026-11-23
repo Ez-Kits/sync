@@ -24,6 +24,7 @@ Task-focused pages. Read them when you need them.
 | [Syncing](guides/syncing.md)                               | start and stop sync, show status, handle offline and many tabs        |
 | [Sync with Cloud Firestore](guides/firestore.md)           | connect to Firestore, with incremental pulls and deletes              |
 | [Sync with Realtime Database](guides/realtime-database.md) | connect to the Firebase Realtime Database                             |
+| [Sync with Durable Objects](guides/durable-objects.md)     | run your own sync server on Cloudflare, one Durable Object per user   |
 | [Conflict resolution](guides/conflict-resolution.md)       | decide what happens when local and remote edits meet                  |
 | [Rejected writes](guides/rejected-writes.md)               | handle writes the backend refuses (security rules, signed-out user)   |
 | [React](guides/react.md)                                   | use the provider and the `useLiveQuery` hook                          |
@@ -46,6 +47,7 @@ One page per package, listing every export with its options.
 | [`@ez-kits/sync-client-storage-pglite`](api/client-storage-pglite.md)           | Postgres (PGlite) in a worker, saved to IndexedDB      |
 | [`@ez-kits/sync-client-firebase`](api/client-firebase.md)                       | Sync adapters for Firestore and Realtime Database      |
 | [`@ez-kits/sync-client-conflict-resolution`](api/client-conflict-resolution.md) | Ready-made conflict policies                           |
+| [`@ez-kits/sync-durable-object`](api/sync-durable-object.md)                    | Cloudflare Durable Object sync server and its adapter  |
 
 ## Extending EzSync
 

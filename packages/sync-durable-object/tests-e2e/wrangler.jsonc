@@ -1,0 +1,14 @@
+// Test-only Worker for the end-to-end tests: the client adapter against the real object.
+{
+  "name": "ezsync-durable-object-e2e",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "E2E_SYNC", "class_name": "E2ESyncObject" },
+      { "name": "POKE_SYNC", "class_name": "PokeSyncObject" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["E2ESyncObject", "PokeSyncObject"] }],
+}

@@ -13,8 +13,12 @@ export default defineConfig({
       "./packages/client-storage-pglite",
       "./packages/client-storage-sqlite-wasm",
       "./packages/client-storage-wa-sqlite",
+      "./packages/sync-durable-object",
+      "./packages/sync-durable-object/vite.workers.config.ts",
+      "./packages/sync-durable-object/tests-e2e/vite.config.ts",
     ],
     coverage: {
+      provider: "istanbul",
       include: ["packages/*/src/**/*.{ts,tsx}"],
       exclude: ["packages/*/src/**/*.d.ts", "packages/*/src/**/types.ts"],
       reporter: ["text", "html"],

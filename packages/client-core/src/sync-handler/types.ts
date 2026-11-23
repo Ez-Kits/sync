@@ -212,6 +212,13 @@ export interface PushOptions<C extends ChangeBusEventDataMap, N extends keyof C 
   events: ChangeBusEvent<C, N>[];
 
   /**
+   * This database's random id: created once with the local change store's tables, shared by
+   * every tab on the database, and new after local storage is wiped. A provider can use it to
+   * tell a resend of its own write from another device's.
+   */
+  clientId?: string;
+
+  /**
    * Acknowledge events the provider durably accepted, removing them from the outbox. Await
    * it before `push` resolves: the next push reads the outbox once it has finished. The
    * handler also waits for one that is not awaited, and a rejection fails the push, which is

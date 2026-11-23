@@ -29,5 +29,6 @@ DB engine         (DBEngine)         ← "use another database engine"
   | `DBEngine`   | `packages/client-storage-sqljs/src/engine.ts`, `packages/client-storage-pglite/src/engine.ts` |
   | DB adapter   | `packages/client-drizzle/src`, `packages/client-typeorm/src`                                  |
   | Sync adapter | `packages/client-firebase/src/firestore/create-sync-adapter-from-resolved.ts`                 |
+  | Sync adapter | `packages/sync-durable-object/src/client/adapter.ts` (with its own server)                    |
 
 - Keep provider-, ORM- and engine-specific code in its own package. The core never imports it.

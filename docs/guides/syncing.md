@@ -5,7 +5,7 @@ Sync has two directions:
 - **Push**: send local writes from the outbox to the backend.
 - **Pull**: bring remote changes into the local database.
 
-Both are done by the **sync adapter** you pass to the client. This page covers what is the same for every backend. For the backend setup itself, see [Firestore](firestore.md), [Realtime Database](realtime-database.md) or [your own backend](../extending/custom-sync-adapter.md).
+Both are done by the **sync adapter** you pass to the client. This page covers what is the same for every backend. For the backend setup itself, see [Firestore](firestore.md), [Realtime Database](realtime-database.md), [Durable Objects](durable-objects.md) or [your own backend](../extending/custom-sync-adapter.md).
 
 ## Start and stop
 

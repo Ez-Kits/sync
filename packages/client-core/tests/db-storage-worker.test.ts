@@ -218,6 +218,46 @@ test("the worker runtime rejects requests before init and ignores unknown messag
   });
 });
 
+test("the worker runtime serves its own global scope by default", () => {
+  const postMessage = vi.fn();
+  vi.stubGlobal("postMessage", postMessage);
+  vi.stubGlobal("onmessage", null);
+  startDBStorageWorker(() => memoryEngine());
+  expect(postMessage).toHaveBeenCalledWith({ t: "started" });
+  expect(globalThis.onmessage).toBeTypeOf("function");
+});
+
+test("a page hidden just as the engine opens leads only to step down again", async () => {
+  const { locks, channels } = installTabs();
+  const posted: any[] = [];
+  const scope = {
+    postMessage: (message: unknown) => posted.push(message),
+    onmessage: null as any,
+    navigator: { locks },
+    BroadcastChannel: channels,
+  };
+  const engine = memoryEngine();
+  let opened!: (engine: DBEngine) => void;
+  const opening = new Promise<DBEngine>((resolve) => (opened = resolve));
+  const open = vi.fn(() => opening);
+  startDBStorageWorker(open, scope as never);
+  const send = (data: unknown) => scope.onmessage({ data } as MessageEvent);
+  send({ t: "init", key: "k", clientId: "c", engineOptions: undefined });
+  await vi.waitFor(() => expect(open).toHaveBeenCalled());
+
+  // The worker wraps `open` in an async function, one microtask hop: this release lands after
+  // the node sees the engine open, before it starts leading.
+  void opening.then(() => queueMicrotask(() => send({ t: "release" })));
+  opened(engine);
+  await settle(8);
+
+  expect(posted.filter((message) => message.t === "role").map((message) => message.role)).toEqual([
+    "leader",
+    "follower",
+  ]);
+  expect(engine.close).toHaveBeenCalled();
+});
+
 test("the main-thread storage ignores unknown and stale worker messages", async () => {
   const endpoint = { postMessage: vi.fn(), onmessage: null as any };
   const storage = createWorkerDBStorage({ dialect: "postgres", key: "pg", worker: () => endpoint });

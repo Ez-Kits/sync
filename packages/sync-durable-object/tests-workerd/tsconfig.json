@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.test.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    // drizzle-kit writes the migrations index as JavaScript.
+    "allowJs": true
+  },
+  "include": ["."]
+}

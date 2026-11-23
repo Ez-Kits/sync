@@ -1,0 +1,60 @@
+{
+  "name": "@ez-kits/sync-durable-object",
+  "version": "0.0.0",
+  "description": "Sync EzSync data with a Cloudflare Durable Object per scope",
+  "homepage": "https://github.com/Ez-Kits/sync/tree/main/packages/sync-durable-object#readme",
+  "bugs": {
+    "url": "https://github.com/Ez-Kits/sync/issues"
+  },
+  "license": "MIT",
+  "author": "Ez Kits",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ez-Kits/sync.git",
+    "directory": "packages/sync-durable-object"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    "./client": "./dist/client.mjs",
+    "./server": "./dist/server.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "test:workers": "vp test --config vite.workers.config.ts",
+    "test:types": "vp test run --typecheck.only",
+    "test:coverage": "vp test run --coverage",
+    "check": "vp check",
+    "prepublishOnly": "vp run build && node ../../scripts/copy-package-files.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@ez-kits/sync-client-core": "workspace:^",
+    "@typescript/native-preview": "catalog:",
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "peerDependencies": {
+    "@ez-kits/sync-client-core": "workspace:^",
+    "drizzle-orm": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@ez-kits/sync-client-core": {
+      "optional": true
+    }
+  }
+}

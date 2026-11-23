@@ -244,7 +244,12 @@ for (const dialect of dialects) {
 
   test(`${dialect.name}: a skipped remote event survives a reload and is applied by the acknowledgement`, async () => {
     const dbStorage = dialect.storage();
-    const before = dbSyncClient(dialect, dbStorage, neverAcknowledge);
+    // Every push, before and after the reload, carries the database's one client id.
+    const clientIds: unknown[] = [];
+    const before = dbSyncClient(dialect, dbStorage, (options) => {
+      clientIds.push(options.clientId);
+      return neverAcknowledge();
+    });
     const store = before.adapter.localChangeStore;
     await store.initialize();
     await before.adapter.commitLocalMutation({
@@ -268,7 +273,10 @@ for (const dialect of dialects) {
     before.client.stopSync();
 
     // A reload: a new adapter and client on the same database push e1 again.
-    const after = dbSyncClient(dialect, dbStorage, acknowledge);
+    const after = dbSyncClient(dialect, dbStorage, (options) => {
+      clientIds.push(options.clientId);
+      return acknowledge(options);
+    });
     await after.adapter.localChangeStore.initialize();
     after.client.startSync();
     await vi.waitFor(async () =>
@@ -277,6 +285,8 @@ for (const dialect of dialects) {
     expect(await after.adapter.localChangeStore.getPendingEvents()).toEqual([]);
     expect(await after.adapter.localChangeStore.getSkippedRemoteEvents()).toEqual([]);
     expect(after.errors).toEqual([]);
+    expect(clientIds.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(clientIds)).toEqual(new Set([expect.stringMatching(/^[0-9a-f-]{36}$/)]));
     after.client.stopSync();
     await dbStorage.close();
   }, 30_000);
